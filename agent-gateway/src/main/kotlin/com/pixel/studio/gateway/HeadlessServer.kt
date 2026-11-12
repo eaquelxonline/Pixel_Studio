@@ -18,7 +18,7 @@ fun main(args: Array<String>) {
     val engine = PixelEngine(w, h)
     val config = opt("--token")?.let { GatewayConfig(port = port, token = it) } ?: GatewayConfig(port = port)
     val gateway = AgentGateway(engine, config, DirectoryWorkspace(workspace), confirmer).start()
-    println("Pixel Studio headless gateway — canvas ${w}x$h, workspace ${workspace.path}")
+    println("Pixel Studio headless gateway - canvas ${w}x$h, workspace ${workspace.path}")
     println("MCP endpoint: ${gateway.mcpUrl}")
     gateway.connectionSnippets().forEach { (k, v) -> println("\n[$k]\n$v") }
     Runtime.getRuntime().addShutdownHook(Thread { gateway.close(); engine.close() })

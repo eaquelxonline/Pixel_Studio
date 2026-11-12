@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pixel Studio</string>
+    <string name="agent_channel">Agent Mode</string>
+    <string name="agent_running">Agent Mode is on</string>
+    <string name="agent_stop">Stop</string>
+</resources>

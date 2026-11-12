@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="PixelStudioTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#38E1FF</item>
+        <item name="android:colorAccent">#A855F7</item>
+        <item name="android:windowBackground">#0B1024</item>
+        <item name="android:statusBarColor">#0B1024</item>
+        <item name="android:navigationBarColor">#0B1024</item>
+    </style>
+</resources>

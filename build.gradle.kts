@@ -4,6 +4,8 @@
 
 plugins {
     kotlin("jvm") version "2.4.21" apply false
+    // Declared here (not only in the Android module) so AGP and the Kotlin plugin share one classloader.
+    id("com.android.application") version "9.5.1" apply false
 }
 
 allprojects {
