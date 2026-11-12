@@ -96,7 +96,7 @@
   },
   {
     "name": "read_region",
-    "description": "Reads a rectangle of pixels (max 128x128) as text. format 'ascii' (default) gives one string per row with a color legend ('.' = transparent) — ideal for reasoning about shapes; 'hex' gives colors; 'indexed' gives palette indices.",
+    "description": "Reads a rectangle of pixels (max 128x128) as text. format 'ascii' (default) gives one string per row with a color legend ('.' = transparent) — ideal for reasoning about shapes; 'hex' gives exact colors.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -130,7 +130,7 @@
         "format": {
           "type": "string",
           "description": "Output format.",
-          "enum": ["ascii","hex","indexed"]
+          "enum": ["ascii","hex"]
         },
         "composite": {
           "type": "boolean",
@@ -156,7 +156,7 @@
         },
         "color": {
           "type": "string",
-          "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
           "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
         },
         "layer": {
@@ -284,7 +284,7 @@
         },
         "color": {
           "type": "string",
-          "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
           "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
         },
         "layer": {
@@ -336,7 +336,7 @@
         },
         "color": {
           "type": "string",
-          "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
           "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
         },
         "filled": {
@@ -392,7 +392,7 @@
         },
         "color": {
           "type": "string",
-          "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
           "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
         },
         "filled": {
@@ -438,7 +438,7 @@
         },
         "color": {
           "type": "string",
-          "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
           "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
         },
         "contiguous": {
@@ -1444,7 +1444,7 @@
   },
   {
     "name": "palette_get",
-    "description": "Lists palette colors with their indices.",
+    "description": "Lists the project's color swatches with their indices. The canvas itself is true color and not limited to them.",
     "input_schema": {
       "type": "object",
       "properties": {},
@@ -1453,7 +1453,7 @@
   },
   {
     "name": "palette_set",
-    "description": "Changes a palette entry; every pixel using it is recolored (great for color variants).",
+    "description": "Changes a swatch; every pixel that used the old color is recolored (great for color variants).",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1464,7 +1464,7 @@
         },
         "color": {
           "type": "string",
-          "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
           "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
         },
         "expectedRevision": {
@@ -1483,7 +1483,7 @@
   },
   {
     "name": "palette_add",
-    "description": "Adds colors to the palette (plan a limited palette before drawing).",
+    "description": "Adds colors to the swatch list (plan a palette before drawing).",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -1491,7 +1491,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically.",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
             "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
           },
           "description": "Hex colors."
@@ -1754,6 +1754,1531 @@
         }
       },
       "required": ["commands"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "image_import",
+    "description": "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "data_base64": {
+          "type": "string",
+          "description": "PNG file as base64."
+        },
+        "x": {
+          "type": "integer",
+          "description": "X coordinate (0 = left)."
+        },
+        "y": {
+          "type": "integer",
+          "description": "Y coordinate (0 = top)."
+        },
+        "layer": {
+          "type": ["integer","string"],
+          "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+        },
+        "frame": {
+          "type": "integer",
+          "description": "0-based frame index. Defaults to the active frame.",
+          "minimum": 0
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["data_base64"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_model_create",
+    "description": "Creates a sparse voxel model (3D pixels), up to 512x512x512. y is up, the model's front faces +z, origin = point between the feet (default bottom center).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Model name."
+        },
+        "width": {
+          "type": "integer",
+          "description": "X size.",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "height": {
+          "type": "integer",
+          "description": "Y size (up).",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "depth": {
+          "type": "integer",
+          "description": "Z size.",
+          "minimum": 1,
+          "maximum": 512
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Ground pivot [x, y, z]."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_model_clone",
+    "description": "Duplicates a model (voxels, rig, animations). Build a static base once, clone it per frame and add the moving voxels: frame-by-frame VFX (fire, smoke, magic). empty=true clones only the rig/size.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "name": {
+          "type": "string",
+          "description": "New model name."
+        },
+        "empty": {
+          "type": "boolean",
+          "description": "Copy without voxels."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_model_delete",
+    "description": "Deletes a voxel model. Requires the user's approval.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["model"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_model_set",
+    "description": "Renames a model or moves its origin pivot.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "name": {
+          "type": "string",
+          "description": "New name."
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "New origin."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_inspect",
+    "description": "Models (size, voxel count, bounds, skeleton, animations), PBR materials and textures.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_get",
+    "description": "Color, material and bone of one voxel.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "x": {
+          "type": "integer",
+          "description": "X coordinate (0 = left)."
+        },
+        "y": {
+          "type": "integer",
+          "description": "Y coordinate (0 = top)."
+        },
+        "z": {
+          "type": "integer",
+          "description": "Z coordinate."
+        }
+      },
+      "required": ["x","y","z"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_set",
+    "description": "Places (or with 'transparent' removes) one voxel.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "x": {
+          "type": "integer",
+          "description": "X coordinate (0 = left)."
+        },
+        "y": {
+          "type": "integer",
+          "description": "Y coordinate (0 = top)."
+        },
+        "z": {
+          "type": "integer",
+          "description": "Z coordinate."
+        },
+        "color": {
+          "type": "string",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "material": {
+          "type": ["integer","string"],
+          "description": "PBR material name or index (default material 0)."
+        },
+        "bone": {
+          "type": ["integer","string"],
+          "description": "Bone name or index the voxels follow when animated."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["x","y","z","color"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_set_many",
+    "description": "Places up to 1,000,000 explicit voxels in one undoable step: [[x, y, z, color], ...] or objects with material/bone.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "voxels": {
+          "type": "array",
+          "items": {
+            "type": ["array","object"]
+          },
+          "description": "Voxels."
+        },
+        "color": {
+          "type": "string",
+          "description": "Default color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "material": {
+          "type": ["integer","string"],
+          "description": "PBR material name or index (default material 0)."
+        },
+        "bone": {
+          "type": ["integer","string"],
+          "description": "Bone name or index the voxels follow when animated."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["voxels"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_shape",
+    "description": "Sculpts or paints with a primitive. shape: box(min,max) | ellipsoid(center, radii or radius) | capsule(a, b, radius, radius_b — tapered limbs) | cone | cylinder(a, b, radius). mode: add | paint (recolor existing surface only) | erase. Extras: color_to + gradient_axis (gradients), jitter 0-1 (tonal noise for texture), mirror_x (symmetric, swaps _l/_r bones), material, bone.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "shape": {
+          "type": "string",
+          "description": "Primitive.",
+          "enum": ["box","ellipsoid","sphere","capsule","cone","cylinder"]
+        },
+        "mode": {
+          "type": "string",
+          "description": "Operation.",
+          "enum": ["add","paint","erase"]
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Box min corner."
+        },
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Box max corner (inclusive)."
+        },
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Ellipsoid center."
+        },
+        "radii": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Ellipsoid radii."
+        },
+        "radius": {
+          "type": "number",
+          "description": "Radius (capsule start / sphere / cylinder)."
+        },
+        "radius_b": {
+          "type": "number",
+          "description": "Capsule end radius (taper)."
+        },
+        "a": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Capsule/cylinder start."
+        },
+        "b": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Capsule/cylinder end."
+        },
+        "color": {
+          "type": "string",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "color_to": {
+          "type": "string",
+          "description": "Gradient end color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "gradient_axis": {
+          "type": "string",
+          "description": "Gradient axis.",
+          "enum": ["x","y","z"]
+        },
+        "jitter": {
+          "type": "number",
+          "description": "Tonal noise 0-1."
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Noise seed."
+        },
+        "mirror_x": {
+          "type": "boolean",
+          "description": "Also apply mirrored across the origin's X."
+        },
+        "material": {
+          "type": ["integer","string"],
+          "description": "PBR material name or index (default material 0)."
+        },
+        "bone": {
+          "type": ["integer","string"],
+          "description": "Bone name or index the voxels follow when animated."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["shape"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_mirror",
+    "description": "Copies one half onto the other across the origin's X plane (bones _l/_r swapped).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "from": {
+          "type": "string",
+          "description": "Source half.",
+          "enum": ["+","-"]
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "material_set",
+    "description": "Creates or updates a PBR material: roughness, metallic, emission, uv_scale (texels per voxel), normal_strength, maps {albedo, normal, roughness, metallic, occlusion, height, emission: texture name}.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Material name."
+        },
+        "roughness": {
+          "type": "number",
+          "description": "0-1."
+        },
+        "metallic": {
+          "type": "number",
+          "description": "0-1."
+        },
+        "emission": {
+          "type": "number",
+          "description": "Glow strength (0 = none)."
+        },
+        "uv_scale": {
+          "type": "number",
+          "description": "Texels per voxel."
+        },
+        "normal_strength": {
+          "type": "number",
+          "description": "0-4."
+        },
+        "maps": {
+          "type": "object",
+          "description": "Slot → texture name."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "texture_import",
+    "description": "Imports a PNG (base64) as a texture map usable in any PBR slot.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Texture name."
+        },
+        "data_base64": {
+          "type": "string",
+          "description": "PNG as base64."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name","data_base64"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "texture_generate",
+    "description": "Generates a tileable PBR set (albedo, normal, roughness, occlusion, height) and a material of the same name. kinds: noise, brushed_metal, hammered_metal, leather, fabric, scales, stone, wood, chainmail.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Set/material name."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Surface type.",
+          "enum": ["noise","brushed_metal","hammered_metal","leather","fabric","scales","stone","wood","chainmail"]
+        },
+        "size": {
+          "type": "integer",
+          "description": "Texture size (8-1024).",
+          "minimum": 8,
+          "maximum": 1024
+        },
+        "cells": {
+          "type": "integer",
+          "description": "Feature count across the tile.",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Seed."
+        },
+        "roughness": {
+          "type": "number",
+          "description": "Base roughness."
+        },
+        "metallic": {
+          "type": "number",
+          "description": "Metallic."
+        },
+        "contrast": {
+          "type": "number",
+          "description": "Albedo variation 0-1."
+        },
+        "uv_scale": {
+          "type": "number",
+          "description": "Texels per voxel."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name","kind"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rig_bone_add",
+    "description": "Adds a bone (pivot head → tail). Humanoid names enable the motion generators: hips, spine, chest, neck, head, upper_arm_l/r, lower_arm_l/r, hand_l/r, upper_leg_l/r, lower_leg_l/r, foot_l/r, cape. Character's left = +x.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Bone name."
+        },
+        "parent": {
+          "type": ["integer","string"],
+          "description": "Bone name or index the voxels follow when animated."
+        },
+        "head": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Pivot (joint) position."
+        },
+        "tail": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "End position."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name","head"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rig_clear",
+    "description": "Removes all bones, animations and bindings of a model. Requires approval.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "rig_bind",
+    "description": "Binds voxels to their nearest bone (only_unbound keeps explicit bindings from voxel_shape's bone).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "only_unbound": {
+          "type": "boolean",
+          "description": "Keep explicit bindings."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "anim3d_create",
+    "description": "Creates an empty keyframe animation.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Animation name."
+        },
+        "frames": {
+          "type": "integer",
+          "description": "Length in frames.",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "frame_ms": {
+          "type": "integer",
+          "description": "Milliseconds per frame.",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "loop": {
+          "type": "boolean",
+          "description": "Loops."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "anim3d_key",
+    "description": "Sets a bone's rotation (Euler degrees around its head) and position offset at a frame; frames between keys are interpolated.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "animation": {
+          "type": ["integer","string"],
+          "description": "Animation."
+        },
+        "bone": {
+          "type": ["integer","string"],
+          "description": "Bone name or index the voxels follow when animated."
+        },
+        "frame": {
+          "type": "number",
+          "description": "Frame."
+        },
+        "rotation": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Euler degrees [x, y, z]."
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Offset [x, y, z]."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["animation","bone","frame"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "anim3d_generate",
+    "description": "Generates a humanoid walk, run or idle cycle (foot planting, counter-swing, cape lag) from standard bone names.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Cycle.",
+          "enum": ["walk","run","idle"]
+        },
+        "name": {
+          "type": "string",
+          "description": "Animation name (default = kind)."
+        },
+        "frames": {
+          "type": "integer",
+          "description": "Frames (2-240).",
+          "minimum": 2,
+          "maximum": 240
+        },
+        "frame_ms": {
+          "type": "integer",
+          "description": "ms per frame.",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "stride": {
+          "type": "number",
+          "description": "Leg swing degrees."
+        },
+        "knee": {
+          "type": "number",
+          "description": "Knee bend degrees."
+        },
+        "arm_swing": {
+          "type": "number",
+          "description": "Arm swing degrees."
+        },
+        "bob": {
+          "type": "number",
+          "description": "Extra vertical bob (voxels)."
+        },
+        "lean": {
+          "type": "number",
+          "description": "Forward lean degrees."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_render",
+    "description": "Renders a model to PNG from any angle, animation frame and pass (lit PBR or a G-buffer map). Use it to look at your 3D work.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "yaw": {
+          "type": "number",
+          "description": "Turntable angle in degrees; 0 = front faces the camera, 90 = character faces screen-right."
+        },
+        "pitch": {
+          "type": "number",
+          "description": "Camera elevation in degrees (default 30; 0 = side view)."
+        },
+        "width": {
+          "type": "integer",
+          "description": "Output width in pixels (8-2048, default 256).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "height": {
+          "type": "integer",
+          "description": "Output height (default = width).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "scale": {
+          "type": "number",
+          "description": "Pixels per voxel. Omit to auto-fit the model."
+        },
+        "focus": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Model point to center in the image (close-ups, with scale)."
+        },
+        "animation": {
+          "type": ["integer","string"],
+          "description": "3D animation name/index."
+        },
+        "frame": {
+          "type": "number",
+          "description": "Animation time in frames (fractions allowed)."
+        },
+        "pass": {
+          "type": "string",
+          "description": "Render pass / G-buffer map.",
+          "enum": ["lit","albedo","normal","depth","occlusion","roughness","metallic","emission"]
+        },
+        "smoothness": {
+          "type": "number",
+          "description": "0 = crisp voxel faces (3D pixel look), 1 = smooth sprite shading (default 0.55)."
+        },
+        "toon_steps": {
+          "type": "integer",
+          "description": "0 = physically based; 2-16 = toon light bands.",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "outline": {
+          "type": ["boolean","string"],
+          "description": "true/'selective' = pixel-art selective outline, or a hex outline color."
+        },
+        "inner_lines": {
+          "type": "boolean",
+          "description": "Darken depth edges inside the silhouette (separates limbs)."
+        },
+        "supersample": {
+          "type": "integer",
+          "description": "1-4. 2 gives clean edges at small sprite sizes.",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "exposure": {
+          "type": "number",
+          "description": "Lighting exposure (default 1)."
+        },
+        "background": {
+          "type": "string",
+          "description": "Optional background color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "background_gradient": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[top, bottom] colors with a soft vignette (diorama look)."
+        },
+        "shadows": {
+          "type": "number",
+          "description": "Cast shadows from the key light, 0-1."
+        },
+        "ground_shadow": {
+          "type": "number",
+          "description": "Shadow on the ground under the model for transparent sprites (alpha 0-1)."
+        },
+        "bloom": {
+          "type": "number",
+          "description": "Glow around emissive voxels (0-4; 0.5-0.8 typical)."
+        },
+        "bloom_radius": {
+          "type": "number",
+          "description": "Glow radius in output pixels (0 = auto)."
+        },
+        "lights": {
+          "type": "array",
+          "description": "Point lights: [{position:[x,y,z], color, intensity, radius}] in model space (fires, windows, magic).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "key_light": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Key light direction (view space, toward the light)."
+        },
+        "key_intensity": {
+          "type": "number",
+          "description": "Key light intensity (default 3.2)."
+        },
+        "ambient": {
+          "type": "number",
+          "description": "Ambient multiplier (default 1; lower for night scenes)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_render_sheet",
+    "description": "Renders directions × animation frames into one sprite sheet (rows = directions S, SE, E, NE, N, NW, W, SW) for any pass — e.g. normal-map sheets for 2D dynamic lighting.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "directions": {
+          "type": "integer",
+          "description": "1, 2, 4, 8 or 16.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Frame-by-frame 3D animation: each model is one frame (VFX, morphs). One shared camera keeps it stable."
+        },
+        "name": {
+          "type": "string",
+          "description": "Sequence name (tags become <name>_<direction>)."
+        },
+        "frame_ms": {
+          "type": "integer",
+          "description": "Milliseconds per frame for sequences.",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "yaw": {
+          "type": "number",
+          "description": "Turntable angle in degrees; 0 = front faces the camera, 90 = character faces screen-right."
+        },
+        "pitch": {
+          "type": "number",
+          "description": "Camera elevation in degrees (default 30; 0 = side view)."
+        },
+        "width": {
+          "type": "integer",
+          "description": "Output width in pixels (8-2048, default 256).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "height": {
+          "type": "integer",
+          "description": "Output height (default = width).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "scale": {
+          "type": "number",
+          "description": "Pixels per voxel. Omit to auto-fit the model."
+        },
+        "focus": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Model point to center in the image (close-ups, with scale)."
+        },
+        "animation": {
+          "type": ["integer","string"],
+          "description": "3D animation name/index."
+        },
+        "frame": {
+          "type": "number",
+          "description": "Animation time in frames (fractions allowed)."
+        },
+        "pass": {
+          "type": "string",
+          "description": "Render pass / G-buffer map.",
+          "enum": ["lit","albedo","normal","depth","occlusion","roughness","metallic","emission"]
+        },
+        "smoothness": {
+          "type": "number",
+          "description": "0 = crisp voxel faces (3D pixel look), 1 = smooth sprite shading (default 0.55)."
+        },
+        "toon_steps": {
+          "type": "integer",
+          "description": "0 = physically based; 2-16 = toon light bands.",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "outline": {
+          "type": ["boolean","string"],
+          "description": "true/'selective' = pixel-art selective outline, or a hex outline color."
+        },
+        "inner_lines": {
+          "type": "boolean",
+          "description": "Darken depth edges inside the silhouette (separates limbs)."
+        },
+        "supersample": {
+          "type": "integer",
+          "description": "1-4. 2 gives clean edges at small sprite sizes.",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "exposure": {
+          "type": "number",
+          "description": "Lighting exposure (default 1)."
+        },
+        "background": {
+          "type": "string",
+          "description": "Optional background color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "background_gradient": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[top, bottom] colors with a soft vignette (diorama look)."
+        },
+        "shadows": {
+          "type": "number",
+          "description": "Cast shadows from the key light, 0-1."
+        },
+        "ground_shadow": {
+          "type": "number",
+          "description": "Shadow on the ground under the model for transparent sprites (alpha 0-1)."
+        },
+        "bloom": {
+          "type": "number",
+          "description": "Glow around emissive voxels (0-4; 0.5-0.8 typical)."
+        },
+        "bloom_radius": {
+          "type": "number",
+          "description": "Glow radius in output pixels (0 = auto)."
+        },
+        "lights": {
+          "type": "array",
+          "description": "Point lights: [{position:[x,y,z], color, intensity, radius}] in model space (fires, windows, magic).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "key_light": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Key light direction (view space, toward the light)."
+        },
+        "key_intensity": {
+          "type": "number",
+          "description": "Key light intensity (default 3.2)."
+        },
+        "ambient": {
+          "type": "number",
+          "description": "Ambient multiplier (default 1; lower for night scenes)."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_render_to_frames",
+    "description": "Bakes directions × animation frames into the 2D project as editable pixel frames on one layer, tagged per direction (e.g. walk_S, walk_SE). All sprites share one scale and ground line.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "directions": {
+          "type": "integer",
+          "description": "1, 2, 4, 8 or 16.",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "layer": {
+          "type": "string",
+          "description": "Target layer name (default '3D Render')."
+        },
+        "resize_canvas": {
+          "type": "boolean",
+          "description": "Resize the 2D canvas to the render size (default true)."
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Frame-by-frame 3D animation: each model is one frame (VFX, morphs). One shared camera keeps it stable."
+        },
+        "name": {
+          "type": "string",
+          "description": "Sequence name (tags become <name>_<direction>)."
+        },
+        "frame_ms": {
+          "type": "integer",
+          "description": "Milliseconds per frame for sequences.",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "yaw": {
+          "type": "number",
+          "description": "Turntable angle in degrees; 0 = front faces the camera, 90 = character faces screen-right."
+        },
+        "pitch": {
+          "type": "number",
+          "description": "Camera elevation in degrees (default 30; 0 = side view)."
+        },
+        "width": {
+          "type": "integer",
+          "description": "Output width in pixels (8-2048, default 256).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "height": {
+          "type": "integer",
+          "description": "Output height (default = width).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "scale": {
+          "type": "number",
+          "description": "Pixels per voxel. Omit to auto-fit the model."
+        },
+        "focus": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Model point to center in the image (close-ups, with scale)."
+        },
+        "animation": {
+          "type": ["integer","string"],
+          "description": "3D animation name/index."
+        },
+        "frame": {
+          "type": "number",
+          "description": "Animation time in frames (fractions allowed)."
+        },
+        "pass": {
+          "type": "string",
+          "description": "Render pass / G-buffer map.",
+          "enum": ["lit","albedo","normal","depth","occlusion","roughness","metallic","emission"]
+        },
+        "smoothness": {
+          "type": "number",
+          "description": "0 = crisp voxel faces (3D pixel look), 1 = smooth sprite shading (default 0.55)."
+        },
+        "toon_steps": {
+          "type": "integer",
+          "description": "0 = physically based; 2-16 = toon light bands.",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "outline": {
+          "type": ["boolean","string"],
+          "description": "true/'selective' = pixel-art selective outline, or a hex outline color."
+        },
+        "inner_lines": {
+          "type": "boolean",
+          "description": "Darken depth edges inside the silhouette (separates limbs)."
+        },
+        "supersample": {
+          "type": "integer",
+          "description": "1-4. 2 gives clean edges at small sprite sizes.",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "exposure": {
+          "type": "number",
+          "description": "Lighting exposure (default 1)."
+        },
+        "background": {
+          "type": "string",
+          "description": "Optional background color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "background_gradient": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[top, bottom] colors with a soft vignette (diorama look)."
+        },
+        "shadows": {
+          "type": "number",
+          "description": "Cast shadows from the key light, 0-1."
+        },
+        "ground_shadow": {
+          "type": "number",
+          "description": "Shadow on the ground under the model for transparent sprites (alpha 0-1)."
+        },
+        "bloom": {
+          "type": "number",
+          "description": "Glow around emissive voxels (0-4; 0.5-0.8 typical)."
+        },
+        "bloom_radius": {
+          "type": "number",
+          "description": "Glow radius in output pixels (0 = auto)."
+        },
+        "lights": {
+          "type": "array",
+          "description": "Point lights: [{position:[x,y,z], color, intensity, radius}] in model space (fires, windows, magic).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "key_light": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Key light direction (view space, toward the light)."
+        },
+        "key_intensity": {
+          "type": "number",
+          "description": "Key light intensity (default 3.2)."
+        },
+        "ambient": {
+          "type": "number",
+          "description": "Ambient multiplier (default 1; lower for night scenes)."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "voxel_pick",
+    "description": "Which voxel and face is under image pixel (px, py) for the given camera — used by 3D viewports for click editing.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": ["integer","string"],
+          "description": "Model index or name (default: the first model)."
+        },
+        "px": {
+          "type": "integer",
+          "description": "Pixel x."
+        },
+        "py": {
+          "type": "integer",
+          "description": "Pixel y."
+        },
+        "yaw": {
+          "type": "number",
+          "description": "Turntable angle in degrees; 0 = front faces the camera, 90 = character faces screen-right."
+        },
+        "pitch": {
+          "type": "number",
+          "description": "Camera elevation in degrees (default 30; 0 = side view)."
+        },
+        "width": {
+          "type": "integer",
+          "description": "Output width in pixels (8-2048, default 256).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "height": {
+          "type": "integer",
+          "description": "Output height (default = width).",
+          "minimum": 8,
+          "maximum": 2048
+        },
+        "scale": {
+          "type": "number",
+          "description": "Pixels per voxel. Omit to auto-fit the model."
+        },
+        "focus": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Model point to center in the image (close-ups, with scale)."
+        },
+        "animation": {
+          "type": ["integer","string"],
+          "description": "3D animation name/index."
+        },
+        "frame": {
+          "type": "number",
+          "description": "Animation time in frames (fractions allowed)."
+        },
+        "pass": {
+          "type": "string",
+          "description": "Render pass / G-buffer map.",
+          "enum": ["lit","albedo","normal","depth","occlusion","roughness","metallic","emission"]
+        },
+        "smoothness": {
+          "type": "number",
+          "description": "0 = crisp voxel faces (3D pixel look), 1 = smooth sprite shading (default 0.55)."
+        },
+        "toon_steps": {
+          "type": "integer",
+          "description": "0 = physically based; 2-16 = toon light bands.",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "outline": {
+          "type": ["boolean","string"],
+          "description": "true/'selective' = pixel-art selective outline, or a hex outline color."
+        },
+        "inner_lines": {
+          "type": "boolean",
+          "description": "Darken depth edges inside the silhouette (separates limbs)."
+        },
+        "supersample": {
+          "type": "integer",
+          "description": "1-4. 2 gives clean edges at small sprite sizes.",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "exposure": {
+          "type": "number",
+          "description": "Lighting exposure (default 1)."
+        },
+        "background": {
+          "type": "string",
+          "description": "Optional background color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "background_gradient": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[top, bottom] colors with a soft vignette (diorama look)."
+        },
+        "shadows": {
+          "type": "number",
+          "description": "Cast shadows from the key light, 0-1."
+        },
+        "ground_shadow": {
+          "type": "number",
+          "description": "Shadow on the ground under the model for transparent sprites (alpha 0-1)."
+        },
+        "bloom": {
+          "type": "number",
+          "description": "Glow around emissive voxels (0-4; 0.5-0.8 typical)."
+        },
+        "bloom_radius": {
+          "type": "number",
+          "description": "Glow radius in output pixels (0 = auto)."
+        },
+        "lights": {
+          "type": "array",
+          "description": "Point lights: [{position:[x,y,z], color, intensity, radius}] in model space (fires, windows, magic).",
+          "items": {
+            "type": "object"
+          }
+        },
+        "key_light": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Key light direction (view space, toward the light)."
+        },
+        "key_intensity": {
+          "type": "number",
+          "description": "Key light intensity (default 3.2)."
+        },
+        "ambient": {
+          "type": "number",
+          "description": "Ambient multiplier (default 1; lower for night scenes)."
+        }
+      },
+      "required": ["px","py"],
       "additionalProperties": false
     }
   }

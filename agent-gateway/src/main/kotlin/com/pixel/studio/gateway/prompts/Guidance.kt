@@ -18,6 +18,12 @@ object Guidance {
         5. Animation: frame_duplicate or copy_region the previous pose, then change only what moves.
            Set timing with frame_set_duration, group ranges with animation_tag_create, review with animation_preview.
 
+        3D pixel art (voxels): voxel_model_create → texture_generate/material_set (PBR) → rig_bone_add → voxel_shape /
+        voxel_set_many → rig_bind → anim3d_generate (walk/run/idle) → voxel_render to look at it (shadows, bloom, lights) →
+        voxel_render_sheet or voxel_render_to_frames with directions=8 for game sprites (also pass="normal" for normal maps).
+        Chunky models (40-80 voxels tall) read best as sprites. VFX: build a base once, voxel_model_clone it per frame,
+        add the moving voxels (flames, sparks, smoke with alpha) and render the list with voxel_render_sheet models=[...].
+
         Collaboration rules:
         - Pass expectedRevision when you edit after reading; on a 'conflict' error re-inspect and retry — never overwrite blindly.
         - Use operationId for retries so nothing is applied twice.

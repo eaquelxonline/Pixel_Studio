@@ -35,6 +35,7 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.directories += layout.buildDirectory.dir("rustJniLibs").get().asFile.path
+            assets.directories += layout.buildDirectory.dir("demoAssets").get().asFile.path
         }
     }
 }
@@ -81,4 +82,9 @@ val stageRustLibs = tasks.register<Copy>("stageRustLibs") {
     into(layout.buildDirectory.dir("rustJniLibs"))
 }
 
-tasks.named("preBuild") { dependsOn(stageRustLibs) }
+val stageDemoAssets = tasks.register<Copy>("stageDemoAssets") {
+    from(rootProject.file("assets/knight/knight.jsonl"))
+    into(layout.buildDirectory.dir("demoAssets"))
+}
+
+tasks.named("preBuild") { dependsOn(stageRustLibs, stageDemoAssets) }

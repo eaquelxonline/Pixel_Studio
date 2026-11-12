@@ -47,6 +47,8 @@ class MainActivity : Activity() {
     private val app get() = application as PixelStudioApplication
     private val engine get() = app.engine
     private lateinit var canvas: PixelCanvasView
+    private lateinit var voxels: VoxelView
+    private lateinit var stage: android.widget.FrameLayout
     private lateinit var paletteRow: LinearLayout
     private lateinit var frameLabel: TextView
     private lateinit var status: TextView
@@ -61,7 +63,9 @@ class MainActivity : Activity() {
         canvas = PixelCanvasView(this, engine).apply { onColorPicked = { selectColor(it) } }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFF0B1024.toInt()) }
         root.addView(topBar())
-        root.addView(canvas, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        voxels = VoxelView(this, engine).apply { visibility = View.GONE }
+        stage = android.widget.FrameLayout(this).apply { addView(canvas); addView(voxels) }
+        root.addView(stage, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         root.addView(scrollRow(toolRow()))
         paletteRow = LinearLayout(this).apply { setPadding(8, 4, 8, 4) }
         root.addView(scrollRow(paletteRow))
@@ -144,6 +148,7 @@ class MainActivity : Activity() {
         addView(button("↶") { engine.execute("history_undo") })
         addView(button("↷") { engine.execute("history_redo") })
         addView(button("Layers") { layersDialog() })
+        addView(button("3D") { toggle3d() })
         addView(button("Agent") { agentDialog() })
         addView(button("☰") { fileMenu() })
     }
@@ -351,6 +356,33 @@ class MainActivity : Activity() {
                 }
             }
             .setNegativeButton("Close", null).show()
+    }
+
+    private fun toggle3d() {
+        val show3d = voxels.visibility != View.VISIBLE
+        voxels.visibility = if (show3d) View.VISIBLE else View.GONE
+        canvas.visibility = if (show3d) View.GONE else View.VISIBLE
+        if (!show3d) return
+        val models = voxels.models()
+        val items = (models + listOf("Load knight demo", "Play / pause walk")).toTypedArray()
+        AlertDialog.Builder(this).setTitle("3D Voxel").setItems(items) { _, which ->
+            when {
+                which < models.size -> { voxels.model = models[which]; voxels.requestRender() }
+                which == models.size -> loadKnight()
+                else -> { voxels.model = "Knight"; voxels.animation = "walk"; voxels.togglePlay() }
+            }
+        }.show()
+        voxels.requestRender()
+    }
+
+    private fun loadKnight() {
+        toast("Building the knight…")
+        Thread {
+            assets.open("knight.jsonl").bufferedReader().useLines { lines ->
+                lines.filter { it.isNotBlank() }.forEach { engine.executeRaw(it.toByteArray()) }
+            }
+            main.post { voxels.model = "Diorama"; voxels.requestRender() }
+        }.start()
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()

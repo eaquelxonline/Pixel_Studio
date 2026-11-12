@@ -106,11 +106,12 @@ pub struct SurfaceSample {
 }
 
 /// Samples all maps of a material at a voxel face. `axis` = face axis (0 x, 1 y, 2 z).
-pub fn sample_surface(mat: &Material, textures: &[Arc<Texture>], pos: [i32; 3], axis: usize) -> SurfaceSample {
+/// `pos` is the model-space point on the face (sub-voxel precision gives texel detail when zoomed in).
+pub fn sample_surface(mat: &Material, textures: &[Arc<Texture>], pos: [f32; 3], axis: usize) -> SurfaceSample {
     let (u, v) = match axis {
-        0 => (pos[2] as f32, -(pos[1] as f32)),
-        1 => (pos[0] as f32, pos[2] as f32),
-        _ => (pos[0] as f32, -(pos[1] as f32)),
+        0 => (pos[2], -pos[1]),
+        1 => (pos[0], pos[2]),
+        _ => (pos[0], -pos[1]),
     };
     let (u, v) = (u * mat.uv_scale, v * mat.uv_scale);
     let tex = |slot: MapSlot| mat.maps[slot as usize].and_then(|i| textures.get(i)).map(|t| t.sample(u, v));
@@ -346,8 +347,8 @@ mod tests {
         let mut mat = Material::new("stone");
         mat.maps[MapSlot::Albedo as usize] = Some(0);
         mat.maps[MapSlot::Normal as usize] = Some(1);
-        let a = sample_surface(&mat, &textures, [3, 5, 1], 2);
-        let b = sample_surface(&mat, &textures, [9, 2, 1], 2);
+        let a = sample_surface(&mat, &textures, [3.5, 5.5, 1.0], 2);
+        let b = sample_surface(&mat, &textures, [9.5, 2.5, 1.0], 2);
         assert!(a.albedo_mul != b.albedo_mul || a.normal_ts != b.normal_ts);
         assert!((a.normal_ts.length() - 1.0).abs() < 1e-3);
     }

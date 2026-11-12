@@ -13,7 +13,7 @@ use crate::pixel::{PixelGrid, Rgba};
 use crate::project::{Document, MAX_FRAMES, validate_size};
 use crate::voxel::material::{MAP_SLOTS, MapSlot, TEXTURE_KINDS, generate_set, slot_by_name};
 use crate::voxel::model::{MAX_BONES, MAX_MODEL_SIZE, hash01};
-use crate::voxel::render::{Camera, Outline, Pass, Prepared, RenderSettings, pick, prepare, render, view_extent};
+use crate::voxel::render::{Camera, Outline, Pass, PointLight, Prepared, RenderSettings, pick, prepare, render, view_extent};
 use crate::voxel::rig::{Animation, Bone, CycleParams, Key, auto_bind, idle_cycle, locomotion_cycle};
 use crate::voxel::{Material, Shape, Texture, Vec3, Voxel, VoxelModel};
 
@@ -183,6 +183,26 @@ pub fn model_create(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
             .with("size", Json::Arr(size.iter().map(|&d| Json::from(d)).collect())),
         0,
     ))
+}
+
+/// Duplicates a model (voxels, rig, animations) — the basis of frame-by-frame 3D animation and VFX.
+pub fn model_clone(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+    let i = model_index(doc, a)?;
+    let name = name_arg(a, "name", 128)?;
+    if doc.models.iter().any(|m| m.name == name) {
+        return Err(CmdError::invalid(format!("model '{name}' already exists")));
+    }
+    if doc.models.len() >= 4096 {
+        return Err(CmdError::new("limit", "at most 4096 models"));
+    }
+    let mut copy = doc.models[i].clone();
+    copy.name = name.clone();
+    if opt_bool(a, "empty")?.unwrap_or(false) {
+        copy.chunks.clear();
+    }
+    copy.touch();
+    doc.models.push(copy);
+    Ok(Outcome::new(Json::obj().with("model", doc.models.len() - 1).with("name", name), 0))
 }
 
 pub fn model_delete(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -750,6 +770,51 @@ fn settings_from(doc: &Document, model: &VoxelModel, a: &Json, width: u32, heigh
     if let Some(e) = opt_f64(a, "exposure")? {
         s.lighting.exposure = e.clamp(0.05, 8.0) as f32;
     }
+    s.shadows = match a.get("shadows") {
+        Some(Json::Bool(b)) => *b as u8 as f32,
+        _ => opt_f64(a, "shadows")?.unwrap_or(0.0).clamp(0.0, 1.0) as f32,
+    };
+    s.ground_shadow = opt_f64(a, "ground_shadow")?.unwrap_or(0.0).clamp(0.0, 1.0) as f32;
+    s.bloom = opt_f64(a, "bloom")?.unwrap_or(0.0).clamp(0.0, 4.0) as f32;
+    s.bloom_radius = opt_f64(a, "bloom_radius")?.unwrap_or(0.0).clamp(0.0, 256.0) as f32;
+    if let Some(dir) = opt_vec3(a, "key_light")? {
+        s.lighting.lights[0].dir = Vec3::from_f64(dir).normalized();
+    }
+    if let Some(v) = opt_f64(a, "key_intensity")? {
+        s.lighting.lights[0].intensity = v.clamp(0.0, 20.0) as f32;
+    }
+    if let Some(v) = opt_f64(a, "ambient")? {
+        let k = v.clamp(0.0, 4.0) as f32;
+        s.lighting.sky = s.lighting.sky * k;
+        s.lighting.ground = s.lighting.ground * k;
+    }
+    if let Some(Json::Arr(g)) = a.get("background_gradient") {
+        if g.len() != 2 {
+            return Err(CmdError::invalid("'background_gradient' must be [top, bottom] colors"));
+        }
+        let top = Rgba::from_u32(color_value(doc, &g[0], "background_gradient")?);
+        let bottom = Rgba::from_u32(color_value(doc, &g[1], "background_gradient")?);
+        s.background_gradient = Some((top, bottom));
+    }
+    if let Some(Json::Arr(lights)) = a.get("lights") {
+        if lights.len() > 32 {
+            return Err(CmdError::new("limit", "at most 32 point lights"));
+        }
+        for (i, l) in lights.iter().enumerate() {
+            let pos = Vec3::from_f64(req_vec3(l, "position").map_err(|e| CmdError::invalid(format!("lights[{i}]: {}", e.message)))?);
+            let c = Rgba::from_u32(match l.get("color") {
+                Some(c) => color_value(doc, c, "lights.color")?,
+                None => Rgba::new(255, 170, 90, 255).to_pixel(),
+            });
+            let lin = |v: u8| (v as f32 / 255.0).powf(2.2);
+            s.lighting.points.push(PointLight {
+                pos,
+                color: Vec3::new(lin(c.r), lin(c.g), lin(c.b)),
+                intensity: opt_f64(l, "intensity")?.unwrap_or(4.0).clamp(0.0, 200.0) as f32,
+                radius: opt_f64(l, "radius")?.unwrap_or(48.0).clamp(1.0, 2048.0) as f32,
+            });
+        }
+    }
     s.animation = match anim_index(model, a, "animation")? {
         Some(ai) => Some((ai, opt_f64(a, "frame")?.unwrap_or(0.0) as f32)),
         None => None,
@@ -841,7 +906,67 @@ struct Bake {
     anim_name: String,
 }
 
+/// Frame-by-frame 3D animation: every listed model is one frame (VFX, morphs, hand-keyed poses).
+fn bake_sequence(doc: &Document, cache: &mut RenderCache, a: &Json, list: &[Json]) -> CmdResult<Bake> {
+    if list.is_empty() || list.len() > 1024 {
+        return Err(CmdError::invalid("'models' must list 1-1024 models"));
+    }
+    let mut indices = Vec::with_capacity(list.len());
+    for m in list {
+        indices.push(model_index(doc, &Json::obj().with("model", m.clone()))?);
+    }
+    let (w, h) = render_dims(a, 256)?;
+    let dirs = directions(opt_i64(a, "directions")?.unwrap_or(1))?;
+    let frame_ms = validate_duration(opt_i64(a, "frame_ms")?.unwrap_or(66))?;
+    let margin = opt_f64(a, "margin")?.unwrap_or(6.0) as f32;
+    let explicit = opt_f64(a, "scale")?.map(|v| v.clamp(0.05, 64.0) as f32);
+    // One shared camera for the whole sequence so the effect does not jitter: fit the union of
+    // every frame's extent, keep the origin centered and the ground line fixed.
+    let (mut half_w, mut lo_y, mut hi_y) = (0.0f32, f32::MAX, f32::MIN);
+    for &mi in &indices {
+        let model = &doc.models[mi];
+        let prepared = cache.get(model);
+        for (_, yaw) in &dirs {
+            let mut s = settings_from(doc, model, a, w, h)?;
+            s.camera.yaw = *yaw;
+            if let Some((x0, x1, y0, y1)) = view_extent(model, &prepared, &s) {
+                half_w = half_w.max(x0.abs()).max(x1.abs());
+                lo_y = lo_y.min(y0);
+                hi_y = hi_y.max(y1);
+            }
+        }
+    }
+    if half_w == 0.0 {
+        return Err(CmdError::invalid("all models in the sequence are empty"));
+    }
+    let scale = explicit.unwrap_or_else(|| ((w as f32 / 2.0 - margin) / half_w).min((h as f32 - 2.0 * margin) / (hi_y - lo_y))).max(0.05);
+    let (ax, ay) = (w as f32 / 2.0, h as f32 - margin + lo_y * scale);
+    let mut images = Vec::new();
+    for (dname, yaw) in &dirs {
+        for (f, &mi) in indices.iter().enumerate() {
+            let model = &doc.models[mi];
+            let mut s = settings_from(doc, model, a, w, h)?;
+            s.camera.yaw = *yaw;
+            s.camera.scale = scale;
+            s.camera.anchor_x = ax;
+            s.camera.anchor_y = ay;
+            if let Some(f) = opt_vec3(a, "focus")? {
+                let v = s.camera.view_rotation().apply(Vec3::from_f64(f) - model.origin);
+                s.camera.anchor_x = w as f32 / 2.0 - v.x * scale;
+                s.camera.anchor_y = h as f32 / 2.0 + v.y * scale;
+            }
+            let prepared = cache.get(model);
+            images.push((dname.to_string(), *yaw, f as u32, render(model, &prepared, &doc.materials, &doc.textures, &s)));
+        }
+    }
+    let name = opt_str(a, "name")?.unwrap_or("sequence").to_string();
+    Ok(Bake { images, frame_ms, frames: indices.len() as u32, scale, anim_name: name })
+}
+
 fn bake(doc: &Document, cache: &mut RenderCache, a: &Json) -> CmdResult<Bake> {
+    if let Some(Json::Arr(list)) = a.get("models") {
+        return bake_sequence(doc, cache, a, list);
+    }
     let mi = model_index(doc, a)?;
     let model = &doc.models[mi];
     let (w, h) = render_dims(a, 256)?;

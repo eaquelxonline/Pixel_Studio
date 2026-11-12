@@ -158,6 +158,10 @@ class ToolExecutor(
     private fun imageResult(r: EngineResponse, mime: String): ToolResult {
         if (!r.ok) return jsonResult(r)
         val s = structured(r)
+        // Very large sheets are summarized instead of inlined (MCP clients have message limits).
+        if (r.binary.size > 6 * 1024 * 1024) {
+            return ToolResult(listOf(text(Json.write(s) + "\nImage is ${r.binary.size} bytes; render fewer directions/frames or a smaller width to view it inline.")), s, isError = false)
+        }
         return ToolResult(listOf(image(r.binary, mime), text(Json.write(s))), s, isError = false)
     }
 

@@ -27,6 +27,11 @@ application {
     mainClass.set("com.pixel.studio.desktop.PixelStudioAppKt")
 }
 
+// Bundle the hero demo script so "Load hero demo" works offline.
+tasks.processResources {
+    from(rootProject.file("assets/knight/knight.jsonl")) { into("com/pixel/studio/desktop") }
+}
+
 tasks.named<JavaExec>("run") {
     dependsOn(rootProject.tasks.named("buildRustCore"))
     jvmArgs("-Dpixcore.path=${nativeLib.absolutePath}", "-Dsun.java2d.uiScale.enabled=true")

@@ -139,6 +139,7 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     // 3D pixel art
     ("voxel_model_create", Kind::Mutate),
     ("voxel_model_delete", Kind::Mutate),
+    ("voxel_model_clone", Kind::Mutate),
     ("voxel_model_set", Kind::Mutate),
     ("voxel_set", Kind::Mutate),
     ("voxel_set_many", Kind::Mutate),
@@ -172,6 +173,7 @@ pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json, payload: &[u8], ca
         "image_import" => voxel::image_import(doc, a, payload),
         "voxel_model_create" => voxel::model_create(doc, a),
         "voxel_model_delete" => voxel::model_delete(doc, a),
+        "voxel_model_clone" => voxel::model_clone(doc, a),
         "voxel_model_set" => voxel::model_set(doc, a),
         "voxel_set" => voxel::voxel_set(doc, a),
         "voxel_set_many" => voxel::voxel_set_many(doc, a),

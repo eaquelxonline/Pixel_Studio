@@ -291,4 +291,34 @@ class GatewayTest {
         val offline = StdioBridge("http://127.0.0.1:1/mcp", token).forward("""{"jsonrpc":"2.0","id":9,"method":"ping"}""")!!
         assertTrue(offline.contains("not reachable"))
     }
+
+    @Test
+    fun threeDimensionalPixelArtOverMcp() {
+        fun call(tool: String, args: Map<String, Any?>): Map<String, Any?> {
+            val r = callLegacy(tool, args)
+            assertEquals(false, r["isError"], "$tool failed: ${Json.write(r)}")
+            return r
+        }
+        call("voxel_model_create", mapOf("name" to "Bot", "width" to 48, "height" to 64, "depth" to 48))
+        call("texture_generate", mapOf("name" to "steel", "kind" to "brushed_metal", "size" to 32, "metallic" to 0.9))
+        call("rig_bone_add", mapOf("name" to "hips", "head" to listOf(24, 30, 24), "tail" to listOf(24, 36, 24)))
+        call("rig_bone_add", mapOf("name" to "upper_leg_l", "parent" to "hips", "head" to listOf(28, 30, 24), "tail" to listOf(28, 2, 24)))
+        call("rig_bone_add", mapOf("name" to "upper_leg_r", "parent" to "hips", "head" to listOf(20, 30, 24), "tail" to listOf(20, 2, 24)))
+        call("voxel_shape", mapOf("shape" to "box", "min" to listOf(17, 30, 19), "max" to listOf(31, 55, 29), "color" to "#8899AA", "material" to "steel", "bone" to "hips"))
+        call("voxel_shape", mapOf("shape" to "capsule", "a" to listOf(28, 29, 24), "b" to listOf(28, 2, 24), "radius" to 3, "color" to "#334455", "bone" to "upper_leg_l", "mirror_x" to true))
+        call("anim3d_generate", mapOf("kind" to "walk", "frames" to 8))
+        val render = call("voxel_render", mapOf("yaw" to 45, "width" to 96, "animation" to "walk", "frame" to 2, "outline" to true))
+        val image = render.list("content")!!.first() as Map<*, *>
+        assertEquals("image", image["type"])
+        assertEquals(96, ImageIO.read(Base64.getDecoder().decode(image["data"] as String).inputStream()).width)
+        val normals = call("voxel_render_sheet", mapOf("animation" to "walk", "directions" to 8, "width" to 32, "pass" to "normal"))
+        assertEquals(8L, normals.obj("structuredContent")!!.obj("result")!!.long("rows"))
+        val baked = call("voxel_render_to_frames", mapOf("animation" to "walk", "directions" to 4, "width" to 64))
+        assertEquals(32L, baked.obj("structuredContent")!!.obj("result")!!.long("framesAdded"))
+        assertEquals(32, engine.execute("canvas_inspect").result.list("frames")!!.size)
+        val inspect = call("voxel_inspect", emptyMap()).obj("structuredContent")!!.obj("result")!!
+        assertEquals("Bot", (inspect.list("models")!!.first() as Map<*, *>)["name"])
+        val deleted = callLegacy("voxel_model_delete", mapOf("model" to "Bot"))
+        assertEquals(true, deleted["isError"], "deleting a model needs the human's approval")
+    }
 }

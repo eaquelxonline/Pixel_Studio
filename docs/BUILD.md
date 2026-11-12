@@ -4,21 +4,22 @@
 
 | Araç | Sürüm |
 | --- | --- |
-| Rust | 1.97 (edition 2024), yalnızca `std` |
-| JDK | 21 (bytecode hedefi 17) |
+| Rust | 1.100.0 (edition 2024, `rust-toolchain.toml` ile sabit), yalnızca `std` |
+| JDK | 25 LTS (bytecode hedefi 17) |
 | Kotlin | 2.4.21 |
-| Gradle | 9.6.0 (wrapper) |
+| Gradle | 9.9.1 (wrapper) |
 | Android Gradle Plugin | 9.5.1 (yerleşik Kotlin) |
-| Android | compileSdk/targetSdk 37 (Android 17), minSdk 30 (Android 11) |
+| Android | compileSdk 37.2, targetSdk 37 (Android 17), minSdk 30 (Android 11) |
 | NDK | 30.0.16248370 |
 
 ## Rust çekirdeği
 
 ```bash
 cd core-rust
-cargo test                    # 37 test (golden render dahil)
+cargo test                    # 55 test (golden render dahil)
 cargo clippy --all-targets    # uyarısız
-cargo run --example run_script -- ../tests/golden/scene.jsonl out/ 32 32 10   # betiği PNG/GIF/.pxs'e dönüştürür
+cargo run --release --example run_script -- ../tests/golden/scene.jsonl out/ 32 32 10   # betiği PNG/GIF/.pxs'e dönüştürür
+cargo run --release --example run_script -- ../assets/knight/knight_showcase.jsonl out/  # şövalye + sprite'lar
 ```
 
 ## Masaüstü / Windows

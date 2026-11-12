@@ -39,6 +39,7 @@ const val APP_ID = "com.pixel.studio"
 
 class PixelStudioWindow(private val c: EditorController, private val gateway: AgentGateway) : JFrame("Pixel Studio") {
     private val canvas = CanvasView(c)
+    val voxels = VoxelPanel(c)
     private val status = JLabel(" ")
     private var cursorText = ""
 
@@ -50,9 +51,14 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
         jMenuBar = menus()
         contentPane.background = Theme.BG
         contentPane.layout = BorderLayout()
-        contentPane.add(toolbar(), BorderLayout.WEST)
-        contentPane.add(canvas, BorderLayout.CENTER)
-        contentPane.add(JPanel().apply {
+        val pixel2d = JPanel(BorderLayout())
+        pixel2d.add(toolbar(), BorderLayout.WEST)
+        pixel2d.add(canvas, BorderLayout.CENTER)
+        val tabs = javax.swing.JTabbedPane()
+        tabs.addTab("2D Pixel", pixel2d)
+        tabs.addTab("3D Voxel", voxels)
+        contentPane.add(tabs, BorderLayout.CENTER)
+        pixel2d.add(JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             background = Theme.PANEL
             preferredSize = Dimension(260, 400)
@@ -274,14 +280,19 @@ fun main(args: Array<String>) {
         val w = PixelStudioWindow(c, finalGateway)
         window = w
         val screenshotIndex = args.indexOf("--screenshot")
+        val tabIndex = args.indexOf("--tab")
         val scriptIndex = args.indexOf("--script")
         if (scriptIndex >= 0 && scriptIndex + 1 < args.size) {
             File(args[scriptIndex + 1]).readLines().filter { it.isNotBlank() }.forEach { engine.executeRaw(it.toByteArray()) }
         }
         args.firstOrNull { it.endsWith(".pxs") }?.let { w.openFile(File(it)) }
         w.isVisible = true
+        if (tabIndex >= 0 && args.getOrNull(tabIndex + 1) == "3d") {
+            (w.contentPane.components.firstOrNull { it is javax.swing.JTabbedPane } as? javax.swing.JTabbedPane)?.selectedIndex = 1
+            if ("--hero" in args) w.voxels.javaClass.getDeclaredMethod("loadHero").apply { isAccessible = true }.invoke(w.voxels)
+        }
         if (screenshotIndex >= 0 && screenshotIndex + 1 < args.size) {
-            javax.swing.Timer(1500) {
+            javax.swing.Timer(if ("--hero" in args) 12000 else 1500) {
                 ImageIO.write(w.snapshot(), "png", File(args[screenshotIndex + 1]))
                 finalGateway.close()
                 System.exit(0)

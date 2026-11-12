@@ -33,7 +33,9 @@ Yanıt `{"ok":true,"op":"set_pixel","revision":126,"actor":"...","result":{...}}
 ```
 Document
  ├─ name, width, height (1..4096)
- ├─ palette: Vec<RGBA>  (indeks 0 = saydam, en fazla 65 536 renk)
+ ├─ palette: Vec<RGBA>  (renk örnekleri; tuval gerçek renk)
+ ├─ models: [VoxelModel{size ≤ 512³, chunks 16³, bones, animations}]
+ ├─ materials: [Material{PBR + 7 harita}], textures: [RGBA8]
  ├─ layers: [Layer{id, name, visible, locked, opacity}]   alttan üste
  ├─ frames: [Frame{id, duration_ms}]                       sabit kare sınırı yok
  ├─ tags:   [Tag{name, from_id, to_id, direction, repeat}] Idle/Walk/Attack
@@ -41,7 +43,8 @@ Document
                PixelGrid = 16×16 tile ızgarası, tile = Option<Arc<[u16; 256]>>
 ```
 
-- Pikseller **palet indeksi** (u16) olarak tutulur. Palet girdisini değiştirmek o rengi kullanan tüm pikselleri yeniden renklendirir. Hex renkle çizim yapıldığında yeni renk palete otomatik eklenir.
+- Pikseller **gerçek renk** (`0xRRGGBBAA`, u32) olarak tutulur; renk sınırı yoktur. Palet yalnızca renk örneği (swatch) listesidir. Bir örneği değiştirmek, eski rengi kullanan tüm pikselleri yeniden renklendirir.
+- 3D modeller (`models`), PBR materyaller ve dokular aynı belgede bulunur. Ayrıntılar için [VOXEL.md](VOXEL.md).
 - Tile'lar ve cel'ler **copy-on-write**'tır. Kare çoğaltmak işaretçi kopyalar; değişmeyen tile'lar kareler arasında fiziksel olarak paylaşılır. Undo anlık görüntüsü bu yüzden ucuzdur.
 - Katman ve kare kimlikleri yeniden sıralamadan etkilenmez. API'de kullanıcılar indekslerle çalışır.
 
