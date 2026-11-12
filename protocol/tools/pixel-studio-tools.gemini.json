@@ -1775,17 +1775,34 @@
     },
     {
       "name": "outline",
-      "description": "Adds a 1-pixel outline around a layer's pixels: a fixed color or 'selective' (each edge pixel is a darker, cooler shade of what it borders — the pro look).",
+      "description": "Adds a 1-pixel outline around a layer's pixels: a fixed color, 'selective' (each edge pixel is a darker, cooler shade of what it borders) or mode 'selout' (selective + lighter on the lit side — the soft pastel anime look). inside=true draws on the shape's edge pixels instead of growing it.",
       "parameters": {
         "type": "object",
         "properties": {
           "color": {
             "type": "string",
-            "description": "Hex color or 'selective' (default)."
+            "description": "Hex color, 'selective' (default) or 'selout'."
           },
           "corners": {
             "type": "boolean",
             "description": "Include diagonal corners."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Outline style.",
+            "enum": ["selective","selout","solid"]
+          },
+          "darkness": {
+            "type": "number",
+            "description": "0.05-0.95: how dark generated outlines are (default 0.58; pastel ≈ 0.4)."
+          },
+          "inside": {
+            "type": "boolean",
+            "description": "Draw on the edge pixels (keeps the size)."
+          },
+          "light": {
+            "type": "string",
+            "description": "Light direction for selout (default top-left). (number or name as text)"
           },
           "layer": {
             "type": "string",
@@ -2938,6 +2955,247 @@
           "image": {
             "type": "string",
             "description": "Tileset image file name referenced by the map."
+          }
+        }
+      }
+    },
+    {
+      "name": "auto_shade",
+      "description": "Shades flat-colored shapes like an anime pixel artist: every same-color region gets hue-shifted 2-4 tone cel shading that follows its outline (lit edges toward the light, shadow on the far side), layers ABOVE cast shadows onto it (bangs on the forehead, head on the neck), optional rim light. Workflow: block the character in flat colors on separate layers (hair back, body, face, hair front), auto_shade each, outline mode=selout, then hand-paint eyes and highlights. Regions smaller than min_region (eyes, buttons) and 'preserve' colors are untouched.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer (default active). (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame index (default active).",
+            "minimum": 0
+          },
+          "scope": {
+            "type": "string",
+            "description": "cel (default) | layer (all frames) | frame (all layers) | all.",
+            "enum": ["cel","layer","frame","all"]
+          },
+          "light": {
+            "type": "string",
+            "description": "Light direction: top-left (default), top-right, top, left, right, bottom, front, or [x, y] (image space, y down). (number or name as text)"
+          },
+          "tones": {
+            "type": "integer",
+            "description": "2 = base+shadow, 3 = +highlight (default), 4 = +deep shadow.",
+            "minimum": 2,
+            "maximum": 4
+          },
+          "bevel": {
+            "type": "number",
+            "description": "How far edge shading reaches into shapes, px (default 3)."
+          },
+          "form": {
+            "type": "number",
+            "description": "Whole-shape light→shadow gradient 0-2 (default 0.45)."
+          },
+          "shadow": {
+            "type": "number",
+            "description": "-1..1: more (positive) or less shadow."
+          },
+          "cast_shadow": {
+            "type": "integer",
+            "description": "Shadow length cast by layers above, px (default 2, 0 = off).",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "hue_shift": {
+            "type": "number",
+            "description": "Auto ramp hue shift in degrees (default 22)."
+          },
+          "contrast": {
+            "type": "number",
+            "description": "Auto ramp contrast 0.05-1 (default 0.5; pastel ≈ 0.35)."
+          },
+          "ramps": {
+            "type": "object",
+            "description": "Explicit ramps: {\"#base\": [shadow, highlight] | [shadow, base, highlight] | [deep, shadow, base, highlight]}."
+          },
+          "preserve": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'."
+            },
+            "description": "Colors never shaded."
+          },
+          "min_region": {
+            "type": "integer",
+            "description": "Smallest region shaded, px (default 6).",
+            "minimum": 1
+          },
+          "rim": {
+            "type": "string",
+            "description": "Rim-light color on edges facing away from the light."
+          },
+          "rim_strength": {
+            "type": "number",
+            "description": "Rim blend 0-1 (default 0.55)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "gradient_map",
+      "description": "Color-grades by mapping luminance onto a dark→light gradient (rainy blue night, sunset, sepia flashback, unified palettes), blended by strength.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'."
+            },
+            "description": "2-32 colors from dark to light."
+          },
+          "strength": {
+            "type": "number",
+            "description": "0-1 (default 1)."
+          },
+          "scope": {
+            "type": "string",
+            "description": "cel (default) | layer (all frames) | frame (all layers) | all.",
+            "enum": ["cel","layer","frame","all"]
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["colors"]
+      }
+    },
+    {
+      "name": "draw_sparkle",
+      "description": "Stamps 4-point sparkles (star4), crosses, diamonds or dots — the cute twinkles around chibi characters, magic, item shine, starry skies.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Center x."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Center y."
+          },
+          "size": {
+            "type": "integer",
+            "description": "Arm length 1-8 (default 3).",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array"
+            },
+            "description": "Many sparkles: [[x, y] or [x, y, size], …]."
+          },
+          "style": {
+            "type": "string",
+            "description": "Shape.",
+            "enum": ["star4","cross","diamond","dot"]
+          },
+          "color": {
+            "type": "string",
+            "description": "Arm color (default #FFE9B0)."
+          },
+          "core": {
+            "type": "string",
+            "description": "Center color (default white)."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "pixel_cleanup",
+      "description": "Removes L-shaped corner doubles from 1-px lines (the 'pixel perfect' pass) so outlines and strands read clean.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "Only lines of this color."
+          },
+          "passes": {
+            "type": "integer",
+            "description": "1-4.",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "scope": {
+            "type": "string",
+            "description": "cel (default) | layer (all frames) | frame (all layers) | all.",
+            "enum": ["cel","layer","frame","all"]
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
           }
         }
       }

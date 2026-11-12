@@ -32,7 +32,7 @@ Sunucu "dual-era"dır ve iki dönemi aynı endpoint'te sunar:
 
 Yanıtlar her zaman `application/json` olarak döner. Bildirimler `202` alır. `GET /mcp` isteği `405` döner.
 
-## Araçlar (104)
+## Araçlar (108)
 
 Tam şemalar `protocol/tools/pixel-studio-tools.mcp.json` dosyasındadır.
 
@@ -42,7 +42,7 @@ Tam şemalar `protocol/tools/pixel-studio-tools.mcp.json` dosyasındadır.
 | Animasyon | `frame_add`, `frame_duplicate`, `frame_delete`*, `frame_move`, `frame_get`, `frame_set_duration`, `frame_select`, `animation_tag_create`, `animation_tag_delete`, `animation_set_loop`, `animation_info`, `animation_preview` (GIF) |
 | Katman | `layer_create`, `layer_delete`*, `layer_rename`, `layer_visibility`, `layer_lock`, `layer_opacity`, `layer_move`, `layer_select` |
 | Palet | `palette_get`, `palette_set`, `palette_add` |
-| Piksel art | `draw_ascii`, `outline`, `color_ramp`, `palette_list`, `palette_load`, `quantize`, `dither_fill`, `export_normal_map` |
+| Piksel art | `draw_ascii`, `outline` (selective/selout/solid), `auto_shade`, `gradient_map`, `draw_sparkle`, `pixel_cleanup`, `color_ramp`, `palette_list`, `palette_load`, `quantize`, `dither_fill`, `export_normal_map` |
 | 3D Voxel | `voxel_model_create`, `voxel_model_clone`, `voxel_model_delete`*, `voxel_model_set`, `voxel_inspect`, `voxel_get`, `voxel_set`, `voxel_set_many`, `voxel_shape`, `voxel_mirror`, `material_set`, `texture_import`, `texture_generate`, `rig_bone_add`, `rig_clear`*, `rig_bind`, `anim3d_create`, `anim3d_key`, `anim3d_generate`, `voxel_render` (PNG), `voxel_render_sheet` (PNG), `voxel_render_to_frames`, `voxel_pick` |
 | Oyun üretimi | `layer_blend`, `slice_set`, `slice_delete`, `palette_swap`, `rotsprite`, `tileset_create`, `tileset_add_tiles`, `tileset_generate_blob`, `tileset_delete`*, `tilemap_create`, `tilemap_delete`*, `tilemap_set`, `tilemap_terrain`, `tilemap_bake`, `tilemap_render` (PNG), `export_tileset` (PNG), `render_lit` (PNG), `export_atlas`, `export_godot_spriteframes`, `export_tiled`, `gamedev_inspect` — bkz. [GAMEDEV.md](GAMEDEV.md) |
 | Proje | `image_import`, `project_inspect`, `project_save`, `project_export` (png/gif/spritesheet/atlas/godot/tiled/normal_map), `project_new`*, `project_rename`, `history_undo`, `history_redo`, `history_list`, `transaction` |

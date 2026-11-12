@@ -217,8 +217,12 @@ object ToolCatalog {
                 "x" to X, "y" to Y, "transparent" to string("Character meaning 'skip' (default '.')."), "erase_transparent" to boolean("Clear pixels under transparent characters."),
                 "flip_x" to boolean("Mirror horizontally (reuse a side view for the other side).")), target()),
             listOf("rows", "legend"))
-        tool("outline", "Outline", "pixelart", Access.WRITE, "Adds a 1-pixel outline around a layer's pixels: a fixed color or 'selective' (each edge pixel is a darker, cooler shade of what it borders — the pro look).",
-            props(linkedMapOf("color" to linkedMapOf("type" to "string", "description" to "Hex color or 'selective' (default)."), "corners" to boolean("Include diagonal corners.")), target()))
+        tool("outline", "Outline", "pixelart", Access.WRITE,
+            "Adds a 1-pixel outline around a layer's pixels: a fixed color, 'selective' (each edge pixel is a darker, cooler shade of what it borders) or mode 'selout' " +
+                "(selective + lighter on the lit side — the soft pastel anime look). inside=true draws on the shape's edge pixels instead of growing it.",
+            props(linkedMapOf("color" to linkedMapOf("type" to "string", "description" to "Hex color, 'selective' (default) or 'selout'."), "corners" to boolean("Include diagonal corners."),
+                "mode" to string("Outline style.", listOf("selective", "selout", "solid")), "darkness" to linkedMapOf<String, Any?>("type" to "number", "description" to "0.05-0.95: how dark generated outlines are (default 0.58; pastel ≈ 0.4)."),
+                "inside" to boolean("Draw on the edge pixels (keeps the size)."), "light" to linkedMapOf<String, Any?>("type" to listOf("string", "array"), "description" to "Light direction for selout (default top-left).")), target()))
         tool("color_ramp", "Hue-shifted ramp", "pixelart", Access.WRITE,
             "Builds a shading ramp from a base color: shadows shift toward cool purple, highlights toward warm yellow (perceptual OKLCH). Adds the ramp to the swatches. Use 4-6 steps per material.",
             linkedMapOf("base" to color("Base (mid) color."), "steps" to integer("2-16 (default 5).", 2, 16),
@@ -242,6 +246,7 @@ object ToolCatalog {
                 "bevel" to linkedMapOf<String, Any?>("type" to "number", "description" to "Edge roundness in pixels (default 3)."), "scale" to integer("Upscale 1-64.", 1, 64)),
             output = Output.PNG_IMAGE)
         addGameTools()
+        addCharTools()
 
         tool("image_import", "Import image", "project", Access.WRITE, "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
             props(linkedMapOf("data_base64" to string("PNG file as base64."), "x" to X, "y" to Y), target()), listOf("data_base64"))

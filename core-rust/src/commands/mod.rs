@@ -12,6 +12,7 @@
 pub mod json;
 
 mod args;
+mod charart;
 mod draw;
 pub mod gamedev;
 pub mod pixel2d;
@@ -153,6 +154,10 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("palette_load", Kind::Mutate),
     ("quantize", Kind::Mutate),
     ("dither_fill", Kind::Mutate),
+    ("auto_shade", Kind::Mutate),
+    ("gradient_map", Kind::Mutate),
+    ("draw_sparkle", Kind::Mutate),
+    ("pixel_cleanup", Kind::Mutate),
     // game production
     ("layer_blend", Kind::Mutate),
     ("slice_set", Kind::Mutate),
@@ -209,6 +214,10 @@ pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json, payload: &[u8], ca
         "palette_load" => pixel2d::palette_load(doc, a),
         "quantize" => pixel2d::quantize(doc, a),
         "dither_fill" => pixel2d::dither_fill(doc, a),
+        "auto_shade" => charart::auto_shade(doc, a),
+        "gradient_map" => charart::gradient_map(doc, a),
+        "draw_sparkle" => charart::draw_sparkle(doc, a),
+        "pixel_cleanup" => charart::pixel_cleanup(doc, a),
         "layer_blend" => gamedev::layer_blend(doc, a),
         "slice_set" => gamedev::slice_set(doc, a),
         "slice_delete" => gamedev::slice_delete(doc, a),

@@ -371,4 +371,22 @@ class GatewayTest {
         assertEquals(listOf("......", ".####.", "######", "######"), (gd.list("tilemaps")!!.first() as Map<*, *>)["terrain"])
         assertEquals(true, callLegacy("tilemap_delete", mapOf("tilemap" to "cave"))["isError"], "deleting needs approval")
     }
+
+    @Test
+    fun characterArtFinishingTools() {
+        fun call(tool: String, args: Map<String, Any?>): Map<String, Any?> {
+            val r = callLegacy(tool, args)
+            assertEquals(false, r["isError"], "$tool failed: ${Json.write(r)}")
+            return r
+        }
+        call("draw_ellipse", mapOf("x" to 4, "y" to 6, "width" to 24, "height" to 22, "color" to "#FCE3D2", "filled" to true))
+        call("layer_create", mapOf("name" to "Bangs"))
+        call("draw_rectangle", mapOf("layer" to "Bangs", "x" to 4, "y" to 3, "width" to 24, "height" to 6, "color" to "#F7B6CF", "filled" to true))
+        val shaded = call("auto_shade", mapOf("layer" to 0, "light" to "top-left", "cast_shadow" to 3, "rim" to "#8FE6FF"))
+        assertTrue((shaded.obj("structuredContent")!!.obj("result")!!.long("changed") ?: 0) > 20)
+        call("outline", mapOf("layer" to "Bangs", "mode" to "selout", "darkness" to 0.45))
+        call("draw_sparkle", mapOf("points" to listOf(listOf(2, 2, 2), listOf(29, 29)), "layer" to "Bangs"))
+        call("gradient_map", mapOf("colors" to listOf("#141C3A", "#8EA6D8", "#E6EEFF"), "scope" to "frame", "strength" to 0.4))
+        call("pixel_cleanup", mapOf("layer" to "Bangs"))
+    }
 }

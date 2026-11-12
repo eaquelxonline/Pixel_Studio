@@ -46,3 +46,42 @@ Klasik piksel art kurallarına uyar: her efektte 4–6 renklik bant paleti, net 
 python3 assets/sprites2d/build_cast.py && python3 assets/sprites2d/build_vfx2d.py
 cd core-rust && cargo run --release --example run_script -- ../assets/sprites2d/cast_showcase.jsonl out/cast
 ```
+
+## Karakter bitirme araçları (2026 pastel anime stili)
+
+Modern anime piksel karakterlerinin kalitesi büyük ölçüde bitirme aşamasından gelir: şekli takip eden ton kaydırmalı cel gölge, saçın yüze düşen gölgesi, siyah yerine rengin koyu tonuyla çizilmiş outline ve parıltılar. Pixel Studio bu aşamaları araç olarak sunar:
+
+| Araç | Ne yapar |
+| --- | --- |
+| `auto_shade` | Düz renkli her bölgeyi şeklini takip eden 2–4 tonlu cel gölgeyle boyar: ışık tarafı aydınlık, karşı taraf gölgeli olur, büyük alanlarda yumuşak bir geçiş oluşur. **Üstteki katmanlar gölge düşürür** (kâkül alna, kafa boyna, şapka saça). İsteğe bağlı rim ışığı, açık rampa tanımları, korunacak renkler ve küçük detay bölgelerini atlama desteklenir |
+| `outline` `mode=selout` | Seçici outline. Işık tarafında outline açılır, yani sel-out uygulanır. `darkness` ile pastel ya da sert ton seçilir, `inside` şekli büyütmeden kenara çizer |
+| `gradient_map` | Parlaklığı bir gradyana eşleyerek renk düzenler: yağmurlu mavi akşam, gün batımı, sepya |
+| `draw_sparkle` | 4 köşeli parıltı, artı, elmas ya da nokta damgası (tek tek ya da toplu) |
+| `pixel_cleanup` | 1 px çizgilerdeki L köşe fazlalarını temizler ("pixel perfect") |
+
+Önerilen akış: karakteri katmanlara ayrılmış düz renklerle kur (arka saç, gövde, yüz, ön saç, kollar) → her katmana `auto_shade` uygula → `outline mode=selout` → `pixel_cleanup` → gözleri, allığı ve saç parlamasını elle çiz → `draw_sparkle`.
+
+### Pastel chibi koleksiyonu (64×80)
+
+![Pastel chibi](../assets/gallery/chibi/pastel_chibi_lineup.png)
+
+| | | | |
+| --- | --- | --- | --- |
+| ![mochi](../assets/gallery/chibi/mochi_cheer.gif) | ![yuzu](../assets/gallery/chibi/yuzu_wave.gif) | ![kuro](../assets/gallery/chibi/kuro_cheer.gif) | ![sora](../assets/gallery/chibi/sora_wave.gif) |
+
+`assets/chibi/build_chibi.py` 8 özgün karakter üretir: Mochi, Yuzu, Fuyu, Kuro, Sora, Ren, Lila ve Hana. Her karakterin 4 karelik idle animasyonu (nefes, göz kırpma, saç salınımı) ve 4 karelik ikinci bir animasyonu vardır (sevinç zıplaması, el sallama ya da ikinci idle). Toplam 64 kare. Saç, inceltilmiş Bezier tutamlardan kurulur. Gözler el çizimi damgalardır: gradyan iris, çift parıltı ve kirpik kanadı. Gölge, outline ve parıltılar tamamen motor araçlarıyla eklenir.
+
+### Bust portreler (128×128, 8 kare)
+
+| Shizuku: yağmurlu akşam | Astra: yıldızlı büyücü |
+| --- | --- |
+| ![rain](../assets/gallery/chibi/portrait_rain_x3.gif) | ![star](../assets/gallery/chibi/portrait_star_x3.gif) |
+
+`assets/chibi/build_portraits.py` iki portre üretir. Shizuku'da `gradient_map` ile soğuk akşam tonu, cyan rim ışığı ve yağan yağmur var. Astra'da şapka saça gölge düşürüyor ve gökyüzünde yıldızlar parlıyor. Gözler katmanlıdır: sklera, gradyan iris, koyu iris kenarı, göz bebeği, 3 px kalınlığında kirpik ve kanat, alt kirpik ve iki parıltı.
+
+Tüm karakterler özgündür. Referans görseller yalnızca stil, oran ve teknik analizi için kullanıldı; mevcut karakterler ya da eserler kopyalanmadı.
+
+```bash
+cd assets/chibi && python3 build_chibi.py && python3 build_portraits.py
+cd ../../core-rust && cargo run --release --example run_script -- ../assets/chibi/chibi_showcase.jsonl out/chibi
+```

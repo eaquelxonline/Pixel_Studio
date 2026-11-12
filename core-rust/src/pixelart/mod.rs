@@ -2,6 +2,7 @@
 //! median-cut quantization with ordered dithering, selective outlines, dither fills and 2D
 //! normal maps for dynamic sprite lighting.
 
+pub mod charart;
 pub mod palettes;
 
 use crate::pixel::{PixelGrid, Rgba, TRANSPARENT};
@@ -46,7 +47,7 @@ pub fn from_oklab(lab: [f32; 3], alpha: u8) -> Rgba {
     )
 }
 
-fn lch(c: Rgba) -> [f32; 3] {
+pub(crate) fn lch(c: Rgba) -> [f32; 3] {
     let [l, a, b] = oklab(c);
     [l, (a * a + b * b).sqrt(), b.atan2(a).to_degrees().rem_euclid(360.0)]
 }
@@ -64,7 +65,7 @@ fn lab_to_linear(lab: [f32; 3]) -> [f32; 3] {
 }
 
 /// OKLCH → sRGB with gamut mapping by chroma reduction (keeps hue and lightness exact).
-fn from_lch(l: f32, c: f32, h: f32, alpha: u8) -> Rgba {
+pub(crate) fn from_lch(l: f32, c: f32, h: f32, alpha: u8) -> Rgba {
     let hr = h.to_radians();
     let inside = |c: f32| lab_to_linear([l, c * hr.cos(), c * hr.sin()]).iter().all(|v| (-0.001..=1.001).contains(v));
     let mut chroma = c;
@@ -79,7 +80,7 @@ fn from_lch(l: f32, c: f32, h: f32, alpha: u8) -> Rgba {
     from_oklab([l, chroma * hr.cos(), chroma * hr.sin()], alpha)
 }
 
-fn hue_toward(h: f32, target: f32, amount: f32) -> f32 {
+pub(crate) fn hue_toward(h: f32, target: f32, amount: f32) -> f32 {
     let d = ((target - h + 540.0) % 360.0) - 180.0;
     (h + d.clamp(-amount.abs(), amount.abs())).rem_euclid(360.0)
 }

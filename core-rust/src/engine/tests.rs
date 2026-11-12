@@ -389,3 +389,27 @@ fn game_production_pipeline() {
     ok(&mut e, r#"{"op":"history_undo"}"#);
     assert_eq!(e.document().tilemaps.len(), 1);
 }
+
+#[test]
+fn character_art_finishing_tools() {
+    let mut e = Engine::new(48, 48);
+    ok(&mut e, r##"{"op":"layer_rename","layer":0,"name":"Face"}"##);
+    ok(&mut e, r##"{"op":"draw_ellipse","layer":"Face","x":8,"y":10,"width":32,"height":30,"color":"#FCE3D2","filled":true}"##);
+    ok(&mut e, r#"{"op":"layer_create","name":"Bangs"}"#);
+    ok(&mut e, r##"{"op":"draw_rectangle","layer":"Bangs","x":8,"y":6,"width":32,"height":8,"color":"#F6A8C8","filled":true}"##);
+    let before = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+    let r = ok(&mut e, r#"{"op":"auto_shade","layer":"Face","light":"top-left","tones":3,"cast_shadow":3}"#);
+    assert!(r.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 30);
+    let after = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+    let lum = |b: &[u8], x: usize, y: usize| b[(y * 48 + x) * 4] as u32 + b[(y * 48 + x) * 4 + 1] as u32 + b[(y * 48 + x) * 4 + 2] as u32;
+    assert!(lum(&after, 24, 15) < lum(&before, 24, 15), "bangs cast a shadow on the forehead");
+    ok(&mut e, r##"{"op":"auto_shade","layer":"Bangs","ramps":{"#F6A8C8":["#D97BA8","#FFD3E6"]},"cast_shadow":0}"##);
+    ok(&mut e, r#"{"op":"outline","layer":"Bangs","mode":"selout","darkness":0.45}"#);
+    assert_eq!(err_code(&mut e, r#"{"op":"outline","mode":"glow"}"#), "invalid_argument");
+    ok(&mut e, r#"{"op":"layer_create","name":"FX"}"#);
+    let sp = ok(&mut e, r##"{"op":"draw_sparkle","layer":"FX","points":[[4,4,3],[42,8],[40,40,5]],"color":"#FFD6A0"}"##);
+    assert!(sp.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 20);
+    ok(&mut e, r##"{"op":"gradient_map","scope":"frame","colors":["#1B1F4A","#5A7BC0","#D8ECFF"],"strength":0.6}"##);
+    ok(&mut e, r#"{"op":"pixel_cleanup","layer":"Bangs"}"#);
+    ok(&mut e, r#"{"op":"history_undo","steps":3}"#);
+}

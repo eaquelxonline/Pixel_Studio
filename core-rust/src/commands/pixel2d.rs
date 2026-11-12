@@ -70,16 +70,27 @@ fn with_cel_image(doc: &mut Document, a: &Json, f: impl FnOnce(&mut crate::rende
     Ok(pixelart::image_to_grid(&img, grid) as u64)
 }
 
-/// 1-px outline around a layer's pixels: `color` or selective (darker, cooler bordering color).
+/// 1-px outline around a layer's pixels: `color`, selective (darker, cooler bordering color) or
+/// `mode: "selout"` (selective + lighter on the lit side). `inside` draws on the edge pixels
+/// instead of growing the shape; `darkness` 0-1 sets how dark generated outlines are.
 pub fn outline(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
     let col = match a.get("color") {
         None | Some(Json::Null) => None,
-        Some(Json::Str(s)) if s == "selective" => None,
+        Some(Json::Str(s)) if s == "selective" || s == "selout" => None,
         Some(v) => Some(Rgba::from_u32(color_value(doc, v, "color")?)),
     };
     let corners = opt_bool(a, "corners")?.unwrap_or(false);
-    let changed = with_cel_image(doc, a, |img| pixelart::outline_image(img, col, corners))?;
-    Ok(Outcome::new(Json::obj().with("changed", changed), changed))
+    let mode = opt_str(a, "mode")?.unwrap_or(if a.get("color").and_then(Json::as_str) == Some("selout") { "selout" } else { "selective" });
+    if !["selective", "selout", "solid"].contains(&mode) {
+        return Err(CmdError::invalid("'mode' must be selective, selout or solid"));
+    }
+    let darkness = opt_f64(a, "darkness")?.unwrap_or(0.58).clamp(0.05, 0.95) as f32;
+    let inside = opt_bool(a, "inside")?.unwrap_or(false);
+    let light = super::charart::light_arg(a, "light", (-1.0, -1.2))?;
+    let changed = with_cel_image(doc, a, |img| {
+        crate::pixelart::charart::outline_ex(img, col, corners, mode == "selout", darkness, light, inside);
+    })?;
+    Ok(Outcome::new(Json::obj().with("changed", changed).with("mode", mode), changed))
 }
 
 /// Builds a hue-shifted ramp and (by default) adds it to the swatches.

@@ -18,7 +18,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`core-rust`, yalnızca `std`, Rust 1.100) | ✅ | 64 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`core-rust`, yalnızca `std`, Rust 1.100) | ✅ | 68 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -29,13 +29,20 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | JNI köprüsü, Rust ↔ JVM golden render | ✅ | `tests/golden` |
 | **2D piksel art araçları**: ASCII çizim, selective outline, ton kaydırmalı rampa, palet kütüphanesi (12 Lospec paleti), quantize + Bayer dither, normal map | ✅ | birim + gateway testleri |
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
+| **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **104 araç** | ✅ | 12 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **108 araç** | ✅ | 13 uçtan uca gateway testi |
 | Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
 | Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
 
 Ayrıntılar: [docs/VOXEL.md](docs/VOXEL.md) (3D), [docs/PIXELART.md](docs/PIXELART.md) (2D piksel art, kadro, 2D VFX) ve [docs/GAMEDEV.md](docs/GAMEDEV.md) (oyun üretimi).
+
+![Pastel chibi](assets/gallery/chibi/pastel_chibi_lineup.png)
+
+| Portre: yağmur | Portre: yıldızlı büyücü | Chibi |
+| --- | --- | --- |
+| ![rain](assets/gallery/chibi/portrait_rain_x3.gif) | ![star](assets/gallery/chibi/portrait_star_x3.gif) | ![mochi](assets/gallery/chibi/mochi_cheer.gif) ![sora](assets/gallery/chibi/sora_wave.gif) |
 
 | Oyun sahnesi: autotile + gece ışığı (`render_lit`) | Gündüz, katman karışımları |
 | --- | --- |
