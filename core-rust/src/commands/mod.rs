@@ -13,6 +13,7 @@ pub mod json;
 
 mod args;
 mod draw;
+pub mod pixel2d;
 mod query;
 mod structure;
 pub mod voxel;
@@ -93,6 +94,8 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("export_gif", Kind::Read),
     ("export_spritesheet", Kind::Read),
     ("project_save", Kind::Read),
+    ("palette_list", Kind::Read),
+    ("export_normal_map", Kind::Read),
     ("voxel_inspect", Kind::Read),
     ("voxel_get", Kind::Read),
     ("voxel_render", Kind::Read),
@@ -136,6 +139,12 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("canvas_resize", Kind::Mutate),
     ("project_rename", Kind::Mutate),
     ("image_import", Kind::Mutate),
+    ("draw_ascii", Kind::Mutate),
+    ("outline", Kind::Mutate),
+    ("color_ramp", Kind::Mutate),
+    ("palette_load", Kind::Mutate),
+    ("quantize", Kind::Mutate),
+    ("dither_fill", Kind::Mutate),
     // 3D pixel art
     ("voxel_model_create", Kind::Mutate),
     ("voxel_model_delete", Kind::Mutate),
@@ -171,6 +180,12 @@ pub fn kind_of(op: &str) -> Option<Kind> {
 pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json, payload: &[u8], cache: &mut voxel::RenderCache) -> CmdResult<Outcome> {
     match op {
         "image_import" => voxel::image_import(doc, a, payload),
+        "draw_ascii" => pixel2d::draw_ascii(doc, a),
+        "outline" => pixel2d::outline(doc, a),
+        "color_ramp" => pixel2d::color_ramp(doc, a),
+        "palette_load" => pixel2d::palette_load(doc, a),
+        "quantize" => pixel2d::quantize(doc, a),
+        "dither_fill" => pixel2d::dither_fill(doc, a),
         "voxel_model_create" => voxel::model_create(doc, a),
         "voxel_model_delete" => voxel::model_delete(doc, a),
         "voxel_model_clone" => voxel::model_clone(doc, a),

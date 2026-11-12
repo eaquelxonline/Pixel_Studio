@@ -18,7 +18,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`core-rust`, yalnızca `std`, Rust 1.100) | ✅ | 55 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`core-rust`, yalnızca `std`, Rust 1.100) | ✅ | 58 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -27,12 +27,20 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | PNG/GIF/sprite sheet export, PNG import (kendi zlib/LZW/inflate kodumuz) | ✅ | PIL ve JDK ImageIO ile doğrulandı |
 | `.pxs` v2 (2D + 3D + rig + animasyon + materyal + doku, CRC-32) | ✅ | gidiş-dönüş testleri |
 | JNI köprüsü, Rust ↔ JVM golden render | ✅ | `tests/golden` |
-| MCP (eski + 2026-07-28), REST, function calling: **75 araç** | ✅ | 10 uçtan uca gateway testi |
+| **2D piksel art araçları**: ASCII çizim, selective outline, ton kaydırmalı rampa, palet kütüphanesi (12 Lospec paleti), quantize + Bayer dither, normal map | ✅ | birim + gateway testleri |
+| **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
+| MCP (eski + 2026-07-28), REST, function calling: **83 araç** | ✅ | 11 uçtan uca gateway testi |
 | Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
 | Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
 
-Ayrıntılar: [docs/VOXEL.md](docs/VOXEL.md) — 3D pixel iş akışı, VFX ve hazır varlıklar.
+Ayrıntılar: [docs/VOXEL.md](docs/VOXEL.md) (3D) ve [docs/PIXELART.md](docs/PIXELART.md) (2D piksel art, kadro, 2D VFX).
+
+![2D kadro](assets/gallery/cast_lineup.png)
+
+| 2D karakterler | 2D VFX |
+| --- | --- |
+| ![aoi](assets/gallery/aoi_idle.gif) ![ren](assets/gallery/ren_walk.gif) ![sora](assets/gallery/sora_walk.gif) | ![fire](assets/gallery/fx2d_fire.gif) ![slash](assets/gallery/fx2d_slash.gif) ![boom](assets/gallery/fx2d_explosion.gif) ![bolt](assets/gallery/fx2d_lightning.gif) |
 
 | Şövalye 8 yön yürüyüş (256 px) | VFX (16 kare) |
 | --- | --- |
@@ -66,6 +74,7 @@ Sonra ajana şunu söyleyin: *"Pixel Studio'yu kullan. 64x64 bir samuray çiz, a
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): katmanlar, veri modeli, eşzamanlılık
 - [docs/VOXEL.md](docs/VOXEL.md): 3D voksel, PBR, rig, animasyon, VFX
+- [docs/PIXELART.md](docs/PIXELART.md): 2D piksel art araçları, kadro, 2D VFX
 - [docs/MCP.md](docs/MCP.md): MCP bağlantısı, araçlar, kaynaklar, promptlar, protokol sürümleri
 - [docs/API.md](docs/API.md): REST API ve function calling
 - [docs/PROJECT-FORMAT.md](docs/PROJECT-FORMAT.md): `.pxs` dosya formatı

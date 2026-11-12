@@ -16,3 +16,4 @@ Thumbs.db
 # Python caches and generated showcase scripts (rebuild with assets/*/build_*.py)
 __pycache__/
 assets/*/*_showcase.jsonl
+assets/sprites2d/preview_*.png

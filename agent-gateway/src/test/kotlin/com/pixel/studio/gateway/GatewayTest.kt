@@ -321,4 +321,21 @@ class GatewayTest {
         val deleted = callLegacy("voxel_model_delete", mapOf("model" to "Bot"))
         assertEquals(true, deleted["isError"], "deleting a model needs the human's approval")
     }
+
+    @Test
+    fun pixelArtCraftTools() {
+        val drawn = callLegacy("draw_ascii", mapOf("x" to 2, "y" to 2, "rows" to listOf(".oo.", "osso", ".oo."), "legend" to mapOf("o" to "#1B1B2F", "s" to "#F6CDB0")))
+        assertEquals(false, drawn["isError"], Json.write(drawn))
+        val read = callLegacy("read_region", mapOf("x" to 2, "y" to 2, "width" to 4, "height" to 3)).obj("structuredContent")!!.obj("result")!!
+        assertEquals(listOf(".00.", "0110", ".00."), read.list("rows"))
+        assertEquals(false, callLegacy("outline", emptyMap())["isError"])
+        assertEquals("#", engine.execute("get_pixel", mapOf("x" to 1, "y" to 3)).result.str("color")!!.take(1), "selective outline added")
+        val ramp = callLegacy("color_ramp", mapOf("base" to "#3FA34D", "steps" to 5)).obj("structuredContent")!!.obj("result")!!.list("ramp")!!
+        assertEquals(5, ramp.size)
+        assertTrue(callLegacy("palette_list", emptyMap()).obj("structuredContent")!!.obj("result")!!.list("palettes")!!.size >= 10)
+        assertEquals(false, callLegacy("palette_load", mapOf("name" to "endesga-32"))["isError"])
+        assertEquals(false, callLegacy("quantize", mapOf("palette" to "swatches", "dither" to "bayer4"))["isError"])
+        val normal = callLegacy("export_normal_map", mapOf("scale" to 2))
+        assertEquals("image", (normal.list("content")!!.first() as Map<*, *>)["type"])
+    }
 }

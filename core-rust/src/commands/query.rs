@@ -29,6 +29,8 @@ pub fn run_query(
     cache: &mut super::voxel::RenderCache,
 ) -> CmdResult<Query> {
     match op {
+        "palette_list" => Ok(super::pixel2d::palette_list()),
+        "export_normal_map" => super::pixel2d::export_normal_map(doc, a),
         "voxel_inspect" => super::voxel::voxel_inspect(doc, a),
         "voxel_get" => super::voxel::voxel_get(doc, a),
         "voxel_render" => super::voxel::voxel_render(doc, cache, a),

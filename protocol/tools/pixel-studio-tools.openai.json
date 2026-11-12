@@ -1913,6 +1913,370 @@
   {
     "type": "function",
     "function": {
+      "name": "draw_ascii",
+      "description": "Draws pixel art from text: one string per row and a legend mapping single characters to colors ('.' = transparent). The best way to author sprites: write the whole sprite in one call, read it back with read_region format=ascii, edit, redraw.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rows top to bottom, one character per pixel."
+          },
+          "legend": {
+            "type": "object",
+            "description": "Character → #RRGGBB[AA], e.g. {\"o\":\"#1B1B2F\",\"s\":\"#F6CDB0\"}."
+          },
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "transparent": {
+            "type": "string",
+            "description": "Character meaning 'skip' (default '.')."
+          },
+          "erase_transparent": {
+            "type": "boolean",
+            "description": "Clear pixels under transparent characters."
+          },
+          "flip_x": {
+            "type": "boolean",
+            "description": "Mirror horizontally (reuse a side view for the other side)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["rows","legend"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "outline",
+      "description": "Adds a 1-pixel outline around a layer's pixels: a fixed color or 'selective' (each edge pixel is a darker, cooler shade of what it borders — the pro look).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "Hex color or 'selective' (default)."
+          },
+          "corners": {
+            "type": "boolean",
+            "description": "Include diagonal corners."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "color_ramp",
+      "description": "Builds a shading ramp from a base color: shadows shift toward cool purple, highlights toward warm yellow (perceptual OKLCH). Adds the ramp to the swatches. Use 4-6 steps per material.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "Base (mid) color.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "steps": {
+            "type": "integer",
+            "description": "2-16 (default 5).",
+            "minimum": 2,
+            "maximum": 16
+          },
+          "hue_shift": {
+            "type": "number",
+            "description": "Degrees of hue shift at the ends (default 18)."
+          },
+          "contrast": {
+            "type": "number",
+            "description": "0-1 lightness range (default 0.75)."
+          },
+          "add_to_palette": {
+            "type": "boolean",
+            "description": "Default true."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["base"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "palette_list",
+      "description": "Lists built-in pixel-art palettes (ENDESGA 32/64, Resurrect 64, Sweetie 16, Apollo, AAP-64, PICO-8, Lospec500, Vinik24, …) with credits.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "palette_load",
+      "description": "Loads a library palette (or explicit colors) into the swatches.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Library palette name, e.g. endesga-32."
+          },
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            },
+            "description": "Explicit colors."
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "Replace swatches (default true)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "quantize",
+      "description": "Reduces colors of a cel/frame/layer/everything to a limited palette (median cut N colors, the swatches, or a library palette) with optional ordered dithering — turns renders and imports into crisp pixel art. One shared palette across the scope keeps animations consistent.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "cel | frame | layer | all.",
+            "enum": ["cel","frame","layer","all"]
+          },
+          "colors": {
+            "type": "integer",
+            "description": "Target color count (2-256).",
+            "minimum": 2,
+            "maximum": 256
+          },
+          "palette": {
+            "type": ["string","array"],
+            "description": "Library name, 'swatches', or a color list."
+          },
+          "dither": {
+            "type": "string",
+            "description": "Ordered dither.",
+            "enum": ["none","bayer2","bayer4","bayer8"]
+          },
+          "dither_strength": {
+            "type": "number",
+            "description": "0-255 (default 28)."
+          },
+          "add_to_palette": {
+            "type": "boolean",
+            "description": "Add the resulting colors to the swatches."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "dither_fill",
+      "description": "Fills a region with an ordered-dither blend of two colors; level 0 = color, 16 = color2 (gradients, glass, shading transitions).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "color": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "color2": {
+            "type": "string",
+            "description": "Second color.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "level": {
+            "type": "integer",
+            "description": "0-16 density.",
+            "minimum": 0,
+            "maximum": 16
+          },
+          "only_opaque": {
+            "type": "boolean",
+            "description": "Only over existing pixels."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["color","color2"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "export_normal_map",
+      "description": "Generates a normal map of a frame/layer for 2D dynamic lighting (Godot, Unity, Unreal Paper2D).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "strength": {
+            "type": "number",
+            "description": "Bump strength (default 3)."
+          },
+          "bevel": {
+            "type": "number",
+            "description": "Edge roundness in pixels (default 3)."
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "image_import",
       "description": "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
       "parameters": {
@@ -2988,6 +3352,15 @@
           "ambient": {
             "type": "number",
             "description": "Ambient multiplier (default 1; lower for night scenes)."
+          },
+          "pixel_palette": {
+            "type": ["string","integer"],
+            "description": "Pixel-art post-process: quantize the render to a library palette (e.g. 'endesga-32'), 'swatches', or N colors. Shared across all sprites of a sheet."
+          },
+          "dither": {
+            "type": "string",
+            "description": "Ordered dither for pixel_palette.",
+            "enum": ["none","bayer2","bayer4","bayer8"]
           }
         },
         "additionalProperties": false
@@ -3158,6 +3531,15 @@
           "ambient": {
             "type": "number",
             "description": "Ambient multiplier (default 1; lower for night scenes)."
+          },
+          "pixel_palette": {
+            "type": ["string","integer"],
+            "description": "Pixel-art post-process: quantize the render to a library palette (e.g. 'endesga-32'), 'swatches', or N colors. Shared across all sprites of a sheet."
+          },
+          "dither": {
+            "type": "string",
+            "description": "Ordered dither for pixel_palette.",
+            "enum": ["none","bayer2","bayer4","bayer8"]
           }
         },
         "additionalProperties": false
@@ -3337,6 +3719,15 @@
             "type": "number",
             "description": "Ambient multiplier (default 1; lower for night scenes)."
           },
+          "pixel_palette": {
+            "type": ["string","integer"],
+            "description": "Pixel-art post-process: quantize the render to a library palette (e.g. 'endesga-32'), 'swatches', or N colors. Shared across all sprites of a sheet."
+          },
+          "dither": {
+            "type": "string",
+            "description": "Ordered dither for pixel_palette.",
+            "enum": ["none","bayer2","bayer4","bayer8"]
+          },
           "expectedRevision": {
             "type": "integer",
             "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
@@ -3500,6 +3891,15 @@
           "ambient": {
             "type": "number",
             "description": "Ambient multiplier (default 1; lower for night scenes)."
+          },
+          "pixel_palette": {
+            "type": ["string","integer"],
+            "description": "Pixel-art post-process: quantize the render to a library palette (e.g. 'endesga-32'), 'swatches', or N colors. Shared across all sprites of a sheet."
+          },
+          "dither": {
+            "type": "string",
+            "description": "Ordered dither for pixel_palette.",
+            "enum": ["none","bayer2","bayer4","bayer8"]
           }
         },
         "required": ["px","py"],

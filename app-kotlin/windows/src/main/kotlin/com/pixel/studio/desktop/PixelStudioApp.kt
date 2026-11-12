@@ -2,6 +2,7 @@ package com.pixel.studio.desktop
 
 import com.pixel.studio.bridge.PixelEngine
 import com.pixel.studio.gateway.AgentGateway
+import com.pixel.studio.json.list
 import com.pixel.studio.gateway.GatewayConfig
 import com.pixel.studio.gateway.tools.Confirmer
 import com.pixel.studio.gateway.tools.DirectoryWorkspace
@@ -148,6 +149,26 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             add(item("Flip horizontal") { c.run("flip_horizontal") })
             add(item("Flip vertical") { c.run("flip_vertical") })
             add(item("Resize canvas…") { resize() })
+        })
+        add(JMenu("Pixel Art").apply {
+            add(item("Selective outline (layer)") { c.run("outline") })
+            add(item("Reduce colors (frame, 16)…") {
+                val n = JOptionPane.showInputDialog(this@PixelStudioWindow, "Colors", "16")?.toIntOrNull() ?: return@item
+                c.run("quantize", mapOf("scope" to "frame", "colors" to n))
+            })
+            add(item("Hue-shifted ramp from current color") { c.run("color_ramp", mapOf("base" to c.color, "steps" to 5)) })
+            addSeparator()
+            val names = c.engine.execute("palette_list").result.list("palettes").orEmpty().map { (it as Map<*, *>)["name"] as String }
+            add(JMenu("Load palette").apply { names.forEach { n -> add(item(n) { c.run("palette_load", mapOf("name" to n)) }) } })
+            add(item("Quantize to swatches (bayer4 dither)") { c.run("quantize", mapOf("scope" to "frame", "palette" to "swatches", "dither" to "bayer4")) })
+            addSeparator()
+            add(item("Export normal map…") {
+                val ch = chooser("png", "PNG")
+                ch.selectedFile = File(DirectoryWorkspace.sanitize(c.doc.name) + "_normal.png")
+                if (ch.showSaveDialog(this@PixelStudioWindow) == JFileChooser.APPROVE_OPTION) {
+                    ch.selectedFile.writeBytes(c.run("export_normal_map", mapOf("frame" to c.doc.activeFrame)).binary)
+                }
+            })
         })
         add(JMenu("Agent").apply {
             add(item("Connect an agent…", ctrl(KeyEvent.VK_K)) { AgentDialog(this@PixelStudioWindow, gateway) { toggleGateway() }.isVisible = true })

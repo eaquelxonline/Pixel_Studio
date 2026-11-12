@@ -207,6 +207,38 @@ object ToolCatalog {
             linkedMapOf("commands" to linkedMapOf("type" to "array", "description" to "Commands, e.g. [{\"op\":\"draw_line\",\"x0\":0,...}, {\"op\":\"set_pixel\",...}].",
                 "items" to linkedMapOf("type" to "object", "required" to listOf("op"), "properties" to linkedMapOf("op" to string("Operation name."))))),
             listOf("commands"))
+        // -- Pixel-art craft ------------------------------------------------------------------
+        tool("draw_ascii", "Draw ASCII sprite", "pixelart", Access.WRITE,
+            "Draws pixel art from text: one string per row and a legend mapping single characters to colors ('.' = transparent). The best way to author sprites: write the whole sprite in one call, read it back with read_region format=ascii, edit, redraw.",
+            props(linkedMapOf("rows" to linkedMapOf("type" to "array", "items" to linkedMapOf("type" to "string"), "description" to "Rows top to bottom, one character per pixel."),
+                "legend" to linkedMapOf("type" to "object", "description" to "Character → #RRGGBB[AA], e.g. {\"o\":\"#1B1B2F\",\"s\":\"#F6CDB0\"}."),
+                "x" to X, "y" to Y, "transparent" to string("Character meaning 'skip' (default '.')."), "erase_transparent" to boolean("Clear pixels under transparent characters."),
+                "flip_x" to boolean("Mirror horizontally (reuse a side view for the other side).")), target()),
+            listOf("rows", "legend"))
+        tool("outline", "Outline", "pixelart", Access.WRITE, "Adds a 1-pixel outline around a layer's pixels: a fixed color or 'selective' (each edge pixel is a darker, cooler shade of what it borders — the pro look).",
+            props(linkedMapOf("color" to linkedMapOf("type" to "string", "description" to "Hex color or 'selective' (default)."), "corners" to boolean("Include diagonal corners.")), target()))
+        tool("color_ramp", "Hue-shifted ramp", "pixelart", Access.WRITE,
+            "Builds a shading ramp from a base color: shadows shift toward cool purple, highlights toward warm yellow (perceptual OKLCH). Adds the ramp to the swatches. Use 4-6 steps per material.",
+            linkedMapOf("base" to color("Base (mid) color."), "steps" to integer("2-16 (default 5).", 2, 16),
+                "hue_shift" to linkedMapOf<String, Any?>("type" to "number", "description" to "Degrees of hue shift at the ends (default 18)."),
+                "contrast" to linkedMapOf<String, Any?>("type" to "number", "description" to "0-1 lightness range (default 0.75)."), "add_to_palette" to boolean("Default true.")),
+            listOf("base"))
+        tool("palette_list", "Palette library", "pixelart", Access.READ, "Lists built-in pixel-art palettes (ENDESGA 32/64, Resurrect 64, Sweetie 16, Apollo, AAP-64, PICO-8, Lospec500, Vinik24, …) with credits.")
+        tool("palette_load", "Load palette", "pixelart", Access.WRITE, "Loads a library palette (or explicit colors) into the swatches.",
+            linkedMapOf("name" to string("Library palette name, e.g. endesga-32."), "colors" to linkedMapOf("type" to "array", "items" to color(), "description" to "Explicit colors."), "replace" to boolean("Replace swatches (default true).")))
+        tool("quantize", "Reduce colors", "pixelart", Access.WRITE,
+            "Reduces colors of a cel/frame/layer/everything to a limited palette (median cut N colors, the swatches, or a library palette) with optional ordered dithering — turns renders and imports into crisp pixel art. One shared palette across the scope keeps animations consistent.",
+            props(linkedMapOf("scope" to string("cel | frame | layer | all.", listOf("cel", "frame", "layer", "all")), "colors" to integer("Target color count (2-256).", 2, 256),
+                "palette" to linkedMapOf<String, Any?>("type" to listOf("string", "array"), "description" to "Library name, 'swatches', or a color list."),
+                "dither" to string("Ordered dither.", listOf("none", "bayer2", "bayer4", "bayer8")), "dither_strength" to linkedMapOf<String, Any?>("type" to "number", "description" to "0-255 (default 28)."),
+                "add_to_palette" to boolean("Add the resulting colors to the swatches.")), target()))
+        tool("dither_fill", "Dither fill", "pixelart", Access.WRITE, "Fills a region with an ordered-dither blend of two colors; level 0 = color, 16 = color2 (gradients, glass, shading transitions).",
+            props(region(), linkedMapOf("color" to color(), "color2" to color("Second color."), "level" to integer("0-16 density.", 0, 16), "only_opaque" to boolean("Only over existing pixels.")), target()),
+            listOf("color", "color2"))
+        tool("export_normal_map", "Sprite normal map", "pixelart", Access.READ, "Generates a normal map of a frame/layer for 2D dynamic lighting (Godot, Unity, Unreal Paper2D).",
+            linkedMapOf("frame" to FRAME, "layer" to LAYER, "strength" to linkedMapOf<String, Any?>("type" to "number", "description" to "Bump strength (default 3)."),
+                "bevel" to linkedMapOf<String, Any?>("type" to "number", "description" to "Edge roundness in pixels (default 3)."), "scale" to integer("Upscale 1-64.", 1, 64)),
+            output = Output.PNG_IMAGE)
         tool("image_import", "Import image", "project", Access.WRITE, "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
             props(linkedMapOf("data_base64" to string("PNG file as base64."), "x" to X, "y" to Y), target()), listOf("data_base64"))
 
@@ -242,6 +274,8 @@ object ToolCatalog {
             "key_light" to vec3("Key light direction (view space, toward the light)."),
             "key_intensity" to linkedMapOf<String, Any?>("type" to "number", "description" to "Key light intensity (default 3.2)."),
             "ambient" to linkedMapOf<String, Any?>("type" to "number", "description" to "Ambient multiplier (default 1; lower for night scenes)."),
+            "pixel_palette" to linkedMapOf<String, Any?>("type" to listOf("string", "integer"), "description" to "Pixel-art post-process: quantize the render to a library palette (e.g. 'endesga-32'), 'swatches', or N colors. Shared across all sprites of a sheet."),
+            "dither" to string("Ordered dither for pixel_palette.", listOf("none", "bayer2", "bayer4", "bayer8")),
         )
         val sequence = linkedMapOf<String, Map<String, Any?>>(
             "models" to linkedMapOf("type" to "array", "items" to linkedMapOf("type" to "string"), "description" to "Frame-by-frame 3D animation: each model is one frame (VFX, morphs). One shared camera keeps it stable."),

@@ -863,6 +863,27 @@ fn render_dims(a: &Json, default: u32) -> CmdResult<(u32, u32)> {
     Ok((w as u32, h as u32))
 }
 
+/// Optional pixel-art post-process for 3D renders: `pixel_palette` (library name, "swatches",
+/// or a color count) with `dither`, then a selective outline when `outline` is "pixel".
+fn pixel_art_post(doc: &Document, a: &Json, img: &mut crate::renderer::Image, shared: Option<&[Rgba]>) -> CmdResult<()> {
+    let Some(p) = a.get("pixel_palette").filter(|v| !v.is_null()) else { return Ok(()) };
+    let dither = super::pixel2d::dither_arg(a)?;
+    let strength = opt_f64(a, "dither_strength")?.unwrap_or(20.0) as f32;
+    let pal: Vec<Rgba> = match shared {
+        Some(s) => s.to_vec(),
+        None => {
+            let samples = crate::pixelart::image_samples(img);
+            let args = match p {
+                Json::Num(n) => Json::obj().with("colors", *n),
+                other => Json::obj().with("palette", other.clone()),
+            };
+            super::pixel2d::quantize_palette(doc, &args, &samples)?
+        }
+    };
+    crate::pixelart::quantize_image(img, &pal, dither, strength);
+    Ok(())
+}
+
 /// Renders a model to PNG from any angle/frame/pass.
 pub fn voxel_render(doc: &Document, cache: &mut RenderCache, a: &Json) -> CmdResult<Query> {
     let mi = model_index(doc, a)?;
@@ -883,7 +904,8 @@ pub fn voxel_render(doc: &Document, cache: &mut RenderCache, a: &Json) -> CmdRes
     s.camera.scale = scale;
     s.camera.anchor_x = ax;
     s.camera.anchor_y = ay;
-    let img = render(model, &prepared, &doc.materials, &doc.textures, &s);
+    let mut img = render(model, &prepared, &doc.materials, &doc.textures, &s);
+    pixel_art_post(doc, a, &mut img, None)?;
     let png = export::png::encode(&img);
     Ok(Query {
         result: Json::obj()
@@ -964,6 +986,31 @@ fn bake_sequence(doc: &Document, cache: &mut RenderCache, a: &Json, list: &[Json
 }
 
 fn bake(doc: &Document, cache: &mut RenderCache, a: &Json) -> CmdResult<Bake> {
+    let mut b = bake_raw(doc, cache, a)?;
+    if a.get("pixel_palette").is_some_and(|v| !v.is_null()) {
+        // One palette for every sprite keeps colors identical across directions and frames.
+        let mut samples: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for (_, _, _, img) in &b.images {
+            for (c, n) in crate::pixelart::image_samples(img) {
+                *samples.entry(c.to_u32()).or_default() += n;
+            }
+        }
+        let mut list: Vec<(Rgba, u32)> = samples.into_iter().map(|(c, n)| (Rgba::from_u32(c), n)).collect();
+        list.sort_by_key(|(c, _)| c.to_u32());
+        let args = match a.get("pixel_palette") {
+            Some(Json::Num(n)) => Json::obj().with("colors", *n),
+            Some(other) => Json::obj().with("palette", other.clone()),
+            None => Json::obj(),
+        };
+        let pal = super::pixel2d::quantize_palette(doc, &args, &list)?;
+        for (_, _, _, img) in b.images.iter_mut() {
+            pixel_art_post(doc, a, img, Some(&pal))?;
+        }
+    }
+    Ok(b)
+}
+
+fn bake_raw(doc: &Document, cache: &mut RenderCache, a: &Json) -> CmdResult<Bake> {
     if let Some(Json::Arr(list)) = a.get("models") {
         return bake_sequence(doc, cache, a, list);
     }

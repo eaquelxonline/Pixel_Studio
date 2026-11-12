@@ -12,6 +12,7 @@ pub mod ffi;
 pub mod history;
 pub mod layers;
 pub mod pixel;
+pub mod pixelart;
 pub mod project;
 pub mod raster;
 pub mod renderer;
