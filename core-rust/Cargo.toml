@@ -1,0 +1,21 @@
+[package]
+name = "pixcore"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Pixel Studio core engine: pixels, layers, frames, history, storage, rendering and export."
+publish = false
+
+[lib]
+name = "pixcore"
+crate-type = ["cdylib", "rlib"]
+
+# Pixel Studio policy: zero third-party runtime crates. Only the Rust standard library.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Unwinding must stay enabled: every FFI entry point catches panics so they never cross into the JVM.
+panic = "unwind"

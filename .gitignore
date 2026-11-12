@@ -1,0 +1,14 @@
+# Rust
+core-rust/target/
+# Gradle / Kotlin
+.gradle/
+build/
+.kotlin/
+local.properties
+# IDE
+.idea/
+*.iml
+.vscode/
+# OS
+.DS_Store
+Thumbs.db
