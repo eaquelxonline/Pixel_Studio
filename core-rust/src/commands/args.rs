@@ -54,6 +54,8 @@ pub fn layer_index(doc: &Document, a: &Json, key: &str) -> CmdResult<usize> {
             .iter()
             .position(|l| l.name == *name)
             .or_else(|| doc.layers.iter().position(|l| l.name.eq_ignore_ascii_case(name)))
+            // Function-calling adapters that only support string parameters send indices as text.
+            .or_else(|| name.trim().parse::<usize>().ok().filter(|i| *i < doc.layers.len()))
             .ok_or_else(|| CmdError::not_found(format!("no layer named '{name}'"))),
         Some(v) => {
             let i = v.as_i64().ok_or_else(|| CmdError::invalid(format!("'{key}' must be a layer index or name")))?;

@@ -28,7 +28,9 @@ pub fn run_query(doc: &Document, history: &History, revision: u64, op: &str, a: 
             .with("revision", revision)
             .with("project", doc.name.as_str())
             .with("undo", history.can_undo())
-            .with("redo", history.can_redo())),
+            .with("redo", history.can_redo())
+            .with("abiVersion", crate::ffi::ABI_VERSION)
+            .with("operations", Json::Arr(super::OPERATIONS.iter().map(|(name, _)| Json::from(*name)).collect()))),
         "canvas_inspect" | "project_inspect" => q(inspect(doc, history, revision, op == "project_inspect")),
         "get_pixel" => get_pixel(doc, a),
         "read_region" => read_region(doc, a),

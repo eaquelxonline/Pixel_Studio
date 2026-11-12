@@ -1,0 +1,1700 @@
+{
+  "functionDeclarations": [
+    {
+      "name": "canvas_inspect",
+      "description": "Canvas size, current revision, layers, frames (with durations), tags and active layer/frame. Call this first and whenever you need the latest revision.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "canvas_snapshot",
+      "description": "Your eyes: returns a PNG image of a frame (all visible layers, upscaled for viewing) plus a JSON summary of content bounds and used colors. Use after drawing to check your work.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Integer upscale factor 1-64 (default: auto to ~512px).",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "onion": {
+            "type": "object",
+            "description": "Onion skin: {before, after, opacity 0-255, tint}. Shows neighbouring frames faintly underneath.",
+            "properties": {
+              "before": {
+                "type": "integer",
+                "description": "Previous frames to show.",
+                "minimum": 0,
+                "maximum": 8
+              },
+              "after": {
+                "type": "integer",
+                "description": "Next frames to show.",
+                "minimum": 0,
+                "maximum": 8
+              },
+              "opacity": {
+                "type": "integer",
+                "description": "Opacity of the nearest onion frame.",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "tint": {
+                "type": "boolean",
+                "description": "Tint previous red and next blue."
+              }
+            }
+          },
+          "background": {
+            "type": "string",
+            "description": "Optional background color for the image."
+          }
+        }
+      }
+    },
+    {
+      "name": "get_pixel",
+      "description": "Reads one pixel's color from a layer (or the composited frame with composite=true).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "composite": {
+            "type": "boolean",
+            "description": "Read the final image of all visible layers instead of one layer."
+          }
+        },
+        "required": ["x","y"]
+      }
+    },
+    {
+      "name": "read_region",
+      "description": "Reads a rectangle of pixels (max 128x128) as text. format 'ascii' (default) gives one string per row with a color legend ('.' = transparent) — ideal for reasoning about shapes; 'hex' gives colors; 'indexed' gives palette indices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "format": {
+            "type": "string",
+            "description": "Output format.",
+            "enum": ["ascii","hex","indexed"]
+          },
+          "composite": {
+            "type": "boolean",
+            "description": "Read the composited frame."
+          }
+        }
+      }
+    },
+    {
+      "name": "set_pixel",
+      "description": "Paints a single pixel.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "color": {
+            "type": "string",
+            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x","y","color"]
+      }
+    },
+    {
+      "name": "set_pixels",
+      "description": "Paints many explicit pixels in one undoable step. Each entry is [x, y, color] or {x, y, color}; entries without a color use 'color'. Use null/'transparent' to erase. Up to 262144 pixels.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pixels": {
+            "type": "array",
+            "description": "Pixels: [[x, y, \"#RRGGBB\"], ...] or [{\"x\":..,\"y\":..,\"color\":..}, ...].",
+            "items": {
+              "type": "object",
+              "description": "(number or name as text)"
+            }
+          },
+          "color": {
+            "type": "string",
+            "description": "Default color for entries without one."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["pixels"]
+      }
+    },
+    {
+      "name": "erase_pixel",
+      "description": "Makes one pixel transparent.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x","y"]
+      }
+    },
+    {
+      "name": "draw_line",
+      "description": "Draws a 1-pixel Bresenham line including both end points.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x0": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y0": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "x1": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y1": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "color": {
+            "type": "string",
+            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x0","y0","x1","y1","color"]
+      }
+    },
+    {
+      "name": "draw_rectangle",
+      "description": "Draws a rectangle outline, or a filled rectangle with filled=true.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Width.",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Height.",
+            "minimum": 1
+          },
+          "color": {
+            "type": "string",
+            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+          },
+          "filled": {
+            "type": "boolean",
+            "description": "Fill the inside."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x","y","width","height","color"]
+      }
+    },
+    {
+      "name": "draw_ellipse",
+      "description": "Draws a pixel-perfect ellipse inscribed in the given box (outline or filled).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Width.",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Height.",
+            "minimum": 1
+          },
+          "color": {
+            "type": "string",
+            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+          },
+          "filled": {
+            "type": "boolean",
+            "description": "Fill the inside."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x","y","width","height","color"]
+      }
+    },
+    {
+      "name": "fill_region",
+      "description": "Bucket fill: replaces the connected area of the seed pixel's color (4-connected). contiguous=false replaces that color everywhere on the layer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "color": {
+            "type": "string",
+            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+          },
+          "contiguous": {
+            "type": "boolean",
+            "description": "Default true."
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x","y","color"]
+      }
+    },
+    {
+      "name": "replace_color",
+      "description": "Replaces every pixel of one color with another in a cel, a layer (all frames), a frame (all layers) or everywhere.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "Color to replace."
+          },
+          "to": {
+            "type": "string",
+            "description": "New color."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Where to replace (default 'cel').",
+            "enum": ["cel","layer","frame","all"]
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["from","to"]
+      }
+    },
+    {
+      "name": "flip_horizontal",
+      "description": "Mirrors a region (default whole layer) left↔right.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "flip_vertical",
+      "description": "Mirrors a region (default whole layer) top↕bottom.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "rotate",
+      "description": "Rotates a region clockwise by 90/180/270 degrees (90/270 need a square region).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "degrees": {
+            "type": "integer",
+            "description": "Clockwise rotation. Allowed: 90, 180, 270."
+          },
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["degrees"]
+      }
+    },
+    {
+      "name": "move_region",
+      "description": "Moves the pixels of a region by (dx, dy) on the same layer. mode 'over' keeps destination pixels under transparent source pixels.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "dx": {
+            "type": "integer",
+            "description": "Horizontal offset."
+          },
+          "dy": {
+            "type": "integer",
+            "description": "Vertical offset."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Paste mode (default 'over').",
+            "enum": ["over","replace"]
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["dx","dy"]
+      }
+    },
+    {
+      "name": "copy_region",
+      "description": "Copies a region to another position, layer and/or frame. Ideal for building a new animation frame from the previous pose, then editing only what moves.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "toX": {
+            "type": "integer",
+            "description": "Destination left (default: same x)."
+          },
+          "toY": {
+            "type": "integer",
+            "description": "Destination top (default: same y)."
+          },
+          "toLayer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "toFrame": {
+            "type": "integer",
+            "description": "Destination frame index.",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "description": "Paste mode (default 'over').",
+            "enum": ["over","replace"]
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "clear",
+      "description": "Erases a region (default: the whole cel).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Region left (default 0)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top (default 0)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height (default: to the canvas edge).",
+            "minimum": 1
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "canvas_resize",
+      "description": "Changes the canvas size; pixels outside the new bounds are cropped. offsetX/offsetY shift existing art.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "description": "New width.",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "height": {
+            "type": "integer",
+            "description": "New height.",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "offsetX": {
+            "type": "integer",
+            "description": "Shift existing pixels right."
+          },
+          "offsetY": {
+            "type": "integer",
+            "description": "Shift existing pixels down."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["width","height"]
+      }
+    },
+    {
+      "name": "frame_add",
+      "description": "Adds one or more empty frames (no fixed limit). Defaults: appended at the end, duration of the active frame.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Insert position.",
+            "minimum": 0
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many frames (1-10000).",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Duration in ms (1-60000).",
+            "minimum": 1,
+            "maximum": 60000
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "frame_duplicate",
+      "description": "Copies a frame with all its layers (stored efficiently until edited). Default target: right after the source.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "index": {
+            "type": "integer",
+            "description": "Position of the copy.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "frame_delete",
+      "description": "Deletes a frame and its pixels. Requires the user's approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "Frame index to delete.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["frame"]
+      }
+    },
+    {
+      "name": "frame_move",
+      "description": "Reorders a frame.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "index": {
+            "type": "integer",
+            "description": "New position.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["index"]
+      }
+    },
+    {
+      "name": "frame_get",
+      "description": "Duration, tags and per-layer pixel counts/bounds of a frame.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "frame_set_duration",
+      "description": "Sets how long a frame is shown (ms). frame='all' sets every frame.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "string",
+            "description": "Frame index, or \"all\". (number or name as text)"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "Milliseconds (1-60000).",
+            "minimum": 1,
+            "maximum": 60000
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["duration"]
+      }
+    },
+    {
+      "name": "frame_select",
+      "description": "Makes a frame the active one (shown in the editor).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["frame"]
+      }
+    },
+    {
+      "name": "animation_tag_create",
+      "description": "Names a frame range as an animation (e.g. Idle, Walk, Attack) with a playback direction.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tag name."
+          },
+          "from": {
+            "type": "integer",
+            "description": "First frame index.",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "description": "Last frame index.",
+            "minimum": 0
+          },
+          "direction": {
+            "type": "string",
+            "description": "Playback direction.",
+            "enum": ["forward","reverse","pingpong"]
+          },
+          "repeat": {
+            "type": "integer",
+            "description": "0 = loop forever.",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name","from","to"]
+      }
+    },
+    {
+      "name": "animation_tag_delete",
+      "description": "Removes a tag (frames are kept).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tag name."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "animation_set_loop",
+      "description": "Sets a tag's direction (forward/reverse/pingpong) and repeat count.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Tag name."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Direction.",
+            "enum": ["forward","reverse","pingpong"]
+          },
+          "repeat": {
+            "type": "integer",
+            "description": "0 = loop forever.",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["tag"]
+      }
+    },
+    {
+      "name": "animation_info",
+      "description": "Playback order, durations, total length and average FPS for a tag or frame range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Tag name."
+          },
+          "from": {
+            "type": "integer",
+            "description": "First frame.",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "description": "Last frame.",
+            "minimum": 0
+          },
+          "direction": {
+            "type": "string",
+            "description": "Direction.",
+            "enum": ["forward","reverse","pingpong"]
+          }
+        }
+      }
+    },
+    {
+      "name": "animation_preview",
+      "description": "Renders the animation (or a tag) as an animated GIF so you can review motion.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Tag name."
+          },
+          "from": {
+            "type": "integer",
+            "description": "First frame.",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "description": "Last frame.",
+            "minimum": 0
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          }
+        }
+      }
+    },
+    {
+      "name": "layer_create",
+      "description": "Adds a layer (default: above the active one) and selects it. Split characters into parts (Body, Head, Weapon, ...) so they can be edited independently.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Layer name."
+          },
+          "index": {
+            "type": "integer",
+            "description": "Position (0 = bottom).",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "layer_delete",
+      "description": "Deletes a layer and all its pixels in every frame. Requires the user's approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["layer"]
+      }
+    },
+    {
+      "name": "layer_rename",
+      "description": "Renames a layer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "name": {
+            "type": "string",
+            "description": "New name."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "layer_visibility",
+      "description": "Shows or hides a layer.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "visible": {
+            "type": "boolean",
+            "description": "Visible?"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["visible"]
+      }
+    },
+    {
+      "name": "layer_lock",
+      "description": "Locks/unlocks a layer against edits.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "Locked?"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["locked"]
+      }
+    },
+    {
+      "name": "layer_opacity",
+      "description": "Sets layer opacity 0-255.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "opacity": {
+            "type": "integer",
+            "description": "0-255.",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["opacity"]
+      }
+    },
+    {
+      "name": "layer_move",
+      "description": "Changes a layer's stacking position.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "New position (0 = bottom).",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["index"]
+      }
+    },
+    {
+      "name": "layer_select",
+      "description": "Makes a layer the active one.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": "string",
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer. (number or name as text)"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["layer"]
+      }
+    },
+    {
+      "name": "palette_get",
+      "description": "Lists palette colors with their indices.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "palette_set",
+      "description": "Changes a palette entry; every pixel using it is recolored (great for color variants).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Palette index (1+).",
+            "minimum": 1
+          },
+          "color": {
+            "type": "string",
+            "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["index","color"]
+      }
+    },
+    {
+      "name": "palette_add",
+      "description": "Adds colors to the palette (plan a limited palette before drawing).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Color as #RRGGBB or #RRGGBBAA (or 'transparent'). New colors are added to the palette automatically."
+            },
+            "description": "Hex colors."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["colors"]
+      }
+    },
+    {
+      "name": "project_inspect",
+      "description": "Like canvas_inspect, plus per-layer pixel counts and storage statistics.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "project_save",
+      "description": "Saves the project (.pxs) to its file in the Pixel Studio workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Optional file name (letters, digits, - and _ only)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "project_export",
+      "description": "Exports PNG (one frame), GIF (animation) or sprite sheet (PNG + JSON metadata for Godot/Unity) into the workspace's Exports folder and returns the image.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "Export format.",
+            "enum": ["png","gif","spritesheet"]
+          },
+          "name": {
+            "type": "string",
+            "description": "File name without extension."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "tag": {
+            "type": "string",
+            "description": "Tag to export (gif/spritesheet)."
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "columns": {
+            "type": "integer",
+            "description": "Sprite sheet columns (0 = auto).",
+            "minimum": 0
+          },
+          "padding": {
+            "type": "integer",
+            "description": "Sprite sheet padding in px.",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["format"]
+      }
+    },
+    {
+      "name": "project_new",
+      "description": "Replaces the current project with a new blank canvas (undoable). Requires the user's approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "width": {
+            "type": "integer",
+            "description": "Width 1-4096.",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "height": {
+            "type": "integer",
+            "description": "Height 1-4096.",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "name": {
+            "type": "string",
+            "description": "Project name."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["width","height"]
+      }
+    },
+    {
+      "name": "project_rename",
+      "description": "Renames the project.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "New name."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "history_undo",
+      "description": "Undoes the last change(s), whoever made them.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "integer",
+            "description": "1-256.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "history_redo",
+      "description": "Redoes undone change(s).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "integer",
+            "description": "1-256.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "history_list",
+      "description": "Recent operations with actor, revision and changed pixel counts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "1-1000.",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        }
+      }
+    },
+    {
+      "name": "transaction",
+      "description": "Runs several drawing/structure commands as ONE atomic, undoable step: if any fails, nothing is applied. Each command is {\"op\": <tool name>, ...its arguments}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "description": "Commands, e.g. [{\"op\":\"draw_line\",\"x0\":0,...}, {\"op\":\"set_pixel\",...}].",
+            "items": {
+              "type": "object",
+              "required": ["op"],
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "description": "Operation name."
+                }
+              }
+            }
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["commands"]
+      }
+    }
+  ]
+}
