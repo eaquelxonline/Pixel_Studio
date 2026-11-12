@@ -159,7 +159,18 @@ fn composite_frame(doc: &Document, frame_index: usize, opts: &RenderOptions, img
                         );
                     }
                     let o = (y as usize * img.width as usize + x as usize) * 4;
-                    blend_over(&mut img.pixels[o..o + 4], c, opacity);
+                    if layer.blend == crate::layers::Blend::Normal || img.pixels[o + 3] == 0 {
+                        blend_over(&mut img.pixels[o..o + 4], c, opacity);
+                    } else {
+                        let px = &img.pixels[o..o + 4];
+                        let mixed = Rgba::new(
+                            layer.blend.channel(px[0] as u32, c.r as u32) as u8,
+                            layer.blend.channel(px[1] as u32, c.g as u32) as u8,
+                            layer.blend.channel(px[2] as u32, c.b as u32) as u8,
+                            c.a,
+                        );
+                        blend_over(&mut img.pixels[o..o + 4], mixed, opacity);
+                    }
                 }
             }
         }

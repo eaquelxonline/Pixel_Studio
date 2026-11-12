@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::animation::{DEFAULT_FRAME_MS, Frame, Tag};
+use crate::gamedev::Slice;
+use crate::gamedev::tiles::{Tilemap, Tileset};
 use crate::layers::Layer;
 use crate::pixel::{Palette, PixelGrid, Rgba};
 use crate::voxel::{Material, Texture, VoxelModel};
@@ -39,6 +41,10 @@ pub struct Document {
     pub materials: Vec<Material>,
     /// Texture maps (imported PNGs or procedural sets).
     pub textures: Vec<Arc<Texture>>,
+    /// Named per-frame rectangles: hitboxes, hurtboxes, pivots, attach points.
+    pub slices: Vec<Slice>,
+    pub tilesets: Vec<Arc<Tileset>>,
+    pub tilemaps: Vec<Arc<Tilemap>>,
 }
 
 /// Small neutral starter palette so humans have something to pick from immediately.
@@ -77,6 +83,9 @@ impl Document {
             models: Vec::new(),
             materials: vec![Material::new("default")],
             textures: Vec::new(),
+            slices: Vec::new(),
+            tilesets: Vec::new(),
+            tilemaps: Vec::new(),
         };
         let l = doc.insert_layer("Layer 1", 0);
         let f = doc.insert_frame(0, DEFAULT_FRAME_MS);
@@ -169,7 +178,36 @@ impl Document {
             }
             true
         });
+        // Slice keys on the removed frame move to the next frame unless it has its own key.
+        let next = remaining.get(index).copied();
+        for s in &mut self.slices {
+            let has_next = next.is_some_and(|n| s.keys.iter().any(|k| k.frame_id == n));
+            s.keys.retain_mut(|k| {
+                if k.frame_id != frame.id {
+                    return true;
+                }
+                match next {
+                    Some(n) if !has_next => {
+                        k.frame_id = n;
+                        true
+                    }
+                    _ => false,
+                }
+            });
+        }
+        self.slices.retain(|s| !s.keys.is_empty());
         frame
+    }
+
+    /// The slice key in effect at a frame index (the latest key at or before it).
+    pub fn slice_key_at(&self, slice: &Slice, frame_index: usize) -> Option<crate::gamedev::SliceKey> {
+        slice
+            .keys
+            .iter()
+            .filter_map(|k| self.frame_index(k.frame_id).map(|i| (i, *k)))
+            .filter(|(i, _)| *i <= frame_index)
+            .max_by_key(|(i, _)| *i)
+            .map(|(_, k)| k)
     }
 
     /// Opaque pixel count of a cel, used by inspection tools.

@@ -17,7 +17,7 @@ enum class Tool(val label: String, val key: Char) {
     ELLIPSE("Ellipse", 'O'), FILL("Fill", 'G'), PICKER("Picker", 'I'),
 }
 
-data class LayerInfo(val index: Int, val name: String, val visible: Boolean, val locked: Boolean, val opacity: Int)
+data class LayerInfo(val index: Int, val name: String, val visible: Boolean, val locked: Boolean, val opacity: Int, val blend: String = "normal")
 data class FrameInfo(val index: Int, val duration: Int)
 
 /** Snapshot of document structure, refreshed after every revision change. */
@@ -83,7 +83,7 @@ class EditorController(val engine: PixelEngine) {
             revision = i.long("revision") ?: 0,
             layers = i.list("layers")!!.map {
                 @Suppress("UNCHECKED_CAST") val l = it as Map<String, Any?>
-                LayerInfo(l.long("index")!!.toInt(), l.str("name")!!, l.bool("visible")!!, l.bool("locked")!!, l.long("opacity")!!.toInt())
+                LayerInfo(l.long("index")!!.toInt(), l.str("name")!!, l.bool("visible")!!, l.bool("locked")!!, l.long("opacity")!!.toInt(), l.str("blend") ?: "normal")
             },
             frames = i.list("frames")!!.map {
                 @Suppress("UNCHECKED_CAST") val f = it as Map<String, Any?>

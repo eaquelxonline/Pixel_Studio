@@ -305,3 +305,87 @@ fn true_color_and_png_import() {
     let p = ok(&mut e, r#"{"op":"get_pixel","layer":0,"x":0,"y":0}"#);
     assert_eq!(p.get("result").unwrap().get("color").unwrap().as_str(), Some("#FF0000"));
 }
+
+#[test]
+fn game_production_pipeline() {
+    let mut e = Engine::new(32, 32);
+    // Blend modes composite differently from normal.
+    ok(&mut e, r##"{"op":"draw_rectangle","x":0,"y":0,"width":32,"height":32,"color":"#806040","filled":true}"##);
+    ok(&mut e, r#"{"op":"layer_create","name":"glow"}"#);
+    ok(&mut e, r##"{"op":"draw_rectangle","layer":"glow","x":0,"y":0,"width":8,"height":8,"color":"#404040","filled":true}"##);
+    let px = |e: &mut Engine| e.execute(br#"{"op":"render_frame"}"#, &[]).binary[(2 * 32 + 2) * 4..(2 * 32 + 2) * 4 + 3].to_vec();
+    assert_eq!(px(&mut e), vec![0x40, 0x40, 0x40]);
+    ok(&mut e, r#"{"op":"layer_blend","layer":"glow","mode":"add"}"#);
+    assert_eq!(px(&mut e), vec![0xC0, 0xA0, 0x80]);
+    assert_eq!(err_code(&mut e, r#"{"op":"layer_blend","mode":"sparkle"}"#), "invalid_argument");
+
+    // Slices with pivots, surviving frame deletion.
+    ok(&mut e, r#"{"op":"frame_add","count":2}"#);
+    ok(&mut e, r#"{"op":"slice_set","name":"hitbox","x":4,"y":6,"width":10,"height":12,"pivot":[5,12]}"#);
+    ok(&mut e, r#"{"op":"slice_set","name":"hitbox","frame":2,"x":6,"y":6,"width":12,"height":12}"#);
+    ok(&mut e, r#"{"op":"frame_delete","frame":2}"#);
+    let gd = ok(&mut e, r#"{"op":"gamedev_inspect"}"#).to_json_string();
+    assert!(gd.contains("\"hitbox\"") && gd.contains("\"pivot\""), "{gd}");
+
+    // Palette swap and RotSprite.
+    ok(&mut e, r##"{"op":"palette_swap","map":{"#806040":"#2050A0"},"scope":"all"}"##);
+    assert!(run(&mut e, r#"{"op":"get_pixel","layer":0,"frame":0,"x":20,"y":20}"#).to_json_string().contains("#2050A0"));
+    ok(&mut e, r#"{"op":"layer_create","name":"sword"}"#);
+    ok(&mut e, r##"{"op":"draw_line","layer":"sword","x0":16,"y0":4,"x1":16,"y1":27,"color":"#E0E0F0"}"##);
+    let rot = ok(&mut e, r#"{"op":"rotsprite","layer":"sword","degrees":45}"#);
+    assert!(rot.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 10);
+
+    // Blob tileset → terrain map → bake → Tiled export.
+    let ts = ok(&mut e, r##"{"op":"tileset_generate_blob","name":"grass","tile_size":8,"fill":"#4A8C3F","lip":2}"##);
+    assert_eq!(ts.get("result").unwrap().get("tileCount").unwrap().as_i64(), Some(47));
+    ok(&mut e, r#"{"op":"tilemap_create","name":"level","tileset":"grass","columns":4,"rows":4}"#);
+    ok(&mut e, r#"{"op":"tilemap_terrain","tilemap":"level","rows":["....",".##.",".###","...."]}"#);
+    let tiled = e.execute(br#"{"op":"export_tiled","tilemap":"level"}"#, &[]);
+    assert!(tiled.binary.starts_with(&[0x89, b'P']));
+    let tj = Json::parse(&tiled.json).unwrap();
+    let tmj = tj.get("result").unwrap().get("tmj").unwrap();
+    let data = tmj.get("layers").unwrap().as_array().unwrap()[0].get("data").unwrap().as_array().unwrap();
+    assert_eq!(data.len(), 16);
+    assert_eq!(data[0].as_i64(), Some(0));
+    assert!(data[5].as_i64().unwrap() > 0);
+    assert!(tiled.json.contains("wangsets"));
+    ok(&mut e, r#"{"op":"layer_create","name":"ground"}"#);
+    let baked = ok(&mut e, r#"{"op":"tilemap_bake","tilemap":"level","layer":"ground"}"#);
+    assert!(baked.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 50);
+    assert_eq!(err_code(&mut e, r#"{"op":"tileset_delete","tileset":"grass"}"#), "conflict");
+
+    // Plain tileset cut from the canvas, explicit tiles.
+    ok(&mut e, r#"{"op":"tileset_create","name":"props","tile_size":8}"#);
+    let cut = ok(&mut e, r#"{"op":"tileset_add_tiles","tileset":"props","x":0,"y":0,"columns":2,"rows":2}"#);
+    assert!(cut.get("result").unwrap().get("tileCount").unwrap().as_i64().unwrap() >= 1);
+    ok(&mut e, r#"{"op":"tilemap_create","name":"deco","tileset":"props","columns":3,"rows":2}"#);
+    ok(&mut e, r#"{"op":"tilemap_set","tilemap":"deco","rows":["0 . 0", ". 0 ."]}"#);
+    assert_eq!(err_code(&mut e, r#"{"op":"tilemap_set","tilemap":"deco","x":0,"y":0,"tile":99}"#), "not_found");
+
+    // Lit preview, atlas and Godot export.
+    let lit = e.execute(
+        br##"{"op":"render_lit","lights":[{"x":4,"y":4,"color":"#FFB060","radius":40}],"bands":4,"unlit_layers":["sword"]}"##,
+        &[],
+    );
+    assert!(lit.binary.starts_with(&[0x89, b'P']), "{}", lit.json);
+    let atlas = e.execute(br#"{"op":"export_atlas","padding":1,"extrude":1}"#, &[]);
+    assert!(atlas.binary.starts_with(&[0x89, b'P']), "{}", atlas.json);
+    let aj = Json::parse(&atlas.json).unwrap();
+    let data = aj.get("result").unwrap().get("data").unwrap();
+    assert_eq!(data.get("frames").unwrap().as_array().unwrap().len(), 2);
+    assert!(data.get("meta").unwrap().get("slices").unwrap().as_array().unwrap().len() == 1);
+    let godot = e.execute(br#"{"op":"export_godot_spriteframes","texture_path":"res://hero.png"}"#, &[]);
+    assert!(godot.json.contains("SpriteFrames") && godot.json.contains("AtlasTexture_1"), "{}", godot.json);
+
+    // Everything survives a save/load round trip and undo.
+    let saved = e.execute(br#"{"op":"project_save"}"#, &[]);
+    let mut other = Engine::new(1, 1);
+    let r = other.execute(br#"{"op":"project_load"}"#, &saved.binary);
+    assert!(r.json.contains("\"ok\":true"), "{}", r.json);
+    assert_eq!(other.document().tilemaps, e.document().tilemaps);
+    assert_eq!(other.document().slices, e.document().slices);
+    assert_eq!(other.document().layers, e.document().layers);
+    ok(&mut e, r#"{"op":"history_undo"}"#);
+    ok(&mut e, r#"{"op":"history_undo"}"#);
+    assert_eq!(e.document().tilemaps.len(), 1);
+}

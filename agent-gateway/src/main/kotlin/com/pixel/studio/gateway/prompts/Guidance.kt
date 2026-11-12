@@ -24,6 +24,12 @@ object Guidance {
         Chunky models (40-80 voxels tall) read best as sprites. VFX: build a base once, voxel_model_clone it per frame,
         add the moving voxels (flames, sparks, smoke with alpha) and render the list with voxel_render_sheet models=[...].
 
+        Game production: levels = tileset_generate_blob (47-tile autotile set) → tilemap_create → tilemap_terrain with ASCII
+        rows ('#' = ground) → tilemap_bake onto a layer → tilemap_render to look. Mood = layers with layer_blend (multiply shadows,
+        add/screen glow) and render_lit with point lights (torch/campfire), bands=3-5 for crisp pixel steps, fire on unlit_layers.
+        Combat data = slice_set hitbox/hurtbox/pivot per frame. Variants = palette_swap. Smooth weapon swings = rotsprite.
+        Ship it with project_export format=atlas (Aseprite JSON), godot (SpriteFrames .tres) or tiled (.tmj).
+
         Collaboration rules:
         - Pass expectedRevision when you edit after reading; on a 'conflict' error re-inspect and retry — never overwrite blindly.
         - Use operationId for retries so nothing is applied twice.
@@ -61,6 +67,15 @@ object Guidance {
             "Create a '${a["animation"]}' animation with ${a["frames"] ?: "an appropriate number of"} frames from the character on frame 0. " +
                 "Plan the key poses first, duplicate the previous frame for each new pose, redraw only the moving parts, keep the character's " +
                 "proportions and palette identical, set per-frame durations, tag the range with animation_tag_create and review it with animation_preview."
+        },
+        PromptDef(
+            "build_level", "Build a game level", "Generates an autotiled tilemap level with lighting and exports it for a game engine.",
+            listOf(Triple("theme", "Level theme, e.g. 'mossy forest at night'", true), Triple("engine", "godot, tiled or atlas", false)),
+        ) { a ->
+            "Build a '${a["theme"]}' level: pick a library palette, generate a ground tileset with tileset_generate_blob (tile_size 16, lip 3 for depth), " +
+                "create a tilemap sized to the canvas, paint terrain with ASCII rows via tilemap_terrain, bake it to a 'Ground' layer, add props and a " +
+                "'Shadow' layer set to multiply, then preview the mood with render_lit (2-3 warm/cool lights, bands 4). Finish with project_export " +
+                "format=${a["engine"] ?: "tiled"}."
         },
         PromptDef("review_canvas", "Critique the canvas", "Reviews the current artwork and suggests concrete pixel-level fixes.", emptyList()) {
             "Look at the canvas with canvas_snapshot and read_region. Critique silhouette, palette, shading direction, outline quality and (if animated) " +

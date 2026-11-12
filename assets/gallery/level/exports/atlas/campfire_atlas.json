@@ -1,0 +1,318 @@
+{
+ "frames": [
+  {
+   "filename": "Campfire Clearing 0.png",
+   "frame": {
+    "x": 62,
+    "y": 58,
+    "w": 17,
+    "h": 52
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 159,
+    "y": 75,
+    "w": 17,
+    "h": 52
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 1.png",
+   "frame": {
+    "x": 1,
+    "y": 1,
+    "w": 15,
+    "h": 57
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 161,
+    "y": 70,
+    "w": 15,
+    "h": 57
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 2.png",
+   "frame": {
+    "x": 19,
+    "y": 1,
+    "w": 14,
+    "h": 56
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 162,
+    "y": 71,
+    "w": 14,
+    "h": 56
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 3.png",
+   "frame": {
+    "x": 1,
+    "y": 61,
+    "w": 15,
+    "h": 56
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 162,
+    "y": 71,
+    "w": 15,
+    "h": 56
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 4.png",
+   "frame": {
+    "x": 36,
+    "y": 1,
+    "w": 17,
+    "h": 55
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 161,
+    "y": 72,
+    "w": 17,
+    "h": 55
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 5.png",
+   "frame": {
+    "x": 19,
+    "y": 60,
+    "w": 18,
+    "h": 55
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 161,
+    "y": 72,
+    "w": 18,
+    "h": 55
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 6.png",
+   "frame": {
+    "x": 40,
+    "y": 59,
+    "w": 19,
+    "h": 54
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 159,
+    "y": 73,
+    "w": 19,
+    "h": 54
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  },
+  {
+   "filename": "Campfire Clearing 7.png",
+   "frame": {
+    "x": 56,
+    "y": 1,
+    "w": 19,
+    "h": 54
+   },
+   "rotated": false,
+   "trimmed": true,
+   "spriteSourceSize": {
+    "x": 160,
+    "y": 73,
+    "w": 19,
+    "h": 54
+   },
+   "sourceSize": {
+    "w": 320,
+    "h": 192
+   },
+   "duration": 110
+  }
+ ],
+ "meta": {
+  "app": "Pixel Studio",
+  "version": "0.1.0",
+  "image": "campfire_atlas.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 81,
+   "h": 119
+  },
+  "scale": "1",
+  "frameTags": [],
+  "layers": [
+   {
+    "name": "Ground",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Clearing",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Pond",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Plateau",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Shadows",
+    "opacity": 200,
+    "blendMode": "multiply"
+   },
+   {
+    "name": "Props",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Characters",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Glow",
+    "opacity": 255,
+    "blendMode": "add"
+   },
+   {
+    "name": "Fire",
+    "opacity": 255,
+    "blendMode": "normal"
+   },
+   {
+    "name": "Fireflies",
+    "opacity": 255,
+    "blendMode": "normal"
+   }
+  ],
+  "slices": [
+   {
+    "name": "hurtbox_aoi",
+    "color": "#40A0FF",
+    "keys": [
+     {
+      "frame": 0,
+      "bounds": {
+       "x": 118,
+       "y": 104,
+       "w": 16,
+       "h": 40
+      },
+      "pivot": {
+       "x": 8,
+       "y": 40
+      }
+     }
+    ]
+   },
+   {
+    "name": "hurtbox_ren",
+    "color": "#40A0FF",
+    "keys": [
+     {
+      "frame": 0,
+      "bounds": {
+       "x": 206,
+       "y": 104,
+       "w": 16,
+       "h": 40
+      },
+      "pivot": {
+       "x": 8,
+       "y": 40
+      }
+     }
+    ]
+   },
+   {
+    "name": "interact_campfire",
+    "color": "#FFB000",
+    "keys": [
+     {
+      "frame": 0,
+      "bounds": {
+       "x": 150,
+       "y": 112,
+       "w": 36,
+       "h": 24
+      }
+     }
+    ]
+   },
+   {
+    "name": "spawn_player",
+    "color": "#40FF80",
+    "keys": [
+     {
+      "frame": 0,
+      "bounds": {
+       "x": 248,
+       "y": 176,
+       "w": 16,
+       "h": 16
+      },
+      "pivot": {
+       "x": 8,
+       "y": 16
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

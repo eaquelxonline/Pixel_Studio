@@ -11,6 +11,10 @@
 //!   TILE  de-duplicated 16×16 tiles, RLE-encoded
 //!   CELS  (layer id, frame id) → tile references
 //!   HIST  operation log (who changed what)
+//!   MATL / TXTR / VOXM  PBR materials, texture maps and voxel models (3D pixel art)
+//!   SLCE  slices: name, color, keys (frame id, rect, optional pivot)            [v3]
+//!   TSET  tilesets: name, tile size, kind, zlib-compressed RGBA tiles           [v3]
+//!   TMAP  tilemaps: name, tileset index, size, cells and terrain bits          [v3]
 //! "END\0" | 4 | CRC-32 of every byte before this chunk
 //! ```
 //! All integers are little-endian. Unknown chunks are skipped for forward compatibility.
@@ -22,6 +26,8 @@ use std::sync::Arc;
 use crate::animation::{Direction, Frame, Tag, validate_duration};
 use crate::export::deflate::{crc32, zlib_compress};
 use crate::export::inflate::zlib_decompress;
+use crate::gamedev::tiles::{Tilemap, Tileset, TilesetKind};
+use crate::gamedev::{Slice, SliceKey};
 use crate::history::LogEntry;
 use crate::layers::Layer;
 use crate::pixel::{Palette, PixelGrid, Rgba, TILE_AREA, TILE_SIZE, Tile};
@@ -31,7 +37,7 @@ use crate::voxel::rig::{Animation, Bone, Key};
 use crate::voxel::{Material, Texture, Vec3};
 
 pub const MAGIC: &[u8; 4] = b"PXS\0";
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 
 struct W(Vec<u8>);
 
@@ -120,6 +126,7 @@ pub fn save(doc: &Document, log: &[LogEntry]) -> Vec<u8> {
         l.u8(layer.visible as u8);
         l.u8(layer.locked as u8);
         l.u8(layer.opacity);
+        l.u8(layer.blend.code());
     }
     chunk(&mut out, b"LAYR", l);
 
@@ -193,6 +200,7 @@ pub fn save(doc: &Document, log: &[LogEntry]) -> Vec<u8> {
     chunk(&mut out, b"HIST", h);
 
     save_voxels(doc, &mut out);
+    save_gamedev(doc, &mut out);
 
     let crc = crc32(&out);
     out.extend_from_slice(b"END\0");
@@ -263,7 +271,7 @@ pub fn load(data: &[u8]) -> Result<Loaded, String> {
         return Err("not a Pixel Studio (.pxs) file".into());
     }
     let version = u16::from_le_bytes([data[4], data[5]]);
-    if version != VERSION {
+    if !(2..=VERSION).contains(&version) {
         return Err(format!("unsupported .pxs version {version}"));
     }
     let end = data.len() - 12;
@@ -306,10 +314,11 @@ pub fn load(data: &[u8]) -> Result<Loaded, String> {
         let visible = l.u8()? != 0;
         let locked = l.u8()? != 0;
         let opacity = l.u8()?;
+        let blend = if version >= 3 { crate::layers::Blend::from_code(l.u8()?) } else { crate::layers::Blend::Normal };
         if id == 0 || id >= next_layer_id || layers.iter().any(|x: &Layer| x.id == id) {
             return Err("invalid layer id".into());
         }
-        layers.push(Layer { id, name, visible, locked, opacity });
+        layers.push(Layer { id, name, visible, locked, opacity, blend });
     }
 
     let mut f = R { d: get(b"FRAM")?, pos: 0 };
@@ -378,6 +387,9 @@ pub fn load(data: &[u8]) -> Result<Loaded, String> {
         models: Vec::new(),
         materials: vec![Material::new("default")],
         textures: Vec::new(),
+        slices: Vec::new(),
+        tilesets: Vec::new(),
+        tilemaps: Vec::new(),
     };
     let tiles_x = width.div_ceil(TILE_SIZE);
     let tiles_y = height.div_ceil(TILE_SIZE);
@@ -410,6 +422,7 @@ pub fn load(data: &[u8]) -> Result<Loaded, String> {
     }
 
     load_voxels(&mut doc, &chunks)?;
+    load_gamedev(&mut doc, &chunks)?;
 
     let mut log = Vec::new();
     if let Some(hist) = chunks.get(b"HIST") {
@@ -426,6 +439,116 @@ pub fn load(data: &[u8]) -> Result<Loaded, String> {
         }
     }
     Ok(Loaded { doc, log })
+}
+
+fn save_gamedev(doc: &Document, out: &mut Vec<u8>) {
+    let mut s = W(Vec::new());
+    s.u32(doc.slices.len() as u32);
+    for sl in &doc.slices {
+        s.str(&sl.name);
+        s.u32(sl.color);
+        s.u32(sl.keys.len() as u32);
+        for k in &sl.keys {
+            s.u32(k.frame_id);
+            s.i32(k.x);
+            s.i32(k.y);
+            s.u32(k.w);
+            s.u32(k.h);
+            s.u8(k.pivot.is_some() as u8);
+            let (px, py) = k.pivot.unwrap_or((0, 0));
+            s.i32(px);
+            s.i32(py);
+        }
+    }
+    chunk(out, b"SLCE", s);
+
+    let mut t = W(Vec::new());
+    t.u32(doc.tilesets.len() as u32);
+    for ts in &doc.tilesets {
+        t.str(&ts.name);
+        t.u32(ts.tile_w);
+        t.u32(ts.tile_h);
+        t.u8(matches!(ts.kind, TilesetKind::Blob) as u8);
+        t.u32(ts.tiles.len() as u32);
+        let raw: Vec<u8> = ts.tiles.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+        t.blob(&raw);
+    }
+    chunk(out, b"TSET", t);
+
+    let mut m = W(Vec::new());
+    m.u32(doc.tilemaps.len() as u32);
+    for tm in &doc.tilemaps {
+        m.str(&tm.name);
+        m.u32(tm.tileset as u32);
+        m.u32(tm.cols);
+        m.u32(tm.rows);
+        let mut raw: Vec<u8> = tm.cells.iter().flat_map(|v| v.to_le_bytes()).collect();
+        raw.extend(tm.terrain.iter().map(|&b| b as u8));
+        m.blob(&raw);
+    }
+    chunk(out, b"TMAP", m);
+}
+
+const MAX_TILES: usize = 4096;
+const MAX_TILE_SIDE: u32 = 256;
+const MAX_MAP_SIDE: u32 = 4096;
+
+fn load_gamedev(doc: &mut Document, chunks: &HashMap<[u8; 4], &[u8]>) -> Result<(), String> {
+    if let Some(data) = chunks.get(b"SLCE") {
+        let mut r = R { d: data, pos: 0 };
+        for _ in 0..r.count(12)? {
+            let name = r.str()?;
+            let color = r.u32()?;
+            let mut keys = Vec::new();
+            for _ in 0..r.count(29)? {
+                let (frame_id, x, y, w, h) = (r.u32()?, r.i32()?, r.i32()?, r.u32()?, r.u32()?);
+                let has = r.u8()? != 0;
+                let (px, py) = (r.i32()?, r.i32()?);
+                keys.push(SliceKey { frame_id, x, y, w, h, pivot: has.then_some((px, py)) });
+            }
+            doc.slices.push(Slice { name, color, keys });
+        }
+    }
+    if let Some(data) = chunks.get(b"TSET") {
+        let mut r = R { d: data, pos: 0 };
+        for _ in 0..r.count(21)? {
+            let name = r.str()?;
+            let (tile_w, tile_h) = (r.u32()?, r.u32()?);
+            let kind = if r.u8()? != 0 { TilesetKind::Blob } else { TilesetKind::Plain };
+            let n = r.u32()? as usize;
+            if !(1..=MAX_TILE_SIDE).contains(&tile_w) || !(1..=MAX_TILE_SIDE).contains(&tile_h) || n > MAX_TILES {
+                return Err("invalid tileset".into());
+            }
+            let area = (tile_w * tile_h) as usize;
+            let raw = r.blob(n * area * 4)?;
+            if raw.len() != n * area * 4 {
+                return Err("tileset has the wrong size".into());
+            }
+            let px: Vec<u32> = raw.as_chunks::<4>().0.iter().map(|b| u32::from_le_bytes(*b)).collect();
+            let tiles = px.chunks(area.max(1)).map(|c| c.to_vec()).collect();
+            doc.tilesets.push(Arc::new(Tileset { name, tile_w, tile_h, kind, tiles }));
+        }
+    }
+    if let Some(data) = chunks.get(b"TMAP") {
+        let mut r = R { d: data, pos: 0 };
+        for _ in 0..r.count(20)? {
+            let name = r.str()?;
+            let tileset = r.u32()? as usize;
+            let (cols, rows) = (r.u32()?, r.u32()?);
+            if tileset >= doc.tilesets.len() || !(1..=MAX_MAP_SIDE).contains(&cols) || !(1..=MAX_MAP_SIDE).contains(&rows) {
+                return Err("invalid tilemap".into());
+            }
+            let n = (cols * rows) as usize;
+            let raw = r.blob(n * 5)?;
+            if raw.len() != n * 5 {
+                return Err("tilemap has the wrong size".into());
+            }
+            let cells = raw[..n * 4].as_chunks::<4>().0.iter().map(|b| u32::from_le_bytes(*b)).collect();
+            let terrain = raw[n * 4..].iter().map(|&b| b != 0).collect();
+            doc.tilemaps.push(Arc::new(Tilemap { name, tileset, cols, rows, cells, terrain }));
+        }
+    }
+    Ok(())
 }
 
 const VOXEL_BYTES: usize = 6;
@@ -636,6 +759,23 @@ mod tests {
         d.frames[1].duration_ms = 80;
         d.tags.push(Tag { name: "Idle".into(), from_id: f0, to_id: f1, direction: Direction::PingPong, repeat: 0 });
         d.name = "Knight".into();
+        d.layers[1].blend = crate::layers::Blend::Screen;
+        d.slices.push(Slice {
+            name: "hitbox".into(),
+            color: 0xFF0000FF,
+            keys: vec![SliceKey { frame_id: f0, x: 2, y: 3, w: 10, h: 12, pivot: Some((5, 11)) }],
+        });
+        d.tilesets.push(Arc::new(Tileset {
+            name: "grass".into(),
+            tile_w: 4,
+            tile_h: 4,
+            kind: TilesetKind::Plain,
+            tiles: vec![vec![0x22AA33FF; 16], vec![0; 16]],
+        }));
+        let mut map = Tilemap::new("level", 0, 6, 3);
+        map.cells[4] = 1;
+        map.terrain[5] = true;
+        d.tilemaps.push(Arc::new(map));
         d
     }
 
@@ -659,6 +799,9 @@ mod tests {
         assert_eq!(e.frames, d.frames);
         assert_eq!(e.tags, d.tags);
         assert_eq!(e.palette, d.palette);
+        assert_eq!(e.slices, d.slices);
+        assert_eq!(e.tilesets, d.tilesets);
+        assert_eq!(e.tilemaps, d.tilemaps);
         assert_eq!(loaded.log, log);
         for i in 0..d.frames.len() {
             assert_eq!(render(e, i, &RenderOptions::default()), render(&d, i, &RenderOptions::default()));

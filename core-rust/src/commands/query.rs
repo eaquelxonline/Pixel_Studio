@@ -36,6 +36,13 @@ pub fn run_query(
         "voxel_render" => super::voxel::voxel_render(doc, cache, a),
         "voxel_render_sheet" => super::voxel::voxel_render_sheet(doc, cache, a),
         "voxel_pick" => super::voxel::voxel_pick(doc, cache, a),
+        "gamedev_inspect" => super::gamedev::gamedev_inspect(doc),
+        "render_lit" => super::gamedev::render_lit(doc, a),
+        "export_atlas" => super::gamedev::export_atlas(doc, a),
+        "export_godot_spriteframes" => super::gamedev::export_godot(doc, a),
+        "export_tileset" => super::gamedev::export_tileset(doc, a),
+        "export_tiled" => super::gamedev::export_tiled(doc, a),
+        "tilemap_render" => super::gamedev::tilemap_render(doc, a),
         "status" => q(Json::obj()
             .with("engine", "pixcore")
             .with("version", env!("CARGO_PKG_VERSION"))
@@ -91,7 +98,8 @@ fn inspect(doc: &Document, history: &History, revision: u64, detailed: bool) -> 
                 .with("name", l.name.as_str())
                 .with("visible", l.visible)
                 .with("locked", l.locked)
-                .with("opacity", l.opacity);
+                .with("opacity", l.opacity)
+                .with("blend", l.blend.as_str());
             if detailed {
                 let (n, _) = doc.cel_stats(l.id, doc.active_frame);
                 j.set("pixelsInActiveFrame", n);
@@ -118,7 +126,10 @@ fn inspect(doc: &Document, history: &History, revision: u64, detailed: bool) -> 
         .with("totalDurationMs", t.total_ms)
         .with("averageFps", (t.average_fps * 100.0).round() / 100.0)
         .with("undoAvailable", history.can_undo())
-        .with("redoAvailable", history.can_redo());
+        .with("redoAvailable", history.can_redo())
+        .with("slices", Json::Arr(doc.slices.iter().map(|s| Json::from(s.name.as_str())).collect()))
+        .with("tilesets", doc.tilesets.len())
+        .with("tilemaps", doc.tilemaps.len());
     if detailed {
         let tiles: usize = doc.cels.values().map(|c| c.allocated_tiles()).sum();
         j.set("celCount", doc.cels.len());

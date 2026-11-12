@@ -104,7 +104,7 @@ class LayersPanel(private val c: EditorController) : JPanel(BorderLayout()) {
         background = Theme.PANEL
         list.selectionMode = ListSelectionModel.SINGLE_SELECTION
         list.cellRenderer = ListCellRenderer<LayerInfo> { _, value, _, selected, _ ->
-            JLabel((if (value.visible) "◉ " else "○ ") + value.name + (if (value.locked) "  [locked]" else "") + if (value.opacity < 255) "  ${value.opacity * 100 / 255}%" else "").apply {
+            JLabel((if (value.visible) "◉ " else "○ ") + value.name + (if (value.locked) "  [locked]" else "") + (if (value.opacity < 255) "  ${value.opacity * 100 / 255}%" else "") + if (value.blend != "normal") "  · ${value.blend}" else "").apply {
                 isOpaque = true
                 border = BorderFactory.createEmptyBorder(4, 8, 4, 8)
                 background = if (selected) Theme.PANEL_LIGHT else Theme.PANEL

@@ -36,7 +36,10 @@ Document
  ├─ palette: Vec<RGBA>  (renk örnekleri; tuval gerçek renk)
  ├─ models: [VoxelModel{size ≤ 512³, chunks 16³, bones, animations}]
  ├─ materials: [Material{PBR + 7 harita}], textures: [RGBA8]
- ├─ layers: [Layer{id, name, visible, locked, opacity}]   alttan üste
+ ├─ layers: [Layer{id, name, visible, locked, opacity, blend}]   alttan üste
+ ├─ slices: [Slice{name, color, keys[frame, rect, pivot]}]   hitbox / pivot
+ ├─ tilesets: [Arc<Tileset{tile w×h, plain | blob47, tiles}>]
+ ├─ tilemaps: [Arc<Tilemap{tileset, cols×rows, cells, terrain}>]
  ├─ frames: [Frame{id, duration_ms}]                       sabit kare sınırı yok
  ├─ tags:   [Tag{name, from_id, to_id, direction, repeat}] Idle/Walk/Attack
  └─ cels:   (layer_id, frame_id) → Arc<PixelGrid>

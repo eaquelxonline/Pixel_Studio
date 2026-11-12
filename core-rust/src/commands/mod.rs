@@ -13,6 +13,7 @@ pub mod json;
 
 mod args;
 mod draw;
+pub mod gamedev;
 pub mod pixel2d;
 mod query;
 mod structure;
@@ -101,6 +102,13 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("voxel_render", Kind::Read),
     ("voxel_render_sheet", Kind::Read),
     ("voxel_pick", Kind::Read),
+    ("gamedev_inspect", Kind::Read),
+    ("render_lit", Kind::Read),
+    ("export_atlas", Kind::Read),
+    ("export_godot_spriteframes", Kind::Read),
+    ("export_tileset", Kind::Read),
+    ("export_tiled", Kind::Read),
+    ("tilemap_render", Kind::Read),
     // drawing
     ("set_pixel", Kind::Mutate),
     ("set_pixels", Kind::Mutate),
@@ -145,6 +153,21 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("palette_load", Kind::Mutate),
     ("quantize", Kind::Mutate),
     ("dither_fill", Kind::Mutate),
+    // game production
+    ("layer_blend", Kind::Mutate),
+    ("slice_set", Kind::Mutate),
+    ("slice_delete", Kind::Mutate),
+    ("palette_swap", Kind::Mutate),
+    ("rotsprite", Kind::Mutate),
+    ("tileset_create", Kind::Mutate),
+    ("tileset_add_tiles", Kind::Mutate),
+    ("tileset_generate_blob", Kind::Mutate),
+    ("tileset_delete", Kind::Mutate),
+    ("tilemap_create", Kind::Mutate),
+    ("tilemap_delete", Kind::Mutate),
+    ("tilemap_set", Kind::Mutate),
+    ("tilemap_terrain", Kind::Mutate),
+    ("tilemap_bake", Kind::Mutate),
     // 3D pixel art
     ("voxel_model_create", Kind::Mutate),
     ("voxel_model_delete", Kind::Mutate),
@@ -186,6 +209,20 @@ pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json, payload: &[u8], ca
         "palette_load" => pixel2d::palette_load(doc, a),
         "quantize" => pixel2d::quantize(doc, a),
         "dither_fill" => pixel2d::dither_fill(doc, a),
+        "layer_blend" => gamedev::layer_blend(doc, a),
+        "slice_set" => gamedev::slice_set(doc, a),
+        "slice_delete" => gamedev::slice_delete(doc, a),
+        "palette_swap" => gamedev::palette_swap(doc, a),
+        "rotsprite" => gamedev::rotsprite_cmd(doc, a),
+        "tileset_create" => gamedev::tileset_create(doc, a),
+        "tileset_add_tiles" => gamedev::tileset_add_tiles(doc, a),
+        "tileset_generate_blob" => gamedev::tileset_generate_blob(doc, a),
+        "tileset_delete" => gamedev::tileset_delete(doc, a),
+        "tilemap_create" => gamedev::tilemap_create(doc, a),
+        "tilemap_delete" => gamedev::tilemap_delete(doc, a),
+        "tilemap_set" => gamedev::tilemap_set(doc, a),
+        "tilemap_terrain" => gamedev::tilemap_terrain(doc, a),
+        "tilemap_bake" => gamedev::tilemap_bake(doc, a),
         "voxel_model_create" => voxel::model_create(doc, a),
         "voxel_model_delete" => voxel::model_delete(doc, a),
         "voxel_model_clone" => voxel::model_clone(doc, a),

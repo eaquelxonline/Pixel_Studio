@@ -1678,18 +1678,36 @@
     "type": "function",
     "function": {
       "name": "project_export",
-      "description": "Exports PNG (one frame), GIF (animation) or sprite sheet (PNG + JSON metadata for Godot/Unity) into the workspace's Exports folder and returns the image.",
+      "description": "Exports into the workspace's Exports folder: png (one frame), gif (animation), spritesheet (PNG + JSON), atlas (trimmed packed PNG + Aseprite-compatible JSON), godot (atlas PNG + SpriteFrames .tres), tiled (tileset PNG + .tmj map), normal_map (PNG).",
       "parameters": {
         "type": "object",
         "properties": {
           "format": {
             "type": "string",
             "description": "Export format.",
-            "enum": ["png","gif","spritesheet"]
+            "enum": ["png","gif","spritesheet","atlas","godot","tiled","normal_map"]
           },
           "name": {
             "type": "string",
             "description": "File name without extension."
+          },
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap (format tiled)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "trim": {
+            "type": "boolean",
+            "description": "Atlas: trim transparent borders (default true)."
+          },
+          "extrude": {
+            "type": "integer",
+            "description": "Atlas: edge extrusion px.",
+            "minimum": 0,
+            "maximum": 16
           },
           "frame": {
             "type": "integer",
@@ -2268,6 +2286,1002 @@
             "description": "Upscale 1-64.",
             "minimum": 1,
             "maximum": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "layer_blend",
+      "description": "Sets a layer's blend mode: normal, multiply (shadows, ambient occlusion), screen/add (glow, fire light, magic), overlay/soft_light (color grading), darken, lighten.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Blend mode.",
+            "enum": ["normal","multiply","screen","add","overlay","darken","lighten","soft_light"]
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["mode"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "slice_set",
+      "description": "Creates or updates a named per-frame rectangle (Aseprite-compatible slice): hitbox, hurtbox, pivot, weapon attach point. A key without 'frame' covers the whole animation; later keys override from their frame on. Exported in export_atlas meta.slices.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slice name, e.g. hitbox, hurtbox, pivot."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Width.",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Height.",
+            "minimum": 1
+          },
+          "pivot": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Pivot [x, y] relative to the slice."
+          },
+          "color": {
+            "type": "string",
+            "description": "Editor color of the slice.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name","x","y","width","height"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "slice_delete",
+      "description": "Deletes a slice, or only its key at 'frame'.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Slice name."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "palette_swap",
+      "description": "Remaps colors (RGB match, alpha kept) across a cel/layer/frame/everything: team colors, enemy variants, day/night palettes, damage flashes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "map": {
+            "type": "object",
+            "description": "{\"#from\": \"#to\", …}"
+          },
+          "from": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            },
+            "description": "Source colors (with 'to')."
+          },
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            },
+            "description": "Target colors, same length as 'from'."
+          },
+          "scope": {
+            "type": "string",
+            "description": "cel | layer | frame | all (default cel).",
+            "enum": ["cel","layer","frame","all"]
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "rotsprite",
+      "description": "Rotates a cel by any angle with the RotSprite algorithm (Scale2x ×8 + nearest): clean lines, no blur, no new colors — swords, projectiles, swing frames.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "degrees": {
+            "type": "number",
+            "description": "Clockwise degrees."
+          },
+          "center": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Pivot [x, y] (default: content center)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["degrees"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tileset_create",
+      "description": "Creates an empty tileset (fill it with tileset_add_tiles).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tileset name."
+          },
+          "tile_size": {
+            "type": "integer",
+            "description": "Square tile size (default 16).",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "tile_width": {
+            "type": "integer",
+            "description": "Tile width.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "tile_height": {
+            "type": "integer",
+            "description": "Tile height.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tileset_add_tiles",
+      "description": "Cuts a grid of tiles from a rendered frame (or one layer) into a tileset; identical and empty tiles are skipped. Returns the tile index of each cut cell.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tileset": {
+            "type": ["integer","string"],
+            "description": "Tileset name or index (optional when there is only one)."
+          },
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "columns": {
+            "type": "integer",
+            "description": "Tiles across.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "rows": {
+            "type": "integer",
+            "description": "Tiles down.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "dedupe": {
+            "type": "boolean",
+            "description": "Reuse identical tiles (default true)."
+          },
+          "skip_empty": {
+            "type": "boolean",
+            "description": "Skip empty cells (default true)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tileset_generate_blob",
+      "description": "Synthesizes a complete 47-tile blob autotile terrain set (Godot terrains / Tiled Wang / LDtk / GameMaker layout) from one seamless fill: a canvas region (source_x/source_y) or a procedural fill color with accent clusters. Lit top edges, shaded sides, selective outline, rounded corners, optional cliff lip.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tileset name."
+          },
+          "tile_size": {
+            "type": "integer",
+            "description": "Tile size (default 16).",
+            "minimum": 4,
+            "maximum": 256
+          },
+          "source_x": {
+            "type": "integer",
+            "description": "Take the fill tile from the canvas at this x."
+          },
+          "source_y": {
+            "type": "integer",
+            "description": "…and y."
+          },
+          "fill": {
+            "type": "string",
+            "description": "Procedural base color.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "accents": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            },
+            "description": "Accent colors (default: lighter/darker ramp steps)."
+          },
+          "density": {
+            "type": "number",
+            "description": "Accent density 0-1 (default 0.12)."
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Pattern seed."
+          },
+          "light": {
+            "type": "string",
+            "description": "Lit top edge.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "dark": {
+            "type": "string",
+            "description": "Shaded edge.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "outline": {
+            "type": "string",
+            "description": "Outline (default: selective darker hue).",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "inset": {
+            "type": "integer",
+            "description": "Transparent margin on open sides (default 1).",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "edge": {
+            "type": "integer",
+            "description": "Edge band width (default 1).",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "lip": {
+            "type": "integer",
+            "description": "Cliff lip height under open south edges (default 0).",
+            "minimum": 0,
+            "maximum": 128
+          },
+          "lip_color": {
+            "type": "string",
+            "description": "Cliff lip color.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "rounded": {
+            "type": "boolean",
+            "description": "Round outer corners (default true)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tileset_delete",
+      "description": "Deletes an unused tileset.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tileset": {
+            "type": ["integer","string"],
+            "description": "Tileset name or index (optional when there is only one)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tilemap_create",
+      "description": "Creates an empty tilemap (grid of tile cells) bound to a tileset.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tilemap name."
+          },
+          "tileset": {
+            "type": ["integer","string"],
+            "description": "Tileset name or index (optional when there is only one)."
+          },
+          "columns": {
+            "type": "integer",
+            "description": "Width in tiles.",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "rows": {
+            "type": "integer",
+            "description": "Height in tiles.",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["name","columns","rows"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tilemap_delete",
+      "description": "Deletes a tilemap.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap name or index (optional when there is only one)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tilemap_set",
+      "description": "Places explicit tiles: cells [[x, y, tile], …] (tile null = empty), rows of space-separated tile indices ('.' = empty) starting at x/y, or a single x/y/tile.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap name or index (optional when there is only one)."
+          },
+          "cells": {
+            "type": "array",
+            "items": {
+              "type": "array"
+            },
+            "description": "[[x, y, tile], …]."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "e.g. [\"0 1 1 2\", \". 3 3 .\"]."
+          },
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "tile": {
+            "type": "integer",
+            "description": "Tile index.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tilemap_terrain",
+      "description": "Paints terrain on a blob-tileset map and re-autotiles every cell (edges, inner/outer corners chosen automatically). Give ASCII rows ('#' = terrain, '.' = empty), a rectangle x/y/width/height, or cells [[x, y], …]; mode remove erases.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap name or index (optional when there is only one)."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "ASCII terrain rows."
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "With rows: '.' clears terrain (default true)."
+          },
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Rect width.",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Rect height.",
+            "minimum": 1
+          },
+          "cells": {
+            "type": "array",
+            "items": {
+              "type": "array"
+            },
+            "description": "[[x, y], …]."
+          },
+          "mode": {
+            "type": "string",
+            "description": "add (default) or remove.",
+            "enum": ["add","remove"]
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tilemap_bake",
+      "description": "Draws a tilemap into a layer cel at x/y (so it composites, lights and exports with the scene).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap name or index (optional when there is only one)."
+          },
+          "x": {
+            "type": "integer",
+            "description": "X coordinate (0 = left)."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Y coordinate (0 = top)."
+          },
+          "replace": {
+            "type": "boolean",
+            "description": "Also clear pixels under empty cells."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "gamedev_inspect",
+      "description": "Lists slices (with keys/pivots), tilesets, tilemaps (with ASCII terrain) and layer blend modes.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "tilemap_render",
+      "description": "Renders a tilemap to PNG.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap name or index (optional when there is only one)."
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "export_tileset",
+      "description": "Renders a tileset atlas PNG (blob sets: 8 columns in mask order, masks listed).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tileset": {
+            "type": ["integer","string"],
+            "description": "Tileset name or index (optional when there is only one)."
+          },
+          "columns": {
+            "type": "integer",
+            "description": "Tiles per row.",
+            "minimum": 1,
+            "maximum": 256
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "render_lit",
+      "description": "Renders a frame with normal-mapped 2D point lights (torches, campfires, spells) — what Godot/Unity 2D lights do with the exported normal map. Normals are generated from the art or taken from a hand-painted normal layer; unlit_layers (fire, glowing eyes, UI) stay full-bright. bands ≥ 2 quantizes light into crisp pixel-art steps.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "lights": {
+            "type": "array",
+            "description": "Point lights.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number",
+                  "description": "X."
+                },
+                "y": {
+                  "type": "number",
+                  "description": "Y."
+                },
+                "z": {
+                  "type": "number",
+                  "description": "Height above the sprites (default 24)."
+                },
+                "color": {
+                  "type": "string",
+                  "description": "Light color.",
+                  "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+                },
+                "intensity": {
+                  "type": "number",
+                  "description": "Default 1.5."
+                },
+                "radius": {
+                  "type": "number",
+                  "description": "Reach in px (default 64)."
+                }
+              }
+            }
+          },
+          "ambient": {
+            "type": "string",
+            "description": "Ambient light color (default dim blue night).",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "bands": {
+            "type": "integer",
+            "description": "Light steps (0 = smooth).",
+            "minimum": 0,
+            "maximum": 32
+          },
+          "normal_strength": {
+            "type": "number",
+            "description": "Normal map influence 0-8 (default 1)."
+          },
+          "normal_layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "unlit_layers": {
+            "type": "array",
+            "items": {
+              "type": ["integer","string"],
+              "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+            },
+            "description": "Layers drawn full-bright on top."
+          },
+          "strength": {
+            "type": "number",
+            "description": "Generated normal bump strength."
+          },
+          "bevel": {
+            "type": "number",
+            "description": "Generated normal bevel px."
+          },
+          "background": {
+            "type": "string",
+            "description": "Opaque background.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "export_atlas",
+      "description": "Packs frames into a trimmed, de-duplicated MaxRects texture atlas and returns it with Aseprite-compatible JSON (frames, frameTags, layers, slices) that Phaser, PixiJS, Unity and Godot importers read. Use project_export format=atlas to write the files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Only this tag's frames (default: all frames)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "trim": {
+            "type": "boolean",
+            "description": "Trim transparent borders (default true)."
+          },
+          "padding": {
+            "type": "integer",
+            "description": "Gap between sprites (default 1).",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "extrude": {
+            "type": "integer",
+            "description": "Edge pixels repeated around each sprite against bleeding (default 0).",
+            "minimum": 0,
+            "maximum": 16
+          },
+          "power_of_two": {
+            "type": "boolean",
+            "description": "Power-of-two atlas size."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "export_godot_spriteframes",
+      "description": "Packs frames into an atlas and returns a Godot 4 SpriteFrames .tres (one animation per tag, trimmed frames restored with AtlasTexture margins, per-frame durations).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "string",
+            "description": "Only this tag's frames (default: all frames)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          },
+          "scale": {
+            "type": "integer",
+            "description": "Upscale 1-64.",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "trim": {
+            "type": "boolean",
+            "description": "Trim transparent borders (default true)."
+          },
+          "padding": {
+            "type": "integer",
+            "description": "Gap between sprites (default 1).",
+            "minimum": 0,
+            "maximum": 64
+          },
+          "extrude": {
+            "type": "integer",
+            "description": "Edge pixels repeated around each sprite against bleeding (default 0).",
+            "minimum": 0,
+            "maximum": 16
+          },
+          "power_of_two": {
+            "type": "boolean",
+            "description": "Power-of-two atlas size."
+          },
+          "texture_path": {
+            "type": "string",
+            "description": "res:// path of the atlas PNG (default res://atlas.png)."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "export_tiled",
+      "description": "Exports a tilemap as a Tiled TMJ map (with an embedded tileset and, for blob sets, a Wang terrain set) plus the tileset PNG.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tilemap": {
+            "type": ["integer","string"],
+            "description": "Tilemap name or index (optional when there is only one)."
+          },
+          "image": {
+            "type": "string",
+            "description": "Tileset image file name referenced by the map."
           }
         },
         "additionalProperties": false

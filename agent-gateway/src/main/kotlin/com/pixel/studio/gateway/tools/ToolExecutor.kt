@@ -176,34 +176,65 @@ class ToolExecutor(
     }
 
     private fun export(args: Map<String, Any?>, actor: String): ToolResult {
-        val format = args.str("format") ?: return refusal("missing 'format'")
-        val (op, ext, mime) = when (format) {
-            "png" -> Triple("export_png", "png", "image/png")
-            "gif" -> Triple("export_gif", "gif", "image/gif")
-            "spritesheet" -> Triple("export_spritesheet", "png", "image/png")
-            else -> return refusal("unknown format '$format' (png, gif, spritesheet)")
-        }
-        val engineArgs = LinkedHashMap(args).apply { remove("format"); remove("name") }
+        val format: String = args.str("format") ?: return refusal("missing 'format'")
+        val op: String = EXPORT_OPS[format] ?: return refusal("unknown format '$format' (${EXPORT_OPS.keys.joinToString(", ")})")
+        val mime = if (format == "gif") "image/gif" else "image/png"
+        val ext = if (format == "gif") "gif" else "png"
+        val projectName: String = engine.execute("canvas_inspect").result.str("name") ?: "export"
+        val base: String = args.str("name") ?: (projectName + "_" + format)
+        val safeBase: String = DirectoryWorkspace.sanitize(base)
+        val engineArgs = LinkedHashMap<String, Any?>(args)
+        engineArgs.remove("format")
+        engineArgs.remove("name")
+        if (format == "godot") engineArgs.putIfAbsent("texture_path", "res://$safeBase.png")
+        if (format == "atlas") engineArgs.putIfAbsent("image", "$safeBase.png")
+        if (format == "tiled") engineArgs.putIfAbsent("image", "${safeBase}_tileset.png")
         val r = engine.execute(op, engineArgs, actor)
         if (!r.ok) return jsonResult(r)
-        val base = args.str("name") ?: (engine.execute("canvas_inspect").result.str("name") ?: "export") + "_" + format
-        val files = mutableListOf<String>()
-        workspace?.let { ws ->
-            runCatching {
-                files += File(ws.writeExport(base, ext, r.binary)).name
-                if (format == "spritesheet") files += File(ws.writeExport(base, "json", Json.write(r.result).toByteArray())).name
-            }.onFailure { return refusal("export failed: ${it.message}") }
+        val files = ArrayList<String>()
+        val ws = workspace
+        if (ws != null) {
+            try {
+                writeExportFiles(ws, format, base, ext, r, files)
+            } catch (e: Exception) {
+                return refusal("export failed: ${e.message}")
+            }
         }
-        val s = linkedMapOf<String, Any?>("ok" to true, "revision" to r.revision, "result" to LinkedHashMap(r.result).apply { put("files", files) })
-        val content = mutableListOf<Map<String, Any?>>()
-        if (r.binary.size <= 4 * 1024 * 1024) content += image(r.binary, mime)
-        content += text(Json.write(s))
+        val summary = LinkedHashMap<String, Any?>(r.result)
+        // Keep the reply small: the full documents are in the written files.
+        if (format == "atlas" || format == "godot" || format == "tiled") {
+            summary.remove("data")
+            summary.remove("tres")
+            summary.remove("tmj")
+        }
+        summary["files"] = files
+        val s = linkedMapOf<String, Any?>("ok" to true, "revision" to r.revision, "result" to summary)
+        val content = ArrayList<Map<String, Any?>>()
+        if (r.binary.size <= 4 * 1024 * 1024) content.add(image(r.binary, mime))
+        content.add(text(Json.write(s)))
         return ToolResult(content, s, isError = false)
     }
 
+    private fun writeExportFiles(ws: Workspace, format: String, base: String, ext: String, r: EngineResponse, files: MutableList<String>) {
+        val imageName = if (format == "tiled") base + "_tileset" else base
+        files.add(File(ws.writeExport(imageName, ext, r.binary)).name)
+        val extra: Pair<String, String>? = when (format) {
+            "spritesheet" -> Pair("json", Json.write(r.result))
+            "atlas" -> Pair("json", Json.write(r.result["data"]))
+            "godot" -> Pair("tres", r.result.str("tres") ?: "")
+            "tiled" -> Pair("tmj", Json.write(r.result["tmj"]))
+            else -> null
+        }
+        if (extra != null) files.add(File(ws.writeExport(base, extra.first, extra.second.toByteArray())).name)
+    }
+
     companion object {
+        private val EXPORT_OPS: Map<String, String> = linkedMapOf(
+            "png" to "export_png", "gif" to "export_gif", "spritesheet" to "export_spritesheet", "atlas" to "export_atlas",
+            "godot" to "export_godot_spriteframes", "tiled" to "export_tiled", "normal_map" to "export_normal_map",
+        )
+
         /** Engine operations every catalogue tool relies on (checked against the engine in tests). */
-        fun engineOps(): Set<String> = ToolCatalog.tools.map { it.op }.filter { it != "export" }.toSet() +
-            setOf("export_png", "export_gif", "export_spritesheet")
+        fun engineOps(): Set<String> = ToolCatalog.tools.map { it.op }.filter { it != "export" }.toSet() + EXPORT_OPS.values.toSet()
     }
 }

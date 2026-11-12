@@ -338,4 +338,37 @@ class GatewayTest {
         val normal = callLegacy("export_normal_map", mapOf("scale" to 2))
         assertEquals("image", (normal.list("content")!!.first() as Map<*, *>)["type"])
     }
+
+    @Test
+    fun gameProductionToolsWriteEngineFiles() {
+        fun call(tool: String, args: Map<String, Any?>): Map<String, Any?> {
+            val r = callLegacy(tool, args)
+            assertEquals(false, r["isError"], "$tool failed: ${Json.write(r)}")
+            return r
+        }
+        call("tileset_generate_blob", mapOf("name" to "moss", "tile_size" to 8, "fill" to "#3E7B3A", "lip" to 2))
+        call("tilemap_create", mapOf("name" to "cave", "tileset" to "moss", "columns" to 6, "rows" to 4))
+        call("tilemap_terrain", mapOf("tilemap" to "cave", "rows" to listOf("......", ".####.", "######", "######")))
+        call("layer_create", mapOf("name" to "Ground"))
+        call("tilemap_bake", mapOf("tilemap" to "cave", "layer" to "Ground"))
+        call("slice_set", mapOf("name" to "hurtbox", "x" to 2, "y" to 2, "width" to 6, "height" to 8, "pivot" to listOf(3, 8)))
+        call("layer_blend", mapOf("layer" to "Ground", "mode" to "multiply"))
+        val lit = call("render_lit", mapOf("lights" to listOf(mapOf("x" to 10, "y" to 10, "color" to "#FFAA55")), "bands" to 4))
+        assertEquals("image", (lit.list("content")!!.first() as Map<*, *>)["type"])
+        val tiled = call("project_export", mapOf("format" to "tiled", "name" to "cave", "tilemap" to "cave"))
+        val atlas = call("project_export", mapOf("format" to "atlas", "name" to "hero"))
+        call("project_export", mapOf("format" to "godot", "name" to "hero_frames"))
+        val files = File(workspace, "Exports").listFiles()!!.map { it.name }.toSet()
+        assertTrue(files.containsAll(listOf("cave.tmj", "cave_tileset.png", "hero.json", "hero.png", "hero_frames.tres", "hero_frames.png")), files.toString())
+        val tmj = Json.parseObject(File(workspace, "Exports/cave.tmj").readText())
+        assertEquals("cave_tileset.png", (tmj.list("tilesets")!!.first() as Map<*, *>)["image"])
+        val aseprite = Json.parseObject(File(workspace, "Exports/hero.json").readText())
+        assertEquals("hero.png", aseprite.obj("meta")!!.str("image"))
+        assertEquals("hurtbox", (aseprite.obj("meta")!!.list("slices")!!.first() as Map<*, *>)["name"])
+        assertTrue(File(workspace, "Exports/hero_frames.tres").readText().contains("res://hero_frames.png"))
+        assertTrue(Json.write(tiled).length < 4000 && Json.write(atlas).length < 200_000, "replies stay small")
+        val gd = call("gamedev_inspect", emptyMap()).obj("structuredContent")!!.obj("result")!!
+        assertEquals(listOf("......", ".####.", "######", "######"), (gd.list("tilemaps")!!.first() as Map<*, *>)["terrain"])
+        assertEquals(true, callLegacy("tilemap_delete", mapOf("tilemap" to "cave"))["isError"], "deleting needs approval")
+    }
 }

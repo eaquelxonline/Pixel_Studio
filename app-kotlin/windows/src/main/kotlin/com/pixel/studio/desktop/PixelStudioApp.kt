@@ -170,6 +170,7 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
                 }
             })
         })
+        add(GameMenu(this@PixelStudioWindow, c) { workspaceDir() })
         add(JMenu("Agent").apply {
             add(item("Connect an agent…", ctrl(KeyEvent.VK_K)) { AgentDialog(this@PixelStudioWindow, gateway) { toggleGateway() }.isVisible = true })
         })

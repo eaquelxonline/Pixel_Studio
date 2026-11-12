@@ -9,6 +9,7 @@ pub mod commands;
 pub mod engine;
 pub mod export;
 pub mod ffi;
+pub mod gamedev;
 pub mod history;
 pub mod layers;
 pub mod pixel;

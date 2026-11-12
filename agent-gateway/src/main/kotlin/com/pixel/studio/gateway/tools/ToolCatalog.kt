@@ -56,24 +56,24 @@ fun boolean(description: String): Map<String, Any?> = linkedMapOf("type" to "boo
 fun color(description: String = "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'."): Map<String, Any?> =
     linkedMapOf("type" to "string", "description" to description, "pattern" to "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$")
 
-private val LAYER = linkedMapOf<String, Any?>(
+internal val LAYER = linkedMapOf<String, Any?>(
     "type" to listOf("integer", "string"),
     "description" to "Layer index (0 = bottom) or exact layer name. Defaults to the active layer.",
 )
-private val FRAME = integer("0-based frame index. Defaults to the active frame.", min = 0)
-private val X = integer("X coordinate (0 = left).")
-private val Y = integer("Y coordinate (0 = top).")
+internal val FRAME = integer("0-based frame index. Defaults to the active frame.", min = 0)
+internal val X = integer("X coordinate (0 = left).")
+internal val Y = integer("Y coordinate (0 = top).")
 
-private fun target() = linkedMapOf("layer" to LAYER, "frame" to FRAME)
+internal fun target() = linkedMapOf("layer" to LAYER, "frame" to FRAME)
 
-private fun region(): LinkedHashMap<String, Map<String, Any?>> = linkedMapOf(
+internal fun region(): LinkedHashMap<String, Map<String, Any?>> = linkedMapOf(
     "x" to integer("Region left (default 0)."),
     "y" to integer("Region top (default 0)."),
     "width" to integer("Region width (default: to the canvas edge).", min = 1),
     "height" to integer("Region height (default: to the canvas edge).", min = 1),
 )
 
-private fun props(vararg groups: Map<String, Map<String, Any?>>): LinkedHashMap<String, Map<String, Any?>> =
+internal fun props(vararg groups: Map<String, Map<String, Any?>>): LinkedHashMap<String, Map<String, Any?>> =
     LinkedHashMap<String, Map<String, Any?>>().apply { groups.forEach { putAll(it) } }
 
 /**
@@ -81,7 +81,7 @@ private fun props(vararg groups: Map<String, Map<String, Any?>>): LinkedHashMap<
  * function-calling adapters. It is exported to `protocol/tools/pixel-studio-tools.json`.
  */
 object ToolCatalog {
-    val tools: List<ToolDef> = buildList {
+    val tools: List<ToolDef> = buildList<ToolDef> {
         fun tool(
             name: String, title: String, category: String, access: Access, description: String,
             properties: Map<String, Map<String, Any?>> = emptyMap(), required: List<String> = emptyList(),
@@ -191,8 +191,10 @@ object ToolCatalog {
         tool("project_save", "Save project", "project", Access.WRITE, "Saves the project (.pxs) to its file in the Pixel Studio workspace.",
             linkedMapOf("name" to string("Optional file name (letters, digits, - and _ only).")), op = "project_save", output = Output.PROJECT_SAVE)
         tool("project_export", "Export", "project", Access.WRITE,
-            "Exports PNG (one frame), GIF (animation) or sprite sheet (PNG + JSON metadata for Godot/Unity) into the workspace's Exports folder and returns the image.",
-            linkedMapOf("format" to string("Export format.", listOf("png", "gif", "spritesheet")), "name" to string("File name without extension."),
+            "Exports into the workspace's Exports folder: png (one frame), gif (animation), spritesheet (PNG + JSON), atlas (trimmed packed PNG + Aseprite-compatible JSON), godot (atlas PNG + SpriteFrames .tres), tiled (tileset PNG + .tmj map), normal_map (PNG).",
+            linkedMapOf("format" to string("Export format.", listOf("png", "gif", "spritesheet", "atlas", "godot", "tiled", "normal_map")), "name" to string("File name without extension."),
+                "tilemap" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Tilemap (format tiled)."), "layer" to LAYER,
+                "trim" to boolean("Atlas: trim transparent borders (default true)."), "extrude" to integer("Atlas: edge extrusion px.", 0, 16),
                 "frame" to FRAME, "tag" to string("Tag to export (gif/spritesheet)."), "scale" to integer("Upscale 1-64.", 1, 64),
                 "columns" to integer("Sprite sheet columns (0 = auto).", 0), "padding" to integer("Sprite sheet padding in px.", 0, 64)),
             listOf("format"), op = "export", output = Output.PROJECT_EXPORT)
@@ -239,6 +241,8 @@ object ToolCatalog {
             linkedMapOf("frame" to FRAME, "layer" to LAYER, "strength" to linkedMapOf<String, Any?>("type" to "number", "description" to "Bump strength (default 3)."),
                 "bevel" to linkedMapOf<String, Any?>("type" to "number", "description" to "Edge roundness in pixels (default 3)."), "scale" to integer("Upscale 1-64.", 1, 64)),
             output = Output.PNG_IMAGE)
+        addGameTools()
+
         tool("image_import", "Import image", "project", Access.WRITE, "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
             props(linkedMapOf("data_base64" to string("PNG file as base64."), "x" to X, "y" to Y), target()), listOf("data_base64"))
 

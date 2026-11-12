@@ -18,23 +18,28 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`core-rust`, yalnızca `std`, Rust 1.100) | ✅ | 58 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`core-rust`, yalnızca `std`, Rust 1.100) | ✅ | 64 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
 | Render: köşe AO, gölge haritası, nokta ışıklar, bloom, G-buffer pass'leri, outline, 8 yönlü sprite bake | ✅ | render testleri, görsel kontrol |
 | Revizyon kontrolü, idempotency, atomik transaction, undo/redo | ✅ | motor testleri |
 | PNG/GIF/sprite sheet export, PNG import (kendi zlib/LZW/inflate kodumuz) | ✅ | PIL ve JDK ImageIO ile doğrulandı |
-| `.pxs` v2 (2D + 3D + rig + animasyon + materyal + doku, CRC-32) | ✅ | gidiş-dönüş testleri |
+| `.pxs` v3 (2D + 3D + rig + animasyon + materyal + doku + slice + tileset + tilemap, CRC-32) | ✅ | gidiş-dönüş testleri |
 | JNI köprüsü, Rust ↔ JVM golden render | ✅ | `tests/golden` |
 | **2D piksel art araçları**: ASCII çizim, selective outline, ton kaydırmalı rampa, palet kütüphanesi (12 Lospec paleti), quantize + Bayer dither, normal map | ✅ | birim + gateway testleri |
+| **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **83 araç** | ✅ | 11 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **104 araç** | ✅ | 12 uçtan uca gateway testi |
 | Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
 | Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
 
-Ayrıntılar: [docs/VOXEL.md](docs/VOXEL.md) (3D) ve [docs/PIXELART.md](docs/PIXELART.md) (2D piksel art, kadro, 2D VFX).
+Ayrıntılar: [docs/VOXEL.md](docs/VOXEL.md) (3D), [docs/PIXELART.md](docs/PIXELART.md) (2D piksel art, kadro, 2D VFX) ve [docs/GAMEDEV.md](docs/GAMEDEV.md) (oyun üretimi).
+
+| Oyun sahnesi: autotile + gece ışığı (`render_lit`) | Gündüz, katman karışımları |
+| --- | --- |
+| ![gece](assets/gallery/level/campfire_clearing_night.gif) | ![gündüz](assets/gallery/level/campfire_clearing_day.png) |
 
 ![2D kadro](assets/gallery/cast_lineup.png)
 
@@ -75,6 +80,7 @@ Sonra ajana şunu söyleyin: *"Pixel Studio'yu kullan. 64x64 bir samuray çiz, a
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): katmanlar, veri modeli, eşzamanlılık
 - [docs/VOXEL.md](docs/VOXEL.md): 3D voksel, PBR, rig, animasyon, VFX
 - [docs/PIXELART.md](docs/PIXELART.md): 2D piksel art araçları, kadro, 2D VFX
+- [docs/GAMEDEV.md](docs/GAMEDEV.md): tileset/autotile, tilemap, 2D ışık, slice, Godot/Tiled/Aseprite dışa aktarma
 - [docs/MCP.md](docs/MCP.md): MCP bağlantısı, araçlar, kaynaklar, promptlar, protokol sürümleri
 - [docs/API.md](docs/API.md): REST API ve function calling
 - [docs/PROJECT-FORMAT.md](docs/PROJECT-FORMAT.md): `.pxs` dosya formatı
