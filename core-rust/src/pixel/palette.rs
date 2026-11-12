@@ -1,11 +1,12 @@
 use super::Rgba;
 
-/// Palette index 0 is permanently reserved for "no pixel" (fully transparent).
-pub const TRANSPARENT: u16 = 0;
-/// Pixels are stored as u16 palette indices.
-pub const MAX_PALETTE: usize = u16::MAX as usize + 1;
+/// Pixel value of "no pixel". Pixels are true-color `0xRRGGBBAA`; any alpha-0 color is stored as 0.
+pub const TRANSPARENT: u32 = 0;
+/// Swatch list limit (a UI convenience, not a color limit: pixels can use any of 2^32 RGBA values).
+pub const MAX_PALETTE: usize = 4096;
 
-/// Indexed palette. Changing an entry recolors every pixel that uses it.
+/// The project's color swatches. Pixels do not depend on it: the canvas is true color.
+/// Index 0 is reserved for "transparent" so swatch indices stay stable for agents.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Palette {
     colors: Vec<Rgba>,
@@ -23,7 +24,7 @@ impl Palette {
             colors.push(Rgba::TRANSPARENT);
         }
         if colors.len() > MAX_PALETTE {
-            return Err(format!("palette exceeds {MAX_PALETTE} entries"));
+            return Err(format!("palette exceeds {MAX_PALETTE} swatches"));
         }
         colors[0] = Rgba::TRANSPARENT;
         Ok(Palette { colors })
@@ -41,40 +42,37 @@ impl Palette {
         &self.colors
     }
 
-    pub fn get(&self, index: u16) -> Option<Rgba> {
-        self.colors.get(index as usize).copied()
+    pub fn get(&self, index: usize) -> Option<Rgba> {
+        self.colors.get(index).copied()
     }
 
-    /// Exact-match lookup. Any color with alpha 0 maps to index 0.
-    pub fn find(&self, color: Rgba) -> Option<u16> {
+    pub fn find(&self, color: Rgba) -> Option<usize> {
         if color.a == 0 {
-            return Some(TRANSPARENT);
+            return Some(0);
         }
-        self.colors.iter().skip(1).position(|c| *c == color).map(|i| (i + 1) as u16)
+        self.colors.iter().skip(1).position(|c| *c == color).map(|i| i + 1)
     }
 
-    /// Returns the index of `color`, appending it when it is new.
-    pub fn intern(&mut self, color: Rgba) -> Result<u16, String> {
+    /// Returns the swatch index of `color`, appending it when new.
+    pub fn intern(&mut self, color: Rgba) -> Result<usize, String> {
         if let Some(i) = self.find(color) {
             return Ok(i);
         }
         if self.colors.len() >= MAX_PALETTE {
-            return Err("palette is full".into());
+            return Err("swatch list is full".into());
         }
         self.colors.push(color);
-        Ok((self.colors.len() - 1) as u16)
+        Ok(self.colors.len() - 1)
     }
 
-    pub fn set(&mut self, index: u16, color: Rgba) -> Result<(), String> {
-        if index == TRANSPARENT {
-            return Err("palette index 0 is reserved for transparency".into());
+    /// Replaces a swatch and returns the previous color.
+    pub fn set(&mut self, index: usize, color: Rgba) -> Result<Rgba, String> {
+        if index == 0 {
+            return Err("swatch 0 is reserved for transparency".into());
         }
-        match self.colors.get_mut(index as usize) {
-            Some(slot) => {
-                *slot = color;
-                Ok(())
-            }
-            None => Err(format!("palette index {index} does not exist")),
+        match self.colors.get_mut(index) {
+            Some(slot) => Ok(std::mem::replace(slot, color)),
+            None => Err(format!("swatch {index} does not exist")),
         }
     }
 }

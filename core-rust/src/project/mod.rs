@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::animation::{DEFAULT_FRAME_MS, Frame, Tag};
 use crate::layers::Layer;
 use crate::pixel::{Palette, PixelGrid, Rgba};
+use crate::voxel::{Material, Texture, VoxelModel};
 
 pub const MAX_CANVAS: u32 = 4096;
 pub const MAX_LAYERS: usize = 1024;
@@ -32,6 +33,12 @@ pub struct Document {
     pub active_frame: u32,
     pub next_layer_id: u32,
     pub next_frame_id: u32,
+    /// 3D pixel (voxel) models living in this project.
+    pub models: Vec<VoxelModel>,
+    /// PBR materials shared by all models. Index 0 is the default material.
+    pub materials: Vec<Material>,
+    /// Texture maps (imported PNGs or procedural sets).
+    pub textures: Vec<Arc<Texture>>,
 }
 
 /// Small neutral starter palette so humans have something to pick from immediately.
@@ -67,6 +74,9 @@ impl Document {
             active_frame: 0,
             next_layer_id: 1,
             next_frame_id: 1,
+            models: Vec::new(),
+            materials: vec![Material::new("default")],
+            textures: Vec::new(),
         };
         let l = doc.insert_layer("Layer 1", 0);
         let f = doc.insert_frame(0, DEFAULT_FRAME_MS);

@@ -8,7 +8,7 @@ jobs:
   rust-core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup component add clippy rustfmt
       - name: Format, lint, test
         working-directory: core-rust
@@ -23,11 +23,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
       - name: Tests (builds the Rust core for the host)
         run: ./gradlew test :app-kotlin:windows:installDist --console=plain
         shell: bash
@@ -35,19 +35,19 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
       - name: Android SDK packages
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0" "ndk;30.0.16248370"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.2" "build-tools;37.0.0" "ndk;30.0.16248370"
       - run: rustup target add aarch64-linux-android x86_64-linux-android
       - name: Build APK and lint
         run: ./gradlew :app-kotlin:android:assembleDebug :app-kotlin:android:lintDebug --console=plain
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pixel-studio-debug-apk
           path: app-kotlin/android/build/outputs/apk/debug/*.apk

@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.pixel.studio"
     compileSdk {
-        version = release(37) { minorApiLevel = 0 }
+        version = release(37) { minorApiLevel = 2 }
     }
     ndkVersion = "30.0.16248370"
 

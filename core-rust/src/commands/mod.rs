@@ -15,6 +15,7 @@ mod args;
 mod draw;
 mod query;
 mod structure;
+pub mod voxel;
 
 use json::Json;
 
@@ -92,6 +93,11 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("export_gif", Kind::Read),
     ("export_spritesheet", Kind::Read),
     ("project_save", Kind::Read),
+    ("voxel_inspect", Kind::Read),
+    ("voxel_get", Kind::Read),
+    ("voxel_render", Kind::Read),
+    ("voxel_render_sheet", Kind::Read),
+    ("voxel_pick", Kind::Read),
     // drawing
     ("set_pixel", Kind::Mutate),
     ("set_pixels", Kind::Mutate),
@@ -129,6 +135,25 @@ pub const OPERATIONS: &[(&str, Kind)] = &[
     ("palette_add", Kind::Mutate),
     ("canvas_resize", Kind::Mutate),
     ("project_rename", Kind::Mutate),
+    ("image_import", Kind::Mutate),
+    // 3D pixel art
+    ("voxel_model_create", Kind::Mutate),
+    ("voxel_model_delete", Kind::Mutate),
+    ("voxel_model_set", Kind::Mutate),
+    ("voxel_set", Kind::Mutate),
+    ("voxel_set_many", Kind::Mutate),
+    ("voxel_shape", Kind::Mutate),
+    ("voxel_mirror", Kind::Mutate),
+    ("material_set", Kind::Mutate),
+    ("texture_import", Kind::Mutate),
+    ("texture_generate", Kind::Mutate),
+    ("rig_bone_add", Kind::Mutate),
+    ("rig_clear", Kind::Mutate),
+    ("rig_bind", Kind::Mutate),
+    ("anim3d_create", Kind::Mutate),
+    ("anim3d_key", Kind::Mutate),
+    ("anim3d_generate", Kind::Mutate),
+    ("voxel_render_to_frames", Kind::Mutate),
     // engine-level
     ("project_new", Kind::Special),
     ("project_load", Kind::Special),
@@ -142,8 +167,26 @@ pub fn kind_of(op: &str) -> Option<Kind> {
 }
 
 /// Applies one plain mutation to a document.
-pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json) -> CmdResult<Outcome> {
+pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json, payload: &[u8], cache: &mut voxel::RenderCache) -> CmdResult<Outcome> {
     match op {
+        "image_import" => voxel::image_import(doc, a, payload),
+        "voxel_model_create" => voxel::model_create(doc, a),
+        "voxel_model_delete" => voxel::model_delete(doc, a),
+        "voxel_model_set" => voxel::model_set(doc, a),
+        "voxel_set" => voxel::voxel_set(doc, a),
+        "voxel_set_many" => voxel::voxel_set_many(doc, a),
+        "voxel_shape" => voxel::voxel_shape(doc, a),
+        "voxel_mirror" => voxel::voxel_mirror(doc, a),
+        "material_set" => voxel::material_set(doc, a),
+        "texture_import" => voxel::texture_import(doc, a, payload),
+        "texture_generate" => voxel::texture_generate(doc, a),
+        "rig_bone_add" => voxel::bone_add(doc, a),
+        "rig_clear" => voxel::rig_clear(doc, a),
+        "rig_bind" => voxel::rig_bind(doc, a),
+        "anim3d_create" => voxel::anim_create(doc, a),
+        "anim3d_key" => voxel::anim_key(doc, a),
+        "anim3d_generate" => voxel::anim_generate(doc, a),
+        "voxel_render_to_frames" => voxel::voxel_render_to_frames(doc, cache, a),
         "set_pixel" => draw::set_pixel(doc, a),
         "set_pixels" => draw::set_pixels(doc, a),
         "erase_pixel" => draw::erase_pixel(doc, a),

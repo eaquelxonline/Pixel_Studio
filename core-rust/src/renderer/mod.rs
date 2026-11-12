@@ -127,7 +127,6 @@ pub fn blend_over(dst: &mut [u8], src: Rgba, opacity: u8) {
 
 fn composite_frame(doc: &Document, frame_index: usize, opts: &RenderOptions, img: &mut Image, opacity_scale: u8, tint: Option<Rgba>) {
     let Some(frame) = doc.frames.get(frame_index) else { return };
-    let colors = doc.palette.colors();
     for layer in &doc.layers {
         let include = match opts.only_layer {
             Some(id) => id == layer.id,
@@ -150,7 +149,7 @@ fn composite_frame(doc: &Document, frame_index: usize, opts: &RenderOptions, img
                     if x >= img.width || y >= img.height {
                         continue;
                     }
-                    let mut c = colors.get(v as usize).copied().unwrap_or(Rgba::TRANSPARENT);
+                    let mut c = Rgba::from_u32(v);
                     if let Some(t) = tint {
                         c = Rgba::new(
                             ((c.r as u16 + t.r as u16) / 2) as u8,
@@ -171,7 +170,7 @@ fn composite_frame(doc: &Document, frame_index: usize, opts: &RenderOptions, img
 pub fn render(doc: &Document, frame_index: usize, opts: &RenderOptions) -> Image {
     let mut img = Image::new(doc.width, doc.height);
     if let Some(bg) = opts.background {
-        for px in img.pixels.chunks_exact_mut(4) {
+        for px in img.pixels.as_chunks_mut::<4>().0 {
             px.copy_from_slice(&[bg.r, bg.g, bg.b, bg.a]);
         }
     }
@@ -218,8 +217,8 @@ mod tests {
         let bottom = doc.active_layer;
         let top = doc.insert_layer("top", 1);
         let f = doc.active_frame;
-        let red = doc.palette.intern(Rgba::new(255, 0, 0, 255)).unwrap();
-        let blue = doc.palette.intern(Rgba::new(0, 0, 255, 255)).unwrap();
+        let red = Rgba::new(255, 0, 0, 255).to_pixel();
+        let blue = Rgba::new(0, 0, 255, 255).to_pixel();
         doc.cel_mut(bottom, f).set(1, 1, red);
         doc.cel_mut(top, f).set(1, 1, blue);
         let img = render(&doc, 0, &RenderOptions::default());

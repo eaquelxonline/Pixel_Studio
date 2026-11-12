@@ -211,3 +211,97 @@ fn golden_scene_fingerprint() {
     }
     assert_eq!(prints.join("\n"), expected.trim(), "golden fingerprint changed");
 }
+
+#[test]
+fn voxel_pipeline_model_rig_animate_bake_save() {
+    let mut e = Engine::new(32, 32);
+    ok(&mut e, r#"{"op":"voxel_model_create","name":"Bot","width":48,"height":64,"depth":48}"#);
+    ok(&mut e, r#"{"op":"texture_generate","name":"steel","kind":"brushed_metal","size":32,"metallic":0.9}"#);
+    for bone in [
+        r#"{"op":"rig_bone_add","name":"hips","head":[24,30,24],"tail":[24,36,24]}"#,
+        r#"{"op":"rig_bone_add","name":"chest","parent":"hips","head":[24,36,24],"tail":[24,52,24]}"#,
+        r#"{"op":"rig_bone_add","name":"head","parent":"chest","head":[24,52,24],"tail":[24,62,24]}"#,
+        r#"{"op":"rig_bone_add","name":"upper_leg_l","parent":"hips","head":[28,30,24],"tail":[28,15,24]}"#,
+        r#"{"op":"rig_bone_add","name":"lower_leg_l","parent":"upper_leg_l","head":[28,15,24],"tail":[28,1,24]}"#,
+        r#"{"op":"rig_bone_add","name":"upper_leg_r","parent":"hips","head":[20,30,24],"tail":[20,15,24]}"#,
+        r#"{"op":"rig_bone_add","name":"lower_leg_r","parent":"upper_leg_r","head":[20,15,24],"tail":[20,1,24]}"#,
+    ] {
+        ok(&mut e, bone);
+    }
+    ok(
+        &mut e,
+        r##"{"op":"voxel_shape","shape":"box","min":[17,30,19],"max":[31,51,29],"color":"#8899AA","material":"steel","bone":"chest"}"##,
+    );
+    ok(&mut e, r##"{"op":"voxel_shape","shape":"ellipsoid","center":[24,57,24],"radius":5,"color":"#F0C090","bone":"head","jitter":0.3}"##);
+    ok(
+        &mut e,
+        r##"{"op":"voxel_shape","shape":"capsule","a":[28,29,24],"b":[28,2,24],"radius":3,"color":"#334455","color_to":"#556677","bone":"upper_leg_l","mirror_x":true}"##,
+    );
+    ok(&mut e, r#"{"op":"rig_bind","only_unbound":true}"#);
+    let generated = ok(&mut e, r#"{"op":"anim3d_generate","kind":"walk","frames":8}"#);
+    assert_eq!(generated.get("result").unwrap().get("frames").unwrap().as_i64(), Some(8));
+    let mirrored = ok(&mut e, r#"{"op":"voxel_get","x":19,"y":10,"z":24}"#);
+    assert_eq!(mirrored.get("result").unwrap().get("bone").unwrap().as_str(), Some("upper_leg_r"), "mirror swaps _l/_r bones");
+
+    let img = e.execute(br#"{"op":"voxel_render","yaw":45,"width":96,"animation":"walk","frame":2,"outline":true,"supersample":2}"#, &[]);
+    assert!(img.json.contains("\"ok\":true"), "{}", img.json);
+    let decoded = crate::export::png::decode(&img.binary).unwrap();
+    assert!(decoded.pixels.chunks(4).filter(|p| p[3] > 0).count() > 200);
+    let normal = e.execute(br#"{"op":"voxel_render","pass":"normal","width":64}"#, &[]);
+    assert!(normal.json.contains("\"ok\":true"));
+    let sheet = e.execute(br#"{"op":"voxel_render_sheet","animation":"walk","directions":8,"width":48,"pass":"albedo"}"#, &[]);
+    let sheet_img = crate::export::png::decode(&sheet.binary).unwrap();
+    assert_eq!((sheet_img.width, sheet_img.height), (48 * 8, 48 * 8));
+
+    let baked = ok(&mut e, r#"{"op":"voxel_render_to_frames","animation":"walk","directions":8,"width":64,"height":64,"outline":true}"#);
+    let r = baked.get("result").unwrap();
+    assert_eq!(r.get("framesAdded").unwrap().as_i64(), Some(64));
+    assert_eq!(r.get("tags").unwrap().as_array().unwrap().len(), 8);
+    assert_eq!(e.document().frames.len(), 64, "the empty starting frame is reused");
+    assert_eq!((e.document().width, e.document().height), (64, 64));
+    let info = ok(&mut e, r#"{"op":"animation_info","tag":"walk_NE"}"#);
+    assert_eq!(info.get("result").unwrap().get("sequence").unwrap().as_array().unwrap().len(), 8);
+
+    let pick = ok(&mut e, r#"{"op":"voxel_pick","yaw":0,"pitch":0,"width":96,"px":48,"py":30}"#);
+    assert_eq!(pick.get("result").unwrap().get("hit"), Some(&Json::Bool(true)));
+
+    let saved = e.execute(br#"{"op":"project_save"}"#, &[]);
+    let mut other = Engine::new(1, 1);
+    assert!(other.execute(br#"{"op":"project_load"}"#, &saved.binary).json.contains("\"ok\":true"));
+    let a = e.document();
+    let b = other.document();
+    assert_eq!(a.models[0].count(), b.models[0].count());
+    assert_eq!(a.models[0].bones, b.models[0].bones);
+    assert_eq!(a.models[0].animations, b.models[0].animations);
+    assert_eq!(a.materials, b.materials);
+    assert_eq!(a.textures.len(), b.textures.len());
+    let again =
+        other.execute(br#"{"op":"voxel_render","yaw":45,"width":96,"animation":"walk","frame":2,"outline":true,"supersample":2}"#, &[]);
+    assert_eq!(again.binary, img.binary, "a loaded project renders identically");
+
+    // Undo the bake restores the 2D project exactly.
+    ok(&mut e, r#"{"op":"history_undo"}"#);
+    assert_eq!(e.document().frames.len(), 1);
+}
+
+#[test]
+fn true_color_and_png_import() {
+    let mut e = Engine::new(8, 8);
+    // Two colors that differ by one bit in one channel are both kept exactly.
+    ok(&mut e, r##"{"op":"set_pixels","pixels":[[0,0,"#102030"],[1,0,"#102031"],[2,0,"#10203080"]]}"##);
+    let r = ok(&mut e, r#"{"op":"read_region","x":0,"y":0,"width":3,"height":1,"format":"hex"}"#);
+    let row = r.get("result").unwrap().get("rows").unwrap().as_array().unwrap()[0].as_array().unwrap().to_vec();
+    assert_eq!(row, vec![Json::from("#102030"), Json::from("#102031"), Json::from("#10203080")]);
+    let png = e.execute(br#"{"op":"export_png"}"#, &[]).binary;
+    ok(&mut e, r#"{"op":"layer_create","name":"Imported"}"#);
+    let imp = e.execute(br#"{"op":"image_import","layer":"Imported","x":4,"y":4}"#, &png);
+    assert!(imp.json.contains("\"ok\":true"), "{}", imp.json);
+    let p = ok(&mut e, r#"{"op":"get_pixel","layer":"Imported","x":5,"y":4}"#);
+    assert_eq!(p.get("result").unwrap().get("color").unwrap().as_str(), Some("#102031"));
+    // Swatch edit recolors the art that uses the old color.
+    ok(&mut e, r##"{"op":"palette_add","colors":["#102030"]}"##);
+    let idx = e.document().palette.find(crate::pixel::Rgba::parse_hex("#102030").unwrap()).unwrap();
+    ok(&mut e, &format!(r##"{{"op":"palette_set","index":{idx},"color":"#FF0000"}}"##));
+    let p = ok(&mut e, r#"{"op":"get_pixel","layer":0,"x":0,"y":0}"#);
+    assert_eq!(p.get("result").unwrap().get("color").unwrap().as_str(), Some("#FF0000"));
+}

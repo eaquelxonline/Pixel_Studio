@@ -2,7 +2,7 @@
 name = "pixcore"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Pixel Studio core engine: pixels, layers, frames, history, storage, rendering and export."
 publish = false
 

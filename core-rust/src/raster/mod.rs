@@ -38,7 +38,7 @@ pub enum PasteMode {
 }
 
 /// Bresenham line, inclusive of both end points.
-pub fn line(grid: &mut PixelGrid, x0: i64, y0: i64, x1: i64, y1: i64, value: u16) -> usize {
+pub fn line(grid: &mut PixelGrid, x0: i64, y0: i64, x1: i64, y1: i64, value: u32) -> usize {
     let mut changed = 0;
     let dx = (x1 - x0).abs();
     let dy = -(y1 - y0).abs();
@@ -67,7 +67,7 @@ pub fn line(grid: &mut PixelGrid, x0: i64, y0: i64, x1: i64, y1: i64, value: u16
     changed
 }
 
-pub fn rectangle(grid: &mut PixelGrid, r: Region, value: u16, filled: bool) -> usize {
+pub fn rectangle(grid: &mut PixelGrid, r: Region, value: u32, filled: bool) -> usize {
     if r.w <= 0 || r.h <= 0 {
         return 0;
     }
@@ -92,7 +92,7 @@ pub fn rectangle(grid: &mut PixelGrid, r: Region, value: u16, filled: bool) -> u
 }
 
 /// Ellipse inscribed in the bounding box, symmetric and gap-free.
-pub fn ellipse(grid: &mut PixelGrid, r: Region, value: u16, filled: bool) -> usize {
+pub fn ellipse(grid: &mut PixelGrid, r: Region, value: u32, filled: bool) -> usize {
     if r.w <= 0 || r.h <= 0 {
         return 0;
     }
@@ -141,7 +141,7 @@ pub fn ellipse(grid: &mut PixelGrid, r: Region, value: u16, filled: bool) -> usi
 }
 
 /// Fill starting at (x, y). `contiguous = false` replaces every pixel of the seed's value.
-pub fn fill(grid: &mut PixelGrid, x: i64, y: i64, value: u16, contiguous: bool) -> usize {
+pub fn fill(grid: &mut PixelGrid, x: i64, y: i64, value: u32, contiguous: bool) -> usize {
     if !grid.in_bounds(x, y) {
         return 0;
     }
@@ -191,7 +191,7 @@ pub fn fill(grid: &mut PixelGrid, x: i64, y: i64, value: u16, contiguous: bool) 
     changed
 }
 
-pub fn replace(grid: &mut PixelGrid, region: Region, from: u16, to: u16) -> usize {
+pub fn replace(grid: &mut PixelGrid, region: Region, from: u32, to: u32) -> usize {
     if from == to {
         return 0;
     }
@@ -208,7 +208,7 @@ pub fn replace(grid: &mut PixelGrid, region: Region, from: u16, to: u16) -> usiz
 }
 
 /// Copies the pixels of a region row-major. Out-of-bounds pixels read as transparent.
-pub fn extract(grid: &PixelGrid, r: Region) -> Vec<u16> {
+pub fn extract(grid: &PixelGrid, r: Region) -> Vec<u32> {
     let mut out = Vec::with_capacity((r.w.max(0) * r.h.max(0)) as usize);
     for y in r.y..r.y + r.h {
         for x in r.x..r.x + r.w {
@@ -218,7 +218,7 @@ pub fn extract(grid: &PixelGrid, r: Region) -> Vec<u16> {
     out
 }
 
-pub fn paste(grid: &mut PixelGrid, x: i64, y: i64, w: i64, h: i64, data: &[u16], mode: PasteMode) -> usize {
+pub fn paste(grid: &mut PixelGrid, x: i64, y: i64, w: i64, h: i64, data: &[u32], mode: PasteMode) -> usize {
     let mut changed = 0;
     for row in 0..h {
         for col in 0..w {
@@ -298,7 +298,7 @@ mod tests {
         let mut s = String::new();
         for y in 0..g.height() as i64 {
             for x in 0..g.width() as i64 {
-                s.push(if g.get(x, y) == 0 { '.' } else { char::from_digit(g.get(x, y) as u32, 10).unwrap() });
+                s.push(if g.get(x, y) == 0 { '.' } else { char::from_digit(g.get(x, y), 10).unwrap() });
             }
             s.push('\n');
         }

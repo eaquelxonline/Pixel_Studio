@@ -5,7 +5,7 @@ use super::json::Json;
 use super::{CmdError, CmdResult, Outcome};
 use crate::animation::{DEFAULT_FRAME_MS, Direction, Tag, validate_duration};
 use crate::layers::{MAX_LAYER_NAME, validate_name};
-use crate::pixel::Rgba;
+use crate::pixel::{Rgba, TRANSPARENT};
 use crate::project::{Document, MAX_FRAMES, MAX_LAYERS, validate_size};
 
 fn ok(result: Json) -> CmdResult<Outcome> {
@@ -251,11 +251,26 @@ pub fn palette_set(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
     let index = req_i64(a, "index")?;
     let hex = req_str(a, "color")?;
     let c = Rgba::parse_hex(hex).ok_or_else(|| CmdError::invalid(format!("'{hex}' is not a color")))?;
-    if index < 0 || index > u16::MAX as i64 {
-        return Err(CmdError::invalid("palette index out of range"));
+    if index < 0 {
+        return Err(CmdError::invalid("swatch index out of range"));
     }
-    doc.palette.set(index as u16, c).map_err(CmdError::invalid)?;
-    ok(Json::obj().with("index", index).with("color", c.to_hex()))
+    let old = doc.palette.set(index as usize, c).map_err(CmdError::invalid)?;
+    // Swatch edits recolor the art that uses the old color (classic palette-swap workflow).
+    let (from, to) = (old.to_pixel(), c.to_pixel());
+    let mut changed = 0u64;
+    let locked: Vec<u32> = doc.layers.iter().filter(|l| l.locked).map(|l| l.id).collect();
+    for ((layer, _), cel) in doc.cels.iter_mut() {
+        if from == TRANSPARENT || locked.contains(layer) {
+            continue;
+        }
+        let grid = std::sync::Arc::make_mut(cel);
+        let full = crate::raster::Region::full(grid);
+        changed += crate::raster::replace(grid, full, from, to) as u64;
+    }
+    Ok(Outcome::new(
+        Json::obj().with("index", index).with("color", c.to_hex()).with("previous", old.to_hex()).with("recolored", changed),
+        changed,
+    ))
 }
 
 pub fn palette_add(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -265,7 +280,9 @@ pub fn palette_add(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
         if !matches!(c, Json::Str(_)) {
             return Err(CmdError::invalid(format!("colors[{i}] must be a hex string")));
         }
-        indices.push(Json::from(color_value(doc, c, &format!("colors[{i}]"))?));
+        let px = color_value(doc, c, &format!("colors[{i}]"))?;
+        let idx = doc.palette.intern(Rgba::from_u32(px)).map_err(|e| CmdError::new("limit", e))?;
+        indices.push(Json::from(idx));
     }
     ok(Json::obj().with("indices", Json::Arr(indices)).with("paletteSize", doc.palette.len()))
 }

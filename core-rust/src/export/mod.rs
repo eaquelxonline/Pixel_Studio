@@ -2,6 +2,7 @@
 
 pub mod deflate;
 pub mod gif;
+pub mod inflate;
 pub mod png;
 
 use crate::commands::json::Json;

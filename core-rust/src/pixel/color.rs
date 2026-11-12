@@ -18,6 +18,11 @@ impl Rgba {
         u32::from_be_bytes([self.r, self.g, self.b, self.a])
     }
 
+    /// Canvas pixel value: `0xRRGGBBAA`, with every fully transparent color collapsed to 0.
+    pub fn to_pixel(self) -> u32 {
+        if self.a == 0 { 0 } else { self.to_u32() }
+    }
+
     pub fn from_u32(v: u32) -> Self {
         let [r, g, b, a] = v.to_be_bytes();
         Rgba { r, g, b, a }

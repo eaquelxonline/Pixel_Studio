@@ -78,27 +78,58 @@ pub fn frame_index(doc: &Document, a: &Json, key: &str) -> CmdResult<usize> {
     }
 }
 
-/// Color as `#RRGGBB[AA]`/`transparent` (interned into the palette) or a palette index.
-pub fn color_value(doc: &mut Document, v: &Json, key: &str) -> CmdResult<u16> {
+/// Color as `#RRGGBB[AA]` / `transparent` / null (any of 2^32 RGBA values) or a swatch index.
+/// Returns the canvas pixel value.
+pub fn color_value(doc: &Document, v: &Json, key: &str) -> CmdResult<u32> {
     match v {
         Json::Str(s) => {
             let c = Rgba::parse_hex(s).ok_or_else(|| CmdError::invalid(format!("'{key}': '{s}' is not a #RRGGBB or #RRGGBBAA color")))?;
-            doc.palette.intern(c).map_err(|e| CmdError::new("limit", e))
+            Ok(c.to_pixel())
         }
         Json::Null => Ok(TRANSPARENT),
         v => {
-            let i = v.as_i64().ok_or_else(|| CmdError::invalid(format!("'{key}' must be a hex color string or palette index")))?;
+            let i = v.as_i64().ok_or_else(|| CmdError::invalid(format!("'{key}' must be a hex color string or swatch index")))?;
             if i < 0 || i as usize >= doc.palette.len() {
-                return Err(CmdError::not_found(format!("palette index {i} does not exist (palette has {} entries)", doc.palette.len())));
+                return Err(CmdError::not_found(format!("swatch {i} does not exist (palette has {} swatches)", doc.palette.len())));
             }
-            Ok(i as u16)
+            Ok(doc.palette.get(i as usize).map(Rgba::to_pixel).unwrap_or(TRANSPARENT))
         }
     }
 }
 
-pub fn color(doc: &mut Document, a: &Json, key: &str) -> CmdResult<u16> {
-    let v = a.get(key).ok_or_else(|| CmdError::invalid(format!("missing required color '{key}'")))?.clone();
-    color_value(doc, &v, key)
+pub fn color(doc: &Document, a: &Json, key: &str) -> CmdResult<u32> {
+    let v = a.get(key).ok_or_else(|| CmdError::invalid(format!("missing required color '{key}'")))?;
+    color_value(doc, v, key)
+}
+
+/// Optional 3-component vector `[x, y, z]`.
+pub fn opt_vec3(a: &Json, key: &str) -> CmdResult<Option<[f64; 3]>> {
+    match a.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Arr(v)) if v.len() == 3 => {
+            let mut out = [0.0; 3];
+            for (i, x) in v.iter().enumerate() {
+                let f = x
+                    .as_f64()
+                    .filter(|f| f.is_finite() && f.abs() <= 1.0e6)
+                    .ok_or_else(|| CmdError::invalid(format!("'{key}' must be [x, y, z] numbers")))?;
+                out[i] = f;
+            }
+            Ok(Some(out))
+        }
+        Some(_) => Err(CmdError::invalid(format!("'{key}' must be [x, y, z]"))),
+    }
+}
+
+pub fn req_vec3(a: &Json, key: &str) -> CmdResult<[f64; 3]> {
+    opt_vec3(a, key)?.ok_or_else(|| CmdError::invalid(format!("missing required [x, y, z] '{key}'")))
+}
+
+pub fn opt_f64(a: &Json, key: &str) -> CmdResult<Option<f64>> {
+    match a.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(v) => v.as_f64().filter(|f| f.is_finite()).map(Some).ok_or_else(|| CmdError::invalid(format!("'{key}' must be a number"))),
+    }
 }
 
 /// Optional x/y/width/height; defaults to the whole canvas.

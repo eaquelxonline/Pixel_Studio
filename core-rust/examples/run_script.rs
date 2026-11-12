@@ -1,8 +1,13 @@
-//! Developer tool: replays a JSON-lines command script and writes every frame as PNG.
+//! Developer tool: replays a JSON-lines command script through the engine.
 //!
-//! `cargo run --example run_script -- <script.jsonl> <out-dir> [width height] [scale]`
+//! `cargo run --release --example run_script -- <script.jsonl> <out-dir> [width height] [scale]`
+//!
+//! Any command line may carry `"_save": "file.ext"`; its binary output (PNG, GIF, .pxs, …) is
+//! written to the output directory, and its JSON result next to it when `"_json": true`.
+//! Without explicit saves, every 2D frame is exported as PNG plus an animated GIF and the project.
 
 use pixcore::Engine;
+use pixcore::commands::json::Json;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -17,12 +22,38 @@ fn main() {
     let out = std::path::Path::new(&args[2]);
     std::fs::create_dir_all(out).expect("create out dir");
     let mut engine = Engine::new(w, h);
-    for line in script.lines().filter(|l| !l.trim().is_empty()) {
+    let mut saved_any = false;
+    let started = std::time::Instant::now();
+    for (n, line) in script.lines().enumerate().filter(|(_, l)| !l.trim().is_empty() && !l.trim_start().starts_with("//")) {
+        let t = std::time::Instant::now();
         let r = engine.execute(line.as_bytes(), &[]);
         if !r.json.contains("\"ok\":true") {
-            eprintln!("FAILED: {line}\n  -> {}", r.json);
+            eprintln!("FAILED line {}: {line}\n  -> {}", n + 1, r.json);
             std::process::exit(1);
         }
+        if let Ok(req) = Json::parse(line)
+            && let Some(name) = req.get("_save").and_then(Json::as_str)
+        {
+            let file = out.join(name);
+            if let Some(dir) = file.parent() {
+                std::fs::create_dir_all(dir).expect("create dir");
+            }
+            std::fs::write(&file, &r.binary).expect("write output");
+            if req.get("_json").and_then(Json::as_bool) == Some(true) {
+                let result = Json::parse(&r.json).ok().and_then(|j| j.get("result").cloned()).unwrap_or(Json::Null);
+                std::fs::write(file.with_extension("json"), result.to_json_string()).expect("write json");
+            }
+            println!(
+                "[{:>7.2}s] {name} ({} bytes, {:.0} ms)",
+                started.elapsed().as_secs_f32(),
+                r.binary.len(),
+                t.elapsed().as_secs_f32() * 1000.0
+            );
+            saved_any = true;
+        }
+    }
+    if saved_any {
+        return;
     }
     for f in 0..engine.document().frames.len() {
         let req = format!("{{\"op\":\"export_png\",\"frame\":{f},\"scale\":{scale}}}");

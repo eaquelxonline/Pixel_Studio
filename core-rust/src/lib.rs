@@ -16,5 +16,6 @@ pub mod project;
 pub mod raster;
 pub mod renderer;
 pub mod storage;
+pub mod voxel;
 
 pub use engine::{Engine, Response};

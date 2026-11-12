@@ -3,17 +3,14 @@
 use super::args::{color, color_value, coord, frame_index, layer_index, opt_bool, opt_i64, opt_str, region, req_i64, target};
 use super::json::Json;
 use super::{CmdError, CmdResult, Outcome};
-use crate::pixel::TRANSPARENT;
+use crate::pixel::{Rgba, TRANSPARENT};
 use crate::project::Document;
 use crate::raster::{self, PasteMode, Region};
 
 pub const MAX_BATCH_PIXELS: usize = 262_144;
 
-fn hex_of(doc: &Document, index: u16) -> Json {
-    match doc.palette.get(index) {
-        Some(c) if index != TRANSPARENT => Json::Str(c.to_hex()),
-        _ => Json::Null,
-    }
+fn hex_of(pixel: u32) -> Json {
+    if pixel == TRANSPARENT { Json::Null } else { Json::Str(Rgba::from_u32(pixel).to_hex()) }
 }
 
 pub fn set_pixel(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -24,10 +21,7 @@ pub fn set_pixel(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
         return Err(CmdError::invalid(format!("pixel ({x},{y}) is outside the {}x{} canvas", doc.width, doc.height)));
     }
     let changed = doc.cel_mut(l, f).set(x, y, v) as u64;
-    Ok(Outcome::new(
-        Json::obj().with("x", x).with("y", y).with("color", hex_of(doc, v)).with("paletteIndex", v).with("changed", changed),
-        changed,
-    ))
+    Ok(Outcome::new(Json::obj().with("x", x).with("y", y).with("color", hex_of(v)).with("changed", changed), changed))
 }
 
 pub fn erase_pixel(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -46,7 +40,7 @@ pub fn set_pixels(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
     }
     let (l, f) = target(doc, a)?;
     let default = match a.get("color") {
-        Some(v) => Some(color_value(doc, &v.clone(), "color")?),
+        Some(v) => Some(color_value(doc, v, "color")?),
         None => None,
     };
     let mut resolved = Vec::with_capacity(items.len());

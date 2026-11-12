@@ -19,7 +19,7 @@ struct Indexed {
 
 fn index_frame(img: &Image) -> Indexed {
     let mut freq: HashMap<[u8; 3], u32> = HashMap::new();
-    for p in img.pixels.chunks_exact(4) {
+    for p in img.pixels.as_chunks::<4>().0 {
         if p[3] >= ALPHA_CUTOFF {
             *freq.entry([p[0], p[1], p[2]]).or_default() += 1;
         }
@@ -32,7 +32,7 @@ fn index_frame(img: &Image) -> Indexed {
     table.extend(colors.iter().map(|c| c.0));
     let mut lookup: HashMap<[u8; 3], u8> = table.iter().enumerate().skip(1).map(|(i, c)| (*c, i as u8)).collect();
     let mut pixels = Vec::with_capacity(img.pixels.len() / 4);
-    for p in img.pixels.chunks_exact(4) {
+    for p in img.pixels.as_chunks::<4>().0 {
         if p[3] < ALPHA_CUTOFF {
             pixels.push(0);
             continue;

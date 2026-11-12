@@ -5,8 +5,8 @@ use super::TRANSPARENT;
 pub const TILE_SIZE: u32 = 16;
 pub const TILE_AREA: usize = (TILE_SIZE * TILE_SIZE) as usize;
 
-/// One 16×16 block of palette indices.
-pub type Tile = [u16; TILE_AREA];
+/// One 16×16 block of true-color pixels (`Rgba::to_pixel`, 0 = transparent).
+pub type Tile = [u32; TILE_AREA];
 
 /// Sparse pixel storage for one cel (one layer in one frame).
 ///
@@ -58,7 +58,7 @@ impl PixelGrid {
 
     /// Out-of-bounds reads return transparent.
     #[inline]
-    pub fn get(&self, x: i64, y: i64) -> u16 {
+    pub fn get(&self, x: i64, y: i64) -> u32 {
         if !self.in_bounds(x, y) {
             return TRANSPARENT;
         }
@@ -71,7 +71,7 @@ impl PixelGrid {
 
     /// Writes a pixel; out-of-bounds writes are clipped. Returns true when the value changed.
     #[inline]
-    pub fn set(&mut self, x: i64, y: i64, value: u16) -> bool {
+    pub fn set(&mut self, x: i64, y: i64, value: u32) -> bool {
         if !self.in_bounds(x, y) {
             return false;
         }
@@ -132,7 +132,7 @@ impl PixelGrid {
     }
 
     /// Calls `f(x, y, index)` for every non-transparent pixel, tile by tile.
-    pub fn for_each_opaque(&self, mut f: impl FnMut(u32, u32, u16)) {
+    pub fn for_each_opaque(&self, mut f: impl FnMut(u32, u32, u32)) {
         for ty in 0..self.tiles_y {
             for tx in 0..self.tiles_x {
                 let Some(tile) = self.tile(tx, ty) else { continue };

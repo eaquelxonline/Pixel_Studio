@@ -20,8 +20,20 @@ fn q(result: Json) -> CmdResult<Query> {
     Ok(Query { result, binary: Vec::new() })
 }
 
-pub fn run_query(doc: &Document, history: &History, revision: u64, op: &str, a: &Json) -> CmdResult<Query> {
+pub fn run_query(
+    doc: &Document,
+    history: &History,
+    revision: u64,
+    op: &str,
+    a: &Json,
+    cache: &mut super::voxel::RenderCache,
+) -> CmdResult<Query> {
     match op {
+        "voxel_inspect" => super::voxel::voxel_inspect(doc, a),
+        "voxel_get" => super::voxel::voxel_get(doc, a),
+        "voxel_render" => super::voxel::voxel_render(doc, cache, a),
+        "voxel_render_sheet" => super::voxel::voxel_render_sheet(doc, cache, a),
+        "voxel_pick" => super::voxel::voxel_pick(doc, cache, a),
         "status" => q(Json::obj()
             .with("engine", "pixcore")
             .with("version", env!("CARGO_PKG_VERSION"))
@@ -123,10 +135,7 @@ fn tag_json(doc: &Document, t: &crate::animation::Tag) -> Json {
 }
 
 /// Colors of a rectangle either from one layer's cel or from the composited frame.
-/// Colors (None = transparent) plus palette indices when reading a single layer.
-type ColorRead = (Vec<Option<Rgba>>, Option<Vec<u16>>);
-
-fn read_colors(doc: &Document, a: &Json, x: i64, y: i64, w: i64, h: i64) -> CmdResult<ColorRead> {
+fn read_colors(doc: &Document, a: &Json, x: i64, y: i64, w: i64, h: i64) -> CmdResult<Vec<Option<Rgba>>> {
     let fi = frame_index(doc, a, "frame")?;
     if opt_bool(a, "composite")?.unwrap_or(false) {
         let img = render(doc, fi, &RenderOptions::default());
@@ -138,7 +147,7 @@ fn read_colors(doc: &Document, a: &Json, x: i64, y: i64, w: i64, h: i64) -> CmdR
                 out.push((c.a > 0).then_some(c));
             }
         }
-        return Ok((out, None));
+        return Ok(out);
     }
     let li = layer_index(doc, a, "layer")?;
     let grid = doc.cel(doc.layers[li].id, doc.frames[fi].id);
@@ -148,8 +157,7 @@ fn read_colors(doc: &Document, a: &Json, x: i64, y: i64, w: i64, h: i64) -> CmdR
             idx.push(grid.map(|g| g.get(xx, yy)).unwrap_or(TRANSPARENT));
         }
     }
-    let colors = idx.iter().map(|&i| if i == TRANSPARENT { None } else { doc.palette.get(i) }).collect();
-    Ok((colors, Some(idx)))
+    Ok(idx.iter().map(|&p| if p == TRANSPARENT { None } else { Some(Rgba::from_u32(p)) }).collect())
 }
 
 fn get_pixel(doc: &Document, a: &Json) -> CmdResult<Query> {
@@ -157,34 +165,24 @@ fn get_pixel(doc: &Document, a: &Json) -> CmdResult<Query> {
     if x < 0 || y < 0 || x >= doc.width as i64 || y >= doc.height as i64 {
         return Err(CmdError::invalid(format!("pixel ({x},{y}) is outside the {}x{} canvas", doc.width, doc.height)));
     }
-    let (colors, idx) = read_colors(doc, a, x, y, 1, 1)?;
-    let mut j = Json::obj().with("x", x).with("y", y).with("color", colors[0].map(|c| c.to_hex())).with("transparent", colors[0].is_none());
-    if let Some(idx) = idx {
-        j.set("paletteIndex", idx[0]);
-    }
-    q(j)
+    let colors = read_colors(doc, a, x, y, 1, 1)?;
+    q(Json::obj().with("x", x).with("y", y).with("color", colors[0].map(|c| c.to_hex())).with("transparent", colors[0].is_none()))
 }
 
-/// Returns pixels as hex rows, palette indices, or a compact character map with legend.
+/// Returns pixels as hex rows or a compact character map with a color legend.
 fn read_region(doc: &Document, a: &Json) -> CmdResult<Query> {
     let r = region(doc, a)?;
     if r.w * r.h > MAX_READ_AREA {
         return Err(CmdError::new("limit", format!("read at most {MAX_READ_AREA} pixels per call (e.g. 128x128); split the region")));
     }
     let format = opt_str(a, "format")?.unwrap_or("ascii");
-    let (colors, idx) = read_colors(doc, a, r.x, r.y, r.w, r.h)?;
+    let colors = read_colors(doc, a, r.x, r.y, r.w, r.h)?;
     let mut j = Json::obj().with("x", r.x).with("y", r.y).with("width", r.w).with("height", r.h).with("format", format);
     match format {
         "hex" => {
             let rows =
                 colors.chunks(r.w as usize).map(|row| Json::Arr(row.iter().map(|c| Json::from(c.map(|c| c.to_hex()))).collect())).collect();
             j.set("rows", Json::Arr(rows));
-        }
-        "indexed" => {
-            let idx = idx.ok_or_else(|| CmdError::invalid("'indexed' format is not available with composite=true"))?;
-            let rows = idx.chunks(r.w as usize).map(|row| Json::Arr(row.iter().map(|&v| Json::from(v)).collect())).collect();
-            j.set("rows", Json::Arr(rows));
-            j.set("transparentIndex", 0);
         }
         "ascii" => {
             let keys: Vec<char> = ASCII_KEYS.chars().collect();
@@ -219,7 +217,7 @@ fn read_region(doc: &Document, a: &Json) -> CmdResult<Query> {
             j.set("legend", lg);
             j.set("rows", Json::Arr(rows));
         }
-        other => return Err(CmdError::invalid(format!("unknown format '{other}' (ascii, hex, indexed)"))),
+        other => return Err(CmdError::invalid(format!("unknown format '{other}' (ascii, hex)"))),
     }
     q(j)
 }

@@ -22,6 +22,7 @@ pub struct Engine {
     doc: Document,
     history: History,
     revision: u64,
+    cache: commands::voxel::RenderCache,
 }
 
 struct Envelope<'a> {
@@ -65,7 +66,7 @@ fn parse_envelope(req: &Json) -> CmdResult<Envelope<'_>> {
 
 impl Engine {
     pub fn new(width: u32, height: u32) -> Engine {
-        Engine { doc: Document::new(width, height), history: History::default(), revision: 0 }
+        Engine { doc: Document::new(width, height), history: History::default(), revision: 0, cache: Default::default() }
     }
 
     pub fn revision(&self) -> u64 {
@@ -104,7 +105,7 @@ impl Engine {
         };
 
         if kind == Kind::Read {
-            return match commands::run_query(&self.doc, &self.history, self.revision, env.op, env.args) {
+            return match commands::run_query(&self.doc, &self.history, self.revision, env.op, env.args, &mut self.cache) {
                 Ok(q) => Response {
                     json: Json::obj()
                         .with("ok", true)
@@ -141,7 +142,7 @@ impl Engine {
         let before = self.doc.clone();
         let outcome = match kind {
             Kind::Special => self.apply_special(env.op, env.args, payload),
-            _ => commands::apply_mutation(&mut self.doc, env.op, env.args),
+            _ => commands::apply_mutation(&mut self.doc, env.op, env.args, payload, &mut self.cache),
         };
         match outcome {
             Err(e) => {
@@ -245,7 +246,7 @@ impl Engine {
                         Some(a @ Json::Obj(_)) => a,
                         _ => c,
                     };
-                    let o = commands::apply_mutation(&mut self.doc, op, args).map_err(|e| {
+                    let o = commands::apply_mutation(&mut self.doc, op, args, &[], &mut self.cache).map_err(|e| {
                         CmdError::new(e.code, format!("commands[{i}] ({op}) failed, transaction rolled back: {}", e.message))
                     })?;
                     changed += o.changed;
