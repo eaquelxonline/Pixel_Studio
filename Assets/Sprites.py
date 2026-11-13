@@ -2286,12 +2286,230 @@ def build_kade(out):
     print(f"Kade: {len(KADE_FRAMES)} hand-edited frames")
 
 
+# ═══ Sela: 128×128 original character, hand-pixel quality with engine tools ═══════════════════════
+
+def build_sela(out):
+    """Sela, a wandering cartographer (original design). Built only from engine commands:
+    material ramps (ramp_set) → flat blocking (draw_polygon) → hand-placed lighting (shade brush,
+    palette-locked) → folds/strands (draw_stroke) → one dark silhouette outline → half-size detail
+    pixels on a density-2 layer. 33 colors, like hand-made reference art."""
+    import math
+    import os
+    RAMPS = {
+        "skin":    ["#3F2420", "#64392C", "#8C5339", "#B2714A", "#D39668", "#EDBE8E"],
+        "hair":    ["#140D1C", "#251932", "#3A2950", "#56406F", "#7A5E92"],
+        "scarf":   ["#55301A", "#874F1E", "#B47F2A", "#D9AE46", "#F0D584"],
+        "tunic":   ["#10152B", "#1B2645", "#2A3B66", "#3F5891", "#5D7AB3"],
+        "pants":   ["#22262F", "#353B49", "#4D5568", "#6B7589", "#8E98AA"],
+        "leather": ["#1F120C", "#372114", "#55351F", "#7A4F2C", "#A27347"],
+        "metal":   ["#4D4F57", "#8C929C", "#D8DCE2"],
+    }
+    BASE_I = {"skin": 3, "hair": 2, "scarf": 2, "tunic": 2, "pants": 2, "leather": 2, "metal": 1}
+    BASE = {k: RAMPS[k][BASE_I[k]] for k in RAMPS}
+    OUT = "#0A0912"
+    BG, SHADOW = "#16212B", "#0E151C"
+    LIGHT = (-0.75, -0.65)  # from the top-left
+
+    cmds = []
+    def c(op, **a):
+        cmds.append({"op": op, **a})
+
+    # ---- tiny geometry kit ---------------------------------------------------------------------
+    def limb(p0, r0, p1, r1, n=7):
+        """Tapered capsule from p0 (radius r0) to p1 (radius r1) as a polygon."""
+        (x0, y0), (x1, y1) = p0, p1
+        a = math.atan2(y1 - y0, x1 - x0)
+        pts = []
+        for i in range(n + 1):
+            t = a + math.pi / 2 + math.pi * i / n
+            pts.append((x1 + r1 * math.cos(t - math.pi), y1 + r1 * math.sin(t - math.pi)))
+        for i in range(n + 1):
+            t = a + math.pi / 2 + math.pi * i / n
+            pts.append((x0 + r0 * math.cos(t), y0 + r0 * math.sin(t)))
+        return [(round(x, 1), round(y, 1)) for x, y in pts]
+
+    def ellipse_pts(cx, cy, rx, ry, n=24):
+        return [(round(cx + rx * math.cos(2 * math.pi * i / n), 1), round(cy + ry * math.sin(2 * math.pi * i / n), 1)) for i in range(n)]
+
+    def raster(poly):
+        xs = [p[0] for p in poly]; ys = [p[1] for p in poly]
+        out = set()
+        for y in range(int(min(ys)) - 1, int(max(ys)) + 2):
+            for x in range(int(min(xs)) - 1, int(max(xs)) + 2):
+                px, py, inside = x + 0.5, y + 0.5, False
+                j = len(poly) - 1
+                for i in range(len(poly)):
+                    (xi, yi), (xj, yj) = poly[i], poly[j]
+                    if (yi > py) != (yj > py) and px < (xj - xi) * (py - yi) / (yj - yi) + xi:
+                        inside = not inside
+                    j = i
+                if inside:
+                    out.add((x, y))
+        return out
+
+    LAYERS = ["BG", "Silhouette", "ScarfBack", "HairBack", "ArmBack", "LegBack", "BootBack", "Torso", "LegFront", "BootFront",
+              "Belt", "ArmFront", "Head", "HairFront", "ScarfFront", "Detail"]
+    parts = []   # (layer, material, polygon, shading style)
+    def part(layer, mat, poly, style="round"):
+        parts.append((layer, mat, poly, style))
+
+    # ---- body (feet on y≈117, head top y≈15) ----------------------------------------------------
+    # legs: hip → knee → ankle, thighs taper, calves bulge
+    part("LegBack",  "pants", limb((67.5, 68), 4.6, (68.5, 88), 3.0))
+    part("LegBack",  "pants", limb((68.5, 88), 3.1, (69.5, 101), 2.6))
+    part("LegBack",  "pants", limb((68.8, 92), 3.4, (69.3, 97), 3.2))           # calf
+    part("LegFront", "pants", limb((60.5, 68), 5.0, (58.5, 89), 3.2))
+    part("LegFront", "pants", limb((58.5, 89), 3.2, (57.0, 104), 2.6))
+    part("LegFront", "pants", limb((58.4, 93), 3.6, (57.6, 98), 3.3))
+    # ankle boots (front boot points left, back boot 3/4)
+    part("BootFront", "leather", [(53.5, 101), (60.5, 101), (61, 110), (61.5, 116), (57, 117.5), (49.5, 117.5), (48.5, 115.5), (51.5, 112.5), (53, 109)])
+    part("BootBack",  "leather", [(66, 98), (72.5, 98), (72.5, 107), (73.5, 112.5), (70.5, 114.5), (63.5, 114.5), (63, 112.5), (66, 109)])
+    # torso: tunic with a flared hem that splits over the hips
+    part("Torso", "tunic", [(54, 38), (59, 35.5), (65, 35), (70.5, 36), (74, 39), (74.5, 46), (72.5, 53), (71.5, 58), (72.5, 64),
+                             (74.5, 72), (69.5, 73.5), (66, 70.5), (63, 74), (57.5, 73.5), (53.5, 71.5), (55.5, 63), (55.5, 56), (54, 49), (52.5, 43)])
+    part("Belt", "leather", [(55, 58.5), (72.3, 57.5), (72.6, 61.5), (55.2, 62.5)], "flat")
+    part("Belt", "leather", [(70, 61), (77.5, 60.5), (78.5, 66), (77, 70.5), (72, 71.5), (70.5, 68)])   # satchel
+    part("Belt", "leather", [(66, 37.5), (68.5, 36.5), (73, 60.5), (70.5, 61.5)], "flat")              # satchel strap
+    # arms
+    part("ArmBack", "skin", limb((73.5, 40), 2.8, (76.5, 52), 2.2))
+    part("ArmBack", "skin", limb((76.5, 52), 2.2, (77, 62), 1.8))
+    part("ArmBack", "skin", ellipse_pts(77.2, 64.5, 2.3, 2.8, 14))                                   # hand
+    part("ArmBack", "tunic", limb((72.5, 39.5), 3.6, (74.5, 45), 3.3))                               # sleeve
+    part("ArmFront", "skin", limb((55.5, 41), 2.9, (52.5, 53), 2.3))
+    part("ArmFront", "skin", limb((52.5, 53), 2.3, (53.5, 62.5), 1.9))
+    part("ArmFront", "skin", ellipse_pts(53.7, 65, 2.4, 2.9, 14))
+    part("ArmFront", "tunic", limb((56, 40), 3.8, (54, 46), 3.4))
+    # head: 3/4 skull + jaw + nose bump on the left, ear on the right
+    part("Head", "skin", ellipse_pts(63.5, 23.5, 6.6, 7.2, 28))
+    part("Head", "skin", [(57.5, 25), (58.5, 29.5), (61.5, 31.8), (65, 31.5), (68, 28.5), (69, 25)])
+    part("Head", "skin", [(57.2, 22.5), (56, 25.5), (57.3, 26.2)])                                     # nose tip
+    part("Head", "skin", limb((63.5, 30), 2.3, (64, 36), 2.5))                                        # neck
+    # hair: cap, side-swept bangs, sideburn and a high ponytail with a tie
+    part("HairFront", "hair", [(56.2, 22.5), (56.5, 19), (59, 16), (63, 14.6), (67.5, 15.3), (70.8, 18), (71.6, 22.5), (71, 27.5),
+                                (69.5, 30.5), (68.4, 26.5), (67.2, 23), (65, 20.6), (62.5, 21.5), (60.3, 20.8), (58.2, 22.8), (57, 25.5)])
+    part("HairBack", "hair", [(68, 16), (72, 13.5), (76.5, 14.5), (79.5, 18.5), (81.5, 25), (82, 32), (81, 39), (83, 46), (80.5, 44.5),
+                               (79.5, 49), (77.8, 42), (76.5, 35), (75, 29), (72.5, 24), (70, 21)])
+    part("Detail", "leather", ellipse_pts(72.8, 16.2, 1.9, 1.7, 10))                                  # hair tie (fine pixels)
+    # scarf: wrap, knot, front tail and a short wind-blown back tail
+    part("ScarfFront", "scarf", [(57.5, 33), (61, 35), (66.5, 35.2), (70.5, 33.2), (71.8, 35.8), (70, 39.5), (64, 40.8), (58.8, 39.2), (56.8, 36)])
+    part("ScarfFront", "scarf", [(59.5, 39), (63.5, 40.2), (63.8, 47), (62.5, 51.5), (61.8, 49.5), (60.6, 52.2), (59.3, 47)])
+    part("ScarfBack", "scarf", [(69, 33.5), (75, 33.3), (81.5, 35.5), (87.5, 39.5), (90.5, 43.5), (87, 42.6), (88, 46.5), (83.5, 43),
+                                 (78, 41.5), (72.5, 39.5)])
+
+    # ---- hand-placed lighting: per-pixel shade steps along each part's own ramp ---------------------
+    def shading(px, style):
+        if not px or style == "flat":
+            return {}
+        rows, cols = {}, {}
+        for x, y in px:
+            rows.setdefault(y, []).append(x); cols.setdefault(x, []).append(y)
+        steps = {}
+        for x, y in px:
+            r = rows[y]; cl = cols[x]
+            u = (x - min(r) + 0.5) / (max(r) - min(r) + 1)          # 0 = left edge, 1 = right edge
+            v = (y - min(cl) + 0.5) / (max(cl) - min(cl) + 1)       # 0 = top, 1 = bottom
+            lit = (0.5 - u) * 1.6 * -LIGHT[0] + (0.5 - v) * 0.7 * -LIGHT[1]
+            s = 1 if lit > 0.34 else 0 if lit > -0.12 else -1 if lit > -0.55 else -2
+            if s == 1 and (u < 0.12 or v < 0.08):   # keep the very rim mid-tone so the highlight sits inside
+                s = 0
+            steps[(x, y)] = s
+        return steps
+
+    def emit_poly(layer, color, poly):
+        c("draw_polygon", layer=layer, points=[list(p) for p in poly], color=color)
+
+    c("project_new", width=128, height=128, name="Sela")
+    c("layer_set", layer=0, name=LAYERS[0])
+    for name in LAYERS[1:]:
+        c("layer_create", name=name)
+    for name, ramp in RAMPS.items():
+        c("ramp_set", name=name, colors=ramp)
+    c("draw_rectangle", layer="BG", x=0, y=0, width=128, height=128, color=BG, filled=True)
+    c("draw_ellipse", layer="BG", x=43, y=112, width=42, height=9, color=SHADOW, filled=True)
+    for layer, mat, poly, style in parts:
+        emit_poly(layer, BASE[mat], poly)
+        if layer != "Detail":
+            emit_poly("Silhouette", OUT, poly)
+    # Light each material region of a layer as one form (no seams where limb pieces overlap).
+    regions = {}
+    for layer, mat, poly, style in parts:
+        regions.setdefault((layer, mat, style), set()).update(raster(poly))
+    c("export", format="png", scale=4, density=1, _save="sela/sela_1_blocking_x4.png")
+    for (layer, mat, style), px in regions.items():
+        by = {}
+        for p, s in shading(px, style).items():
+            if s:
+                by.setdefault(s, []).append(list(p))
+        for s, pts in sorted(by.items()):
+            c("shade", layer=layer, pixels=pts, steps=s, only_color=BASE[mat])
+
+    c("export", format="png", scale=4, density=1, _save="sela/sela_2_lighting_x4.png")
+
+    def shade_poly(layer, poly, steps):
+        c("shade", layer=layer, pixels=[list(p) for p in sorted(raster(poly))], steps=steps)
+
+    # cast shadows (hand-drawn): hair on forehead and neck, scarf on chest, belt and tunic hem on legs
+    shade_poly("Head", [(58, 21), (66, 20.5), (69, 23), (64.5, 22.5), (60, 23.5)], -1)
+    shade_poly("Head", [(61, 31.5), (67.5, 30), (67, 36), (61.5, 36)], -1)
+    shade_poly("Torso", [(56, 38), (72, 38), (73, 43), (64, 44.5), (56, 42)], -1)
+    shade_poly("LegFront", [(53, 66), (66, 66), (66, 74), (63, 76.5), (58, 76), (54, 74.5)], -1)
+    shade_poly("LegBack", [(65, 66), (75, 66), (75, 75), (70, 76), (66, 73)], -1)
+    # the far leg and arm sit one tone deeper: depth separation like a painter's value plan
+    shade_poly("LegBack", [(60, 64), (76, 64), (76, 104), (60, 104)], -1)
+    shade_poly("ArmBack", [(70, 46), (80, 46), (80, 68), (70, 68)], -1)
+    shade_poly("ArmBack", [(70, 38), (78, 38), (78, 48), (70, 48)], -1)
+    # fabric folds and hair strands, drawn as pixel-perfect strokes in ramp tones
+    R = RAMPS
+    c("draw_stroke", layer="Torso", color=R["tunic"][1], points=[[57, 47], [59, 52], [60, 56]])
+    c("draw_stroke", layer="Torso", color=R["tunic"][1], points=[[66, 63], [65, 68], [66, 71]])
+    c("draw_stroke", layer="Torso", color=R["tunic"][3], points=[[58, 63], [57, 67], [56, 70]])
+    c("draw_stroke", layer="LegFront", color=R["pants"][1], points=[[58, 86], [60, 88]])
+    c("draw_stroke", layer="LegBack", color=R["pants"][1], points=[[67, 85], [69, 87]])
+    c("draw_stroke", layer="HairBack", color=R["hair"][1], points=[[76, 20], [78, 28], [79, 36], [80, 43]])
+    c("draw_stroke", layer="HairBack", color=R["hair"][3], points=[[73, 17], [76, 18], [78, 22]])
+    c("draw_stroke", layer="HairFront", color=R["hair"][4], points=[[59, 18], [62, 16], [66, 16]])
+    c("draw_stroke", layer="HairFront", color=R["hair"][3], points=[[58, 19], [61, 17]])
+    c("draw_stroke", layer="HairFront", color=R["hair"][1], points=[[65, 21], [68, 24], [69, 28]])
+    c("draw_stroke", layer="ScarfFront", color=R["scarf"][1], points=[[62, 41], [62, 46], [61, 50]])
+    c("draw_stroke", layer="ScarfFront", color=R["scarf"][4], points=[[59, 35], [62, 36]])
+    c("draw_stroke", layer="ScarfBack", color=R["scarf"][1], points=[[76, 37], [82, 39], [86, 42]])
+    c("draw_stroke", layer="BootFront", color=R["leather"][4], points=[[54, 104], [54, 109]])
+    c("draw_stroke", layer="BootFront", color=R["leather"][1], points=[[50, 116], [60, 116]])
+    c("draw_stroke", layer="BootBack", color=R["leather"][1], points=[[64, 113], [72, 113]])
+    c("draw_stroke", layer="Belt", color=R["leather"][1], points=[[71, 66], [77, 66]])
+    # face: a soft eye and brow line, cheek light
+    c("set_pixels", layer="Head", pixels=[[59, 25, R["hair"][1]], [60, 25, R["hair"][1]], [59, 24, R["skin"][2]], [58, 28, R["skin"][4]]])
+    c("shade", layer="Head", pixels=[[61, 29], [62, 29]], steps=1)
+    # metal buckle and satchel clasp
+    c("set_pixels", layer="Belt", pixels=[[63, 59, R["metal"][2]], [64, 59, R["metal"][1]], [63, 60, R["metal"][1]], [64, 60, R["metal"][0]],
+                                         [74, 63, R["metal"][2]], [74, 64, R["metal"][0]]])
+    c("outline", layer="Silhouette", color=OUT, mode="solid")
+    c("pixel_cleanup", layer="Silhouette", color=OUT)
+    # fine (half-size) pixels: hair tie highlight and an earring glint on a density-2 layer
+    c("layer_set", layer="Detail", density=2)
+    c("set_pixels", layer="Detail", pixels=[[144, 31, R["leather"][4]], [145, 31, R["leather"][4]], [146, 32, R["leather"][3]],
+                                           [135, 54, R["metal"][2]], [135, 55, R["metal"][1]]])
+    os.makedirs(os.path.join(out, "sela"), exist_ok=True)
+    lines = [json.dumps(x) for x in cmds if not x.get("_save")]
+    with open(os.path.join(out, "sela.jsonl"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    show = [json.dumps(x) for x in cmds] + [
+        json.dumps({"op": "export", "format": "png", "scale": 1, "density": 1, "_save": "sela/sela.png"}),
+        json.dumps({"op": "export", "format": "png", "scale": 4, "density": 1, "_save": "sela/sela_3_final_x4.png"}),
+        json.dumps({"op": "export", "format": "png", "scale": 4, "_save": "sela/sela_fine_x4.png"}),
+        json.dumps({"op": "project_save", "_save": "sela/sela.pxs"}),
+    ]
+    with open(os.path.join(out, "sela_showcase.jsonl"), "w") as fh:
+        fh.write("\n".join(show) + "\n")
+    print(f"Sela: {len(lines)} engine commands")
+
+
 def main(argv):
-    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|all]   → command scripts in Assets/Build/."""
+    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|all]   → command scripts in Assets/Build/."""
     import os
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Build")
     os.makedirs(out, exist_ok=True)
-    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade}
+    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela}
     wanted = argv[1:] or ["all"]
     for name, fn in targets.items():
         if "all" in wanted or name in wanted:

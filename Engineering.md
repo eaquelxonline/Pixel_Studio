@@ -33,6 +33,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 13. [Gelişmiş VFX paketi ve ikincil hareket](#13-gelişmiş-vfx-paketi-ve-ikincil-hareket)
 14. [Savaşçı karakter: 9 animasyon](#14-savaşçı-karakter-9-animasyon)
 15. [Piksel piksel karşılaştırma: Kade ve Bram](#15-piksel-piksel-karşılaştırma-kade-ve-bram)
+16. [128×128 özgün karakter: Sela](#16-128128-özgün-karakter-sela)
 
 ---
 
@@ -42,7 +43,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 70 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 74 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -55,7 +56,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **113 araç** | ✅ | 15 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **93 araç** | ✅ | 15 uçtan uca gateway testi |
 | Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
 | Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
@@ -136,7 +137,7 @@ Freedom Network düzeni: her platform tek kaynak dosyası (`Core.kt` / `Core.rs`
 ### Hızlı başlangıç
 
 ```bash
-cd Native && cargo test                     # Rust motoru: 70 test (golden render dahil)
+cd Native && cargo test                     # Rust motoru: 74 test (golden render dahil)
 ./gradlew test                              # JVM: JSON, JNI köprüsü, gateway (Rust'ı otomatik derler)
 ./gradlew :Windows:run                      # masaüstü editörü
 ./gradlew :Gateway:run --args="--size 64x64 --port 38471 --workspace ./workspace [--token T] [--allow-destructive]"
@@ -314,21 +315,36 @@ Sunucu "dual-era"dır ve iki dönemi aynı endpoint'te sunar:
 
 Yanıtlar her zaman `application/json` olarak döner. Bildirimler `202` alır. `GET /mcp` isteği `405` döner.
 
-### Araçlar (113)
+### Araçlar (93)
+
+Araç seti 2026-11'de sadeleştirildi: aynı işi yapan küçük araçlar birleştirildi (113 → 93 araç, motorda 124 → 97 işlem), el ile piksel sanatı için dört yeni araç eklendi. Eski adlar ve karşılıkları:
+
+| Eski | Yeni |
+| --- | --- |
+| `project_inspect`, `frame_get`, `animation_info`, `palette_get`, `palette_list`, `gamedev_inspect` | `canvas_inspect detail=full\|frame\|animation\|palette\|gamedev` |
+| `export_png`, `export_gif`, `export_spritesheet`, `export_normal_map`, `export_atlas`, `export_godot_spriteframes`, `export_tiled`, `export_tileset` | motorda `export format=…`, ajanda `project_export` |
+| `layer_rename`, `layer_visibility`, `layer_lock`, `layer_opacity`, `layer_blend` | `layer_set` (+ `density`) |
+| `flip_horizontal`, `flip_vertical` | `flip axis=horizontal\|vertical` |
+| `rotsprite` | `rotate` (90/180/270 tam döner, diğer açılar RotSprite) |
+| `palette_add`, `palette_load` | `palette_set` (`index`+`color`, `preset` ya da `colors` + `mode`) |
+| `replace_color` | `palette_swap from/to` |
+| `erase_pixel` | `set_pixel color=transparent` |
+| `voxel_get` | `voxel_inspect` |
+| `frame_select`, `layer_select` | yalnızca editörler kullanır (ajan kataloğunda yok) |
 
 Tam şemalar `Gateway/Schemas/pixel-studio-tools.mcp.json` dosyasındadır.
 
 | Grup | Araçlar |
 | --- | --- |
-| Tuval | `canvas_inspect`, `canvas_snapshot` (PNG + özet), `get_pixel`, `read_region` (ascii/hex), `set_pixel`, `set_pixels`, `erase_pixel`, `draw_line`, `draw_rectangle`, `draw_ellipse`, `draw_polygon`, `pattern_fill` (tuğla/kiremit/tahta/taş/karo/çim/dalga/dama), `fill_region`, `replace_color`, `flip_horizontal`, `flip_vertical`, `rotate`, `move_region`, `copy_region`, `clear`, `canvas_resize`* |
-| Animasyon | `frame_add`, `frame_duplicate`, `frame_delete`*, `frame_move`, `frame_get`, `frame_set_duration`, `frame_select`, `animation_tag_create`, `animation_tag_delete`, `animation_set_loop`, `animation_info`, `animation_preview` (GIF) |
-| Katman | `layer_create`, `layer_delete`*, `layer_rename`, `layer_visibility`, `layer_lock`, `layer_opacity`, `layer_move`, `layer_select` |
-| Palet | `palette_get`, `palette_set`, `palette_add` |
+| Tuval | `canvas_inspect`, `canvas_snapshot` (PNG + özet), `get_pixel`, `read_region` (ascii/hex), `set_pixel`, `set_pixels`, `draw_line`, `draw_rectangle`, `draw_ellipse`, `draw_polygon`, `pattern_fill` (tuğla/kiremit/tahta/taş/karo/çim/dalga/dama), `draw_stroke` (pixel-perfect serbest çizgi), `fill_region`, `flip`, `rotate` (RotSprite dahil), `move_region`, `copy_region`, `clear`, `canvas_resize`* |
+| Animasyon | `frame_add`, `frame_duplicate`, `frame_delete`*, `frame_move`, `frame_set_duration`, `animation_tag_create`, `animation_tag_delete`, `animation_set_loop`, `animation_preview` (GIF) |
+| Katman | `layer_create`, `layer_delete`*, `layer_set` (ad, görünürlük, kilit, opaklık, karışım, piksel yoğunluğu 1/2/4), `layer_move` |
+| Palet ve rampa | `palette_set`, `ramp_set`, `ramp_delete`, `shade` (rampa fırçası) |
 | Efekt ve hareket | `fx_generate` — 23 efekt türü, tek çağrıda 8–16 kare, otomatik zamanlama, isteğe bağlı additive glow; `fx_particles` — genel parçacık yayıcı; `anim_generate` — durağan sprite'tan 8+ karelik ikincil hareket (nefes, sallanma, squash, vuruş flaşı …) |
-| Piksel art | `draw_ascii`, `outline` (selective/selout/solid), `auto_shade`, `gradient_map`, `draw_sparkle`, `pixel_cleanup`, `color_ramp`, `palette_list`, `palette_load`, `quantize`, `dither_fill`, `export_normal_map` |
-| 3D Voxel | `voxel_model_create`, `voxel_model_clone`, `voxel_model_delete`*, `voxel_model_set`, `voxel_inspect`, `voxel_get`, `voxel_set`, `voxel_set_many`, `voxel_shape`, `voxel_mirror`, `material_set`, `texture_import`, `texture_generate`, `rig_bone_add`, `rig_clear`*, `rig_bind`, `anim3d_create`, `anim3d_key`, `anim3d_generate`, `voxel_render` (PNG), `voxel_render_sheet` (PNG), `voxel_render_to_frames`, `voxel_pick` |
-| Oyun üretimi | `layer_blend`, `slice_set`, `slice_delete`, `palette_swap`, `rotsprite`, `tileset_create`, `tileset_add_tiles`, `tileset_generate_blob`, `tileset_delete`*, `tilemap_create`, `tilemap_delete`*, `tilemap_set`, `tilemap_terrain`, `tilemap_bake`, `tilemap_render` (PNG), `export_tileset` (PNG), `render_lit` (PNG), `export_atlas`, `export_godot_spriteframes`, `export_tiled`, `gamedev_inspect` — bkz. [Oyun üretimi](#9-oyun-üretimi) |
-| Proje | `image_import`, `project_inspect`, `project_save`, `project_export` (png/gif/spritesheet/atlas/godot/tiled/normal_map), `project_new`*, `project_rename`, `history_undo`, `history_redo`, `history_list`, `transaction` |
+| Piksel art | `draw_ascii`, `outline` (selective/selout/solid), `auto_shade`, `gradient_map`, `draw_sparkle`, `pixel_cleanup`, `color_ramp`, `quantize`, `dither_fill` |
+| 3D Voxel | `voxel_model_create`, `voxel_model_clone`, `voxel_model_delete`*, `voxel_model_set`, `voxel_inspect`, `voxel_set`, `voxel_set_many`, `voxel_shape`, `voxel_mirror`, `material_set`, `texture_import`, `texture_generate`, `rig_bone_add`, `rig_clear`*, `rig_bind`, `anim3d_create`, `anim3d_key`, `anim3d_generate`, `voxel_render` (PNG), `voxel_render_sheet` (PNG), `voxel_render_to_frames`, `voxel_pick` |
+| Oyun üretimi | `slice_set`, `slice_delete`, `palette_swap`, `tileset_create`, `tileset_add_tiles`, `tileset_generate_blob`, `tileset_delete`*, `tilemap_create`, `tilemap_delete`*, `tilemap_set`, `tilemap_terrain`, `tilemap_bake`, `tilemap_render` (PNG), `render_lit` (PNG) — bkz. [Oyun üretimi](#9-oyun-üretimi) |
+| Proje | `image_import` (ızgara kurtarma, arka plan, rampa, referans katmanı), `project_save`, `project_export` (png/gif/spritesheet/atlas/godot/tiled/tileset/normal_map), `project_new`*, `project_rename`, `history_undo`, `history_redo`, `history_list`, `transaction` |
 
 `*` işaretli araçlar insan onayı ister. Değişiklik yapan her araç isteğe bağlı `expectedRevision` ve `operationId` parametrelerini kabul eder.
 
@@ -354,7 +370,7 @@ Taban adres: `http://127.0.0.1:38471/api/v1`. Tüm istekler `Authorization: Bear
 | Metot ve yol | İşlev |
 | --- | --- |
 | `GET /status` | Motor durumu, revizyon, işlem listesi, gateway bilgisi |
-| `GET /project` | `project_inspect` |
+| `GET /project` | `canvas_inspect detail=full` |
 | `GET /canvas` | `canvas_inspect` |
 | `GET /frame/{i}` | Kare bilgisi |
 | `GET /frame/{i}/pixels?x=&y=&width=&height=&format=ascii\|hex\|indexed` | Piksel okuma |
@@ -391,7 +407,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 ### Tuval ve renk
 
 - Tuval **gerçek renklidir** (RGBA8). Palet, renk örneği listesidir; `palette_set` eski rengi kullanan tüm pikselleri yeniden renklendirir (palet takası).
-- **Palet kütüphanesi** (`palette_list`, `palette_load`): ENDESGA 32/64, Resurrect 64, Sweetie 16, Apollo, AAP-64, Na16, SLSO8, PICO-8, Lospec500, Vinik24, TwilioQuest 76. Kaynak [Lospec](https://lospec.com/palette-list); yazarları `palette_list` çıktısında listelenir.
+- **Palet kütüphanesi** (`canvas_inspect detail=palette`, `palette_set preset=…`): ENDESGA 32/64, Resurrect 64, Sweetie 16, Apollo, AAP-64, Na16, SLSO8, PICO-8, Lospec500, Vinik24, TwilioQuest 76. Kaynak [Lospec](https://lospec.com/palette-list); yazarları `canvas_inspect detail=palette` çıktısında listelenir.
 
 ### Usta piksel artistin araçları
 
@@ -402,7 +418,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 | `outline` | 1 px dış çizgi: sabit renk veya *selective outline* (komşu rengin koyu ve soğuk tonu) |
 | `quantize` | Median cut ya da kütüphane paleti + Bayer dither. Bütün animasyon için tek palet kullanılır |
 | `dither_fill` | İki renkli sıralı dither (16 yoğunluk seviyesi) |
-| `export_normal_map` | Sprite'tan normal map üretir (Godot, Unity ve Unreal Paper2D'de 2D dinamik ışık için) |
+| `project_export format=normal_map` | Sprite'tan normal map üretir (Godot, Unity ve Unreal Paper2D'de 2D dinamik ışık için) |
 | 3D → piksel | `voxel_render*` + `pixel_palette` / `dither`: 3D render'ları piksel art'a dönüştürür (bkz. aşağıdaki karşılaştırma) |
 
 ![3D → piksel art](Assets/Gallery/knight_pixelart_post.png)
@@ -560,21 +576,21 @@ Araştırdığımız 2026 dönemi iş akışları ve araçlar:
 
 | Araç | Ne yapar |
 | --- | --- |
-| `layer_blend` | Katman karışım modu: normal, multiply (gölge, AO), screen/add (parıltı, ateş ışığı, büyü), overlay/soft_light (renk düzeltme), darken, lighten |
+| `layer_set blend=…` | Katman karışım modu: normal, multiply (gölge, AO), screen/add (parıltı, ateş ışığı, büyü), overlay/soft_light (renk düzeltme), darken, lighten |
 | `slice_set` / `slice_delete` | Kareye özel adlandırılmış dikdörtgenler: hitbox, hurtbox, pivot, silah bağlama noktası. `frame` verilmeyen anahtar tüm animasyonda geçerlidir; sonraki anahtarlar kendi karesinden itibaren onu geçersiz kılar. Kare silinirse anahtar bir sonraki kareye taşınır |
 | `palette_swap` | RGB eşleşmesiyle renk değiştirme, alfa korunur. Takım renkleri, düşman varyantları, gündüz/gece paletleri, hasar flaşı için. Kapsam: cel, katman, kare ya da tümü |
-| `rotsprite` | RotSprite döndürme (Scale2x ×3 = 8× büyütme, en yakın komşu, geri örnekleme). Çizgiler kırılmaz, bulanıklık ya da yeni renk oluşmaz |
+| `rotate` | 90/180/270 dışındaki açılarda RotSprite döndürme (Scale2x ×3 = 8× büyütme, en yakın komşu, geri örnekleme). Çizgiler kırılmaz, bulanıklık ya da yeni renk oluşmaz |
 | `tileset_create` / `tileset_add_tiles` | Tuvalden ızgara halinde tile keser. Aynı ve boş tile'lar atlanır |
 | `tileset_generate_blob` | Tek bir dikişsiz dolgudan (tuval bölgesi ya da prosedürel renk + vurgu kümeleri) eksiksiz **47'lik blob autotile** seti üretir: aydınlık üst kenar, gölgeli yanlar, seçici outline, yuvarlak köşeler, isteğe bağlı uçurum dudağı (gölge + katman çizgileri) |
 | `tilemap_create` / `tilemap_set` | Tile hücre ızgarası. Hücreler `[[x, y, tile], …]` ya da satır metni (`"0 1 1 2"`) olarak verilir |
 | `tilemap_terrain` | ASCII arazi boyama (`#` arazi, `.` boş). Her hücre için kenar, iç köşe ve dış köşe otomatik seçilir. Harita kenarı arazi sayılır, böylece dolgular sınıra temiz biçimde ulaşır |
 | `tilemap_bake` / `tilemap_render` | Haritayı bir katmana çizer (sahneyle birlikte birleşir, ışıklanır, dışa aktarılır) ya da PNG olarak gösterir |
 | `render_lit` | Normal map'li 2D nokta ışıklar. Normaller çizimden üretilir ya da elle boyanmış bir normal katmanından alınır. `unlit_layers` (ateş, parlayan gözler) tam parlak kalır. `bands` ışığı keskin piksel basamaklarına böler |
-| `export_atlas` | Kırpılmış, tekilleştirilmiş MaxRects atlas + Aseprite uyumlu JSON (`frames`, `frameTags`, `layers`, `slices`). Phaser, PixiJS, Unity ve Godot içe aktarıcıları okur |
-| `export_godot_spriteframes` | Godot 4 `SpriteFrames` .tres dosyası. Her etiket için bir animasyon oluşur, kırpılan kareler `AtlasTexture` margin'leriyle geri kurulur, kare süreleri korunur |
-| `export_tiled` | Tiled TMJ haritası: gömülü tileset ve blob setler için **Wang arazi seti** (harita Tiled'ın arazi fırçasıyla düzenlenmeye devam edebilir) + tileset PNG'si |
-| `export_tileset` | Tileset atlas PNG'si. Blob setler için mask sırası da döner |
-| `gamedev_inspect` | Slice'lar, tileset'ler, tilemap'ler (ASCII arazi önizlemesiyle) ve katman karışım modları |
+| `project_export format=atlas` | Kırpılmış, tekilleştirilmiş MaxRects atlas + Aseprite uyumlu JSON (`frames`, `frameTags`, `layers`, `slices`). Phaser, PixiJS, Unity ve Godot içe aktarıcıları okur |
+| `project_export format=godot` | Godot 4 `SpriteFrames` .tres dosyası. Her etiket için bir animasyon oluşur, kırpılan kareler `AtlasTexture` margin'leriyle geri kurulur, kare süreleri korunur |
+| `project_export format=tiled` | Tiled TMJ haritası: gömülü tileset ve blob setler için **Wang arazi seti** (harita Tiled'ın arazi fırçasıyla düzenlenmeye devam edebilir) + tileset PNG'si |
+| `project_export format=tileset` | Tileset atlas PNG'si. Blob setler için mask sırası da döner |
+| `canvas_inspect detail=gamedev` | Slice'lar, tileset'ler, tilemap'ler (ASCII arazi önizlemesiyle) ve katman karışım modları |
 
 `project_export` dosyaları doğrudan çalışma alanına yazar: `format=atlas` (`.png` + `.json`), `godot` (`.png` + `.tres`), `tiled` (`_tileset.png` + `.tmj`), `normal_map`.
 
@@ -585,10 +601,10 @@ Araştırdığımız 2026 dönemi iş akışları ve araçlar:
 {"op":"tilemap_create","name":"level","tileset":"plateau","columns":20,"rows":12}
 {"op":"tilemap_terrain","tilemap":"level","rows":["####################","######..........###.","...................."]}
 {"op":"tilemap_bake","tilemap":"level","layer":"Ground"}
-{"op":"layer_blend","layer":"Shadows","mode":"multiply"}
+{"op":"layer_set","layer":"Shadows","blend":"multiply"}
 {"op":"slice_set","name":"hurtbox","x":118,"y":104,"width":16,"height":40,"pivot":[8,40]}
 {"op":"render_lit","lights":[{"x":168,"y":118,"color":"#FFB060","intensity":3.3,"radius":160}],"ambient":"#3E4A7C","bands":5,"unlit_layers":["Fire"]}
-{"op":"export_tiled","tilemap":"level"}
+{"op":"export","format":"tiled","tilemap":"level"}
 ```
 
 ### Örnek çıktılar
@@ -652,7 +668,7 @@ Soru: Pixel Studio ile ev, karakter, eşya, ağaç ve efekt gibi herhangi bir pi
 | Yol | Ne kullanır |
 | --- | --- |
 | **A** ham | Yalnızca düz şekiller (dikdörtgen, elips, poligon). Sıradan bir ajanın ilk denemesi |
-| **B** zanaat | Aynı şekiller + `pattern_fill`, `auto_shade`, `outline mode=selout`, `draw_sparkle`, `dither_fill`, `layer_blend`, `quantize` (palet kilidi) |
+| **B** zanaat | Aynı şekiller + `pattern_fill`, `auto_shade`, `outline mode=selout`, `draw_sparkle`, `dither_fill`, `layer_set blend`, `quantize` (palet kilidi) |
 | **C** voxel | 3D voxel model → `voxel_render_to_frames` (piksel paleti + outline) |
 | **G** üretici | Tek `fx_generate` çağrısı (animasyonlu efektler) |
 
@@ -843,7 +859,7 @@ Ayrıca parçacık döngüsünü ve 8 hareket türünü doğrular: kare 0 orijin
 - **Gecikmeli hareket (follow-through):**
   - Atkı ve tüylük Verlet zinciriyle gövdenin gerisinden gelir; rüzgâr animasyonun hızına göre ayarlanır.
   - Döngülerde fizik iki tur önceden çalıştırılır, böylece kaydedilen tur dikişsiz kapanır.
-- **Motorun bitirme adımları:** `auto_shade` (üstteki katmanların gölgesiyle), `outline mode=selout`, gölge katmanı için `layer_blend multiply`.
+- **Motorun bitirme adımları:** `auto_shade` (üstteki katmanların gölgesiyle), `outline mode=selout`, gölge katmanı için `layer_set blend=multiply`.
 - **Efektler:**
   - Savuruşlarda 3 renkli smear yayı.
   - Ağır vuruşta `fx_generate shockwave`, blokta `fx_generate hit` kıvılcımı.
@@ -910,4 +926,49 @@ Bram'ın kalitesi neden internetteki iyi piksel sanatının gerisinde kalıyor? 
 - **Elle çizim (Kade):** Kalite getiriyor ama zaman alıyor.
 
 En iyi sonuç ikisini birleştirmekten gelir: anahtar pozları ve karakteri elle çizmek, ara işleri araçlara bırakmak (ara kareler, varyantlar, efektler, dışa aktarma).
+
+## 16. 128×128 özgün karakter: Sela
+
+Hedef, referans görsellerdeki kaliteye motorun kendi araçlarıyla ulaşmaktı: ~100 px boyunda, 3/4 duruşlu, rampalarla gölgelenmiş, tek koyu dış konturlu bir karakter. Referanslardan yalnızca **teknik** incelendi; Sela özgün bir tasarım (gezgin bir haritacı: mor-siyah at kuyruğu, hardal atkı, lacivert tunik, deri kemer, çanta ve çizmeler).
+
+### Referansın piksel piksel incelemesi
+
+- Görsel aslında **127×127** piksel; 3,35× tam sayı olmayan bir oranla büyütülmüş. "Her piksel aynı boyda değil" görüntüsü buradan geliyor. `image_import grid=auto` bu ızgarayı geri buluyor (testte 3,35× büyütülmüş 20×14 görüntü piksel piksel geri kuruldu).
+- 35 renk; her malzemenin 3–5 tonluk kendi rampası var (ten, pelerin, gri üst, saç, deri).
+- Dış kontur büyük ölçüde tek bir koyu lacivert (`#060715`). İç ayrımlar konturla değil, koyu tonla yapılıyor.
+- Renk kümeleri küçük (medyan 2 piksel). Tek piksel oranı %5: gürültü yok, her nokta bilinçli.
+
+### Motorda eklenenler
+
+| Gereksinim | Araç |
+| --- | --- |
+| Malzeme rampaları (palet disiplini) | `ramp_set`, `color_ramp name=…`, `.pxs` içinde `RAMP` bloğu |
+| Elle gölge: rengi rampasında bir ton kaydırmak | `shade steps=±n` (yeni renk üretmez) |
+| Otomatik gölgede palet kilidi | `auto_shade palette_lock` (rampa varsa varsayılan) |
+| Farklı boyda pikseller | `layer_set density=2\|4`: katman yarım/çeyrek piksellerle çalışır, render en ince yoğunlukta birleşir |
+| Temiz serbest çizgi | `draw_stroke` (L köşe çiftleri otomatik silinir) |
+| Referans çalışma | `image_import grid=auto ramps=true reference=true` |
+
+### Süreç
+
+![Sela süreç](Assets/Gallery/sela_process.png)
+
+1. **Bloklama:** Uzuvlar konik kapsüllerle (`draw_polygon`), her malzeme kendi katmanında düz taban rengiyle.
+2. **Işık:** Sol üstten ışık. Her malzeme bölgesi tek bir form olarak aydınlatılır ve `shade` fırçasıyla yalnızca kendi rampasında ton kaydırılır. Saç alnına ve boyna, atkı göğse, etek bacaklara gölge düşürür. Uzak bacak ve kol bir ton daha koyudur (değer planı).
+3. **Bitiriş:** Kumaş kıvrımları ve saç telleri `draw_stroke` ile rampa tonlarında çizilir. Siluete tek renk koyu kontur eklenir. Saç bağı ve küpe parıltısı `density=2` katmanında yarım piksellerle işlenir.
+
+![Sela](Assets/Gallery/sela_x4.png)
+
+Üretici: `python3 Assets/Sprites.py sela` (163 motor komutu) → `run_script Assets/Build/sela_showcase.jsonl out/`.
+
+### Ölçüm
+
+| | Referans (127×127) | Sela (128×128) |
+| --- | --- | --- |
+| Renk | 35 | 33 |
+| Baskın dış kontur | `#060715`, kenarın %64'ü | `#0A0912`, kenarın %84'ü |
+| Renk kümesi medyanı | 2 px | 2 px |
+| Tek piksel oranı | %5,0 | %4,4 |
+
+Sela, Bram'daki (bölüm 15) 134 renklik bulanıklığa düşmeden, referansın palet disiplini ve küme yapısıyla aynı bantta kalıyor. Bu sonucu belirleyen, otomatik gölge yerine rampa üzerinde **elle yerleştirilen** tonlar ve tek renkli kontur oldu.
 
