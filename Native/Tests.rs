@@ -762,6 +762,194 @@ mod engine {
     }
 }
 
+mod artkit_tools {
+    use crate::commands::json::Json;
+    use crate::engine::Engine;
+
+    fn run(e: &mut Engine, req: &str) -> Json {
+        Json::parse(&e.execute(req.as_bytes(), &[]).json).unwrap()
+    }
+
+    fn ok(e: &mut Engine, req: &str) -> Json {
+        let j = run(e, req);
+        assert_eq!(j.get("ok"), Some(&Json::Bool(true)), "request {req} failed: {}", j.to_json_string());
+        j.get("result").unwrap().clone()
+    }
+
+    fn num(j: &Json, k: &str) -> f64 {
+        j.get(k).and_then(Json::as_f64).unwrap_or_else(|| panic!("no number '{k}' in {}", j.to_json_string()))
+    }
+
+    fn codes(review: &Json) -> Vec<String> {
+        review.get("issues").unwrap().as_array().unwrap().iter().map(|i| i.get("code").unwrap().as_str().unwrap().to_string()).collect()
+    }
+
+    const BALL: &str = r##"{"op":"ramp_set","name":"red","colors":["#3A0E14","#6E1A22","#A8303A","#D8624E","#F5A27C"]}"##;
+
+    #[test]
+    fn critic_tells_pillow_shading_from_form_lighting() {
+        // Pillow: concentric rings that follow the outline.
+        let mut e = Engine::new(40, 40);
+        ok(&mut e, BALL);
+        for (i, c) in ["#3A0E14", "#6E1A22", "#A8303A", "#D8624E", "#F5A27C"].iter().enumerate() {
+            let r = 16 - i as i64 * 3;
+            ok(
+                &mut e,
+                &format!(
+                    r#"{{"op":"draw_ellipse","x":{},"y":{},"width":{},"height":{},"color":"{c}","filled":true}}"#,
+                    20 - r,
+                    20 - r,
+                    2 * r,
+                    2 * r
+                ),
+            );
+        }
+        let pillow = ok(&mut e, r#"{"op":"art_review"}"#);
+        assert!(codes(&pillow).contains(&"pillow_shading".to_string()), "{}", pillow.to_json_string());
+        // Same ball, lit by its surface normals from the top-left.
+        let mut e = Engine::new(40, 40);
+        ok(&mut e, BALL);
+        ok(&mut e, r##"{"op":"draw_ellipse","x":4,"y":4,"width":32,"height":32,"color":"#A8303A","filled":true}"##);
+        let lit = ok(&mut e, r#"{"op":"shade_form","form":"sphere","cx":20,"cy":20,"rx":16,"shadow_steps":2,"light_steps":2}"#);
+        assert!(num(&lit, "changed") > 300.0);
+        let review = ok(&mut e, r#"{"op":"art_review"}"#);
+        assert!(!codes(&review).contains(&"pillow_shading".to_string()), "{}", review.to_json_string());
+        // The lit side really is up-left: compare two pixels.
+        let px = |e: &mut Engine, x: i32, y: i32| {
+            let r = ok(e, &format!(r#"{{"op":"get_pixel","x":{x},"y":{y}}}"#));
+            r.get("color").unwrap().as_str().unwrap().to_string()
+        };
+        let (light, dark) = (px(&mut e, 12, 12), px(&mut e, 30, 30));
+        assert_ne!(light, dark);
+        assert!(["#D8624E", "#F5A27C"].contains(&light.as_str()), "{light}");
+        assert!(["#3A0E14", "#6E1A22"].contains(&dark.as_str()), "{dark}");
+        // Inflate works on any silhouette and only uses ramp colours.
+        ok(&mut e, r##"{"op":"draw_polygon","points":[[2,2],[14,3],[10,14],[3,12]],"color":"#A8303A"}"##);
+        ok(&mut e, r#"{"op":"shade_form","x":0,"y":0,"width":16,"height":16}"#);
+    }
+
+    #[test]
+    fn critic_measures_values_banding_and_returns_a_marked_png() {
+        let mut e = Engine::new(32, 32);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":0,"y":0,"width":32,"height":32,"color":"#202830","filled":true}"##);
+        // Flat, muddy figure with stacked equal runs (banding).
+        for (i, c) in ["#3A3F4A", "#454A55", "#50555F", "#3A3F4A"].iter().enumerate() {
+            ok(&mut e, &format!(r#"{{"op":"draw_rectangle","x":8,"y":{},"width":10,"height":1,"color":"{c}","filled":true}}"#, 8 + i));
+        }
+        ok(&mut e, r##"{"op":"draw_rectangle","x":8,"y":12,"width":10,"height":10,"color":"#454A55","filled":true}"##);
+        let r = e.execute(br#"{"op":"art_review","scale":2}"#, &[]);
+        let j = Json::parse(&r.json).unwrap();
+        let res = j.get("result").unwrap();
+        assert!(num(res.get("banding").unwrap(), "pairs") >= 3.0, "{}", r.json);
+        let c = codes(res);
+        assert!(c.contains(&"low_value_contrast".to_string()) && c.contains(&"figure_blends_into_background".to_string()), "{c:?}");
+        assert_eq!(&r.binary[1..4], b"PNG");
+        // fix_banding lowers the error.
+        let fixed = ok(&mut e, r#"{"op":"fix_banding"}"#);
+        assert!(num(&fixed, "after") < num(&fixed, "before"), "{}", fixed.to_json_string());
+    }
+
+    #[test]
+    fn curves_are_smooth_tapered_and_fillable() {
+        let mut e = Engine::new(64, 64);
+        let thin = ok(&mut e, r##"{"op":"draw_path","points":[[4,40],[16,20],[34,12],[56,16]],"color":"#000000"}"##);
+        assert!(num(&thin, "changed") > 40.0);
+        // The 1-px curve is pixel-perfect: no pixel has 3+ path neighbours in an L.
+        let review = ok(&mut e, r#"{"op":"art_review"}"#);
+        assert_eq!(num(&review, "jaggies"), 0.0, "{}", review.to_json_string());
+        let mut t = Engine::new(64, 64);
+        let taper = ok(&mut t, r##"{"op":"draw_path","points":[[6,56],[20,30],[40,12]],"width":[6,1],"color":"#000000"}"##);
+        assert!(num(&taper, "changed") > num(&thin, "changed"));
+        let mut f = Engine::new(64, 64);
+        let blob =
+            ok(&mut f, r##"{"op":"draw_path","points":[[32,8],[54,30],[32,56],[10,30]],"closed":true,"filled":true,"color":"#336699"}"##);
+        assert!(num(&blob, "changed") > 900.0, "{}", blob.to_json_string());
+        let mut b = Engine::new(64, 64);
+        ok(&mut b, r##"{"op":"draw_path","curve":"bezier","points":[[4,60],[4,4],[60,4],[60,60]],"color":"#000000"}"##);
+        let bad = run(&mut b, r##"{"op":"draw_path","curve":"bezier","points":[[4,60],[4,4],[60,4]],"color":"#000000"}"##);
+        assert_eq!(bad.get("ok"), Some(&Json::Bool(false)));
+    }
+
+    #[test]
+    fn monotone_runs_remove_jaggies() {
+        // Runs 3,1,4,1,3 on a gentle curve become monotone, endpoints kept.
+        let mut path = vec![(0i64, 0i64)];
+        let mut p = (0i64, 0i64);
+        for (k, run) in [3, 3, 1, 4, 1, 3, 4, 4].iter().enumerate() {
+            for s in 0..*run {
+                if k == 0 && s == 0 {
+                    continue;
+                }
+                p = if s == 0 { (p.0 + 1, p.1 + 1) } else { (p.0 + 1, p.1) };
+                path.push(p);
+            }
+        }
+        let (out, fixed) = crate::commands::artkit::smooth_runs(&path);
+        assert_eq!(fixed, 1);
+        assert_eq!(out.first(), path.first());
+        assert_eq!(out.last(), path.last());
+        let mut runs = vec![1];
+        for w in out.windows(2) {
+            if w[1].1 == w[0].1 { *runs.last_mut().unwrap() += 1 } else { runs.push(1) }
+        }
+        let inner = &runs[1..runs.len() - 1];
+        assert!(inner.windows(2).all(|w| w[1] >= w[0]), "{runs:?}");
+    }
+
+    #[test]
+    fn selective_antialias_softens_steps_inside_only() {
+        let mut e = Engine::new(32, 16);
+        ok(&mut e, r##"{"op":"ramp_set","name":"blue","colors":["#101830","#283C70","#4A6AB0","#86A8E0"]}"##);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":0,"y":0,"width":32,"height":16,"color":"#86A8E0","filled":true}"##);
+        // A shallow staircase (runs of 4) in the darkest tone.
+        for k in 0..6 {
+            ok(
+                &mut e,
+                &format!(r##"{{"op":"draw_rectangle","x":{},"y":{},"width":4,"height":1,"color":"#101830","filled":true}}"##, k * 4, 2 + k),
+            );
+        }
+        let aa = ok(&mut e, r#"{"op":"antialias","amount":0.5}"#);
+        assert!(num(&aa, "changed") >= 8.0, "{}", aa.to_json_string());
+        let mid = ok(&mut e, r#"{"op":"get_pixel","x":4,"y":2}"#);
+        assert_eq!(mid.get("color").unwrap().as_str(), Some("#4A6AB0"), "the in-between ramp tone");
+        // 45° lines and transparent edges are left alone.
+        let mut d = Engine::new(16, 16);
+        ok(&mut d, r##"{"op":"draw_rectangle","x":0,"y":0,"width":16,"height":16,"color":"#FFFFFF","filled":true}"##);
+        ok(&mut d, r##"{"op":"draw_line","x0":0,"y0":0,"x1":15,"y1":15,"color":"#000000"}"##);
+        assert_eq!(num(&ok(&mut d, r#"{"op":"antialias","allow_new_colors":true}"#), "changed"), 0.0);
+        let mut t = Engine::new(16, 8);
+        ok(&mut t, r##"{"op":"draw_rectangle","x":0,"y":3,"width":5,"height":1,"color":"#000000","filled":true}"##);
+        ok(&mut t, r##"{"op":"draw_rectangle","x":5,"y":4,"width":5,"height":1,"color":"#000000","filled":true}"##);
+        assert_eq!(num(&ok(&mut t, r#"{"op":"antialias","allow_new_colors":true}"#), "changed"), 0.0);
+    }
+
+    #[test]
+    fn mannequin_is_posed_lit_and_reports_joints() {
+        let mut e = Engine::new(128, 128);
+        let warn = ok(&mut e, r##"{"op":"ramp_set","name":"flat","colors":["#606060","#686868","#707070"]}"##);
+        assert_eq!(warn.get("warnings").unwrap().as_array().unwrap().len(), 1, "narrow ramps are flagged");
+        assert!(run(&mut e, r#"{"op":"draw_figure","x":64,"y":120}"#).get("ok") == Some(&Json::Bool(false)), "needs a skin ramp");
+        ok(&mut e, r##"{"op":"ramp_set","name":"skin","colors":["#5A2F2A","#8A4B3A","#B8714F","#DDA078","#F4CDA6","#FFE9CF"]}"##);
+        for pose in ["contrapposto", "walk", "stand"] {
+            let r = ok(&mut e, &format!(r#"{{"op":"draw_figure","x":64,"y":120,"height":100,"pose":"{pose}","name":"{pose}"}}"#));
+            let j = r.get("joints").unwrap();
+            let head = j.get("head").unwrap().as_array().unwrap()[1].as_f64().unwrap();
+            let ankle = j.get("ankleNear").unwrap().as_array().unwrap()[1].as_f64().unwrap();
+            assert!(head < 35.0 && ankle > 110.0, "{}", r.to_json_string());
+            assert!(num(&r, "changed") > 600.0);
+        }
+        let skin = ["#5A2F2A", "#8A4B3A", "#B8714F", "#DDA078", "#F4CDA6", "#FFE9CF"];
+        let img = e.execute(br#"{"op":"render_frame","layer":"walk"}"#, &[]).binary;
+        let mut seen = std::collections::HashSet::new();
+        for p in img.chunks(4).filter(|p| p[3] > 0) {
+            let hex = format!("#{:02X}{:02X}{:02X}", p[0], p[1], p[2]);
+            assert!(skin.contains(&hex.as_str()), "invented colour {hex}");
+            seen.insert(hex);
+        }
+        assert!(seen.len() >= 3, "form lighting uses several tones: {seen:?}");
+    }
+}
+
 mod export_deflate {
     #[allow(unused_imports)]
     use crate::export::deflate::*;

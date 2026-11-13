@@ -251,6 +251,11 @@ pub mod commands {
                 Json::Num(v)
             }
         }
+        impl From<f32> for Json {
+            fn from(v: f32) -> Self {
+                Json::Num(v as f64)
+            }
+        }
         macro_rules! from_int {
     ($($t:ty),*) => {$(
         impl From<$t> for Json {
@@ -678,6 +683,10 @@ pub mod commands {
             }
         }
 
+        pub fn req_f64(a: &Json, key: &str) -> CmdResult<f64> {
+            opt_f64(a, key)?.ok_or_else(|| CmdError::invalid(format!("missing required number '{key}'")))
+        }
+
         /// Optional x/y/width/height; defaults to the whole canvas.
         pub fn region(doc: &Document, a: &Json) -> CmdResult<Region> {
             let x = opt_i64(a, "x")?.unwrap_or(0);
@@ -749,11 +758,30 @@ pub mod commands {
             for c in &colors {
                 let _ = doc.palette.intern(Rgba::from_u32(*c));
             }
+            // Value check: a ramp is only useful if it spans real light and dark.
+            let ls: Vec<f32> = colors.iter().map(|c| super::artkit::lightness(*c)).collect();
+            let mut warnings = Vec::new();
+            if ls.windows(2).any(|w| w[1] < w[0]) {
+                warnings.push(Json::from("tones are not ordered dark → light"));
+            }
+            let span = ls.iter().copied().fold(f32::MIN, f32::max) - ls.iter().copied().fold(f32::MAX, f32::min);
+            if span < 40.0 && colors.len() >= 3 {
+                warnings.push(Json::from(format!(
+                    "value span is only {span:.0} L: shading will read flat (aim for 45+: darkest ≤ 30, lightest ≥ 75)"
+                )));
+            }
             match doc.ramps.iter_mut().find(|r| r.name == name) {
                 Some(r) => r.colors = colors,
                 None => doc.ramps.push(Ramp { name: name.clone(), colors }),
             }
-            Ok(Outcome::new(Json::obj().with("ramp", name).with("ramps", doc.ramps.len()), 0))
+            Ok(Outcome::new(
+                Json::obj()
+                    .with("ramp", name)
+                    .with("ramps", doc.ramps.len())
+                    .with("lightness", Json::Arr(ls.iter().map(|l| Json::from(l.round())).collect()))
+                    .with("warnings", Json::Arr(warnings)),
+                0,
+            ))
         }
 
         pub fn ramp_delete(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -1192,6 +1220,1669 @@ pub mod commands {
                     .with("colors", colors.len())
                     .with("ramps", Json::Arr(made))
                     .with("layer", layer_name)
+                    .with("changed", changed),
+                changed,
+            ))
+        }
+    }
+
+    pub mod artkit {
+        //! Quality tooling for hand-made-looking pixel art, built from current pixel-art research:
+        //!
+        //! * `art_review` — an objective critic: value (light/dark) structure, silhouette contrast,
+        //!   banding pairs (Pixel Fixer, TU Delft 2025: same-length adjacent segments of different
+        //!   colours with aligned endpoints, error Eb), pillow shading (lighter-half centroid ≈ shape
+        //!   centroid and lightness rising with distance from the edge), 1-px stripes, orphans and
+        //!   silhouette jaggies (mixed short/long runs on a curve).
+        //! * `fix_banding` — Pixel Fixer's automatic correction (shrink a segment end, iterate while
+        //!   the error falls), choosing replacement tones from the material ramps.
+        //! * `shade_form` — heavily quantised Lambert lighting from real surface normals (sphere,
+        //!   tapered capsule or an "inflated" height field of any shape) instead of edge-distance
+        //!   bevels, which is what produces pillow shading. Adds reflected light on the shadow side.
+        //! * `draw_path` — smooth curves (Catmull-Rom through points or cubic Bézier), tapered
+        //!   strokes and filled curved shapes; 1-px paths are pixel-perfect and their run lengths
+        //!   are made monotone so curves have no jaggies.
+        //! * `antialias` — selective, interior-only anti-aliasing of stair-steps: longer runs get
+        //!   longer AA, 45° steps and transparent edges are never touched.
+        //! * `draw_figure` — a proportioned, posed, form-shaded body mannequin (contrapposto, walk,
+        //!   stand; 2-9 heads tall) with its joints returned for clothing.
+
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        use super::args::{color, frame_index, layer_index, opt_bool, opt_f64, opt_i64, opt_str, req_i64, target};
+        use super::json::Json;
+        use super::{CmdError, CmdResult, Outcome, Query};
+        use crate::pixel::{PixelGrid, Rgba, TRANSPARENT};
+        use crate::project::Document;
+        use crate::renderer::{Image, RenderOptions, render};
+
+        // ---- colour helpers ---------------------------------------------------------------------
+
+        /// Perceived lightness 0-100 (OKLab L).
+        pub fn lightness(v: u32) -> f32 {
+            crate::pixelart::oklab(Rgba::from_u32(v | 0xFF))[0] * 100.0
+        }
+
+        /// A tone between `a` and `b` that already exists: the middle ramp step when both share a
+        /// ramp, else the closest document colour to the perceptual midpoint (or a new one).
+        fn between(doc: &Document, ramps: &HashMap<u32, (usize, usize)>, a: u32, b: u32, allow_new: bool) -> Option<u32> {
+            if let (Some(&(ra, ia)), Some(&(rb, ib))) = (ramps.get(&(a | 0xFF)), ramps.get(&(b | 0xFF)))
+                && ra == rb
+            {
+                if ia.abs_diff(ib) >= 2 {
+                    // Lean toward `b` (the fill / the neighbour being blended into).
+                    let mid = if ib > ia { (ia + ib).div_ceil(2) } else { (ia + ib) / 2 };
+                    return Some(doc.ramps[ra].colors[mid]);
+                }
+                return None;
+            }
+            let (la, lb) = (crate::pixelart::oklab(Rgba::from_u32(a | 0xFF)), crate::pixelart::oklab(Rgba::from_u32(b | 0xFF)));
+            let mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0, (la[2] + lb[2]) / 2.0];
+            let mut cands: Vec<u32> = doc.ramps.iter().flat_map(|r| r.colors.iter().copied()).collect();
+            cands.extend(doc.palette.colors().iter().skip(1).filter(|c| c.a == 255).map(|c| c.to_pixel()));
+            let dist = |v: u32| {
+                let o = crate::pixelart::oklab(Rgba::from_u32(v | 0xFF));
+                ((o[0] - mid[0]).powi(2) + (o[1] - mid[1]).powi(2) + (o[2] - mid[2]).powi(2)).sqrt()
+            };
+            let (lo, hi) = (la[0].min(lb[0]), la[0].max(lb[0]));
+            let best = cands
+                .into_iter()
+                .filter(|&v| v | 0xFF != a | 0xFF && v | 0xFF != b | 0xFF)
+                .filter(|&v| {
+                    let l = crate::pixelart::oklab(Rgba::from_u32(v | 0xFF))[0];
+                    l > lo + 0.01 && l < hi - 0.01
+                })
+                .map(|v| (v, dist(v)))
+                .min_by(|x, y| x.1.total_cmp(&y.1));
+            match best {
+                Some((v, d)) if d < 0.05 => Some(v | 0xFF),
+                _ if allow_new => {
+                    let (c, h) = (mid[1].hypot(mid[2]), mid[2].atan2(mid[1]).to_degrees().rem_euclid(360.0));
+                    Some(crate::pixelart::from_lch(mid[0], c, h, 255).to_pixel())
+                }
+                _ => None,
+            }
+        }
+
+        // ---- a plain pixel buffer ---------------------------------------------------------------
+
+        #[derive(Clone)]
+        pub struct Px {
+            pub w: i64,
+            pub h: i64,
+            pub d: Vec<u32>,
+        }
+
+        impl Px {
+            pub fn from_grid(g: &PixelGrid) -> Px {
+                let (w, h) = (g.width() as i64, g.height() as i64);
+                let mut d = vec![0u32; (w * h) as usize];
+                for y in 0..h {
+                    for x in 0..w {
+                        d[(y * w + x) as usize] = g.get(x, y);
+                    }
+                }
+                Px { w, h, d }
+            }
+
+            pub fn from_image(img: &Image) -> Px {
+                let (w, h) = (img.width as i64, img.height as i64);
+                let d = img.pixels.as_chunks::<4>().0.iter().map(|p| Rgba::new(p[0], p[1], p[2], p[3]).to_pixel()).collect();
+                Px { w, h, d }
+            }
+
+            pub fn get(&self, x: i64, y: i64) -> u32 {
+                if x < 0 || y < 0 || x >= self.w || y >= self.h { TRANSPARENT } else { self.d[(y * self.w + x) as usize] }
+            }
+        }
+
+        // ---- geometry ---------------------------------------------------------------------------
+
+        type Pt = (f64, f64);
+
+        fn json_points(a: &Json, key: &str, min: usize) -> CmdResult<Vec<Pt>> {
+            match a.get(key).and_then(Json::as_array) {
+                Some(list) if list.len() >= min && list.len() <= 4096 => list
+                    .iter()
+                    .map(|p| match p.as_array() {
+                        Some([x, y, ..]) => Ok((x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0))),
+                        _ => Err(CmdError::invalid(format!("'{key}' must be [[x, y], …]"))),
+                    })
+                    .collect(),
+                _ => Err(CmdError::invalid(format!("'{key}' must list {min}-4096 [x, y] points"))),
+            }
+        }
+
+        /// Uniform Catmull-Rom spline through the points, sampled every ~0.25 px.
+        pub fn catmull(pts: &[Pt], closed: bool) -> Vec<Pt> {
+            if pts.len() < 3 {
+                return flatten_polyline(pts, closed);
+            }
+            let n = pts.len() as isize;
+            let get = |i: isize| if closed { pts[i.rem_euclid(n) as usize] } else { pts[i.clamp(0, n - 1) as usize] };
+            let segs = if closed { n } else { n - 1 };
+            let mut out = Vec::new();
+            for s in 0..segs {
+                let (p0, p1, p2, p3) = (get(s - 1), get(s), get(s + 1), get(s + 2));
+                let steps = ((p2.0 - p1.0).hypot(p2.1 - p1.1) * 4.0).ceil().max(1.0) as usize;
+                for k in 0..steps {
+                    let t = k as f64 / steps as f64;
+                    let (t2, t3) = (t * t, t * t * t);
+                    let f = |a: f64, b: f64, c: f64, d: f64| {
+                        0.5 * (2.0 * b + (-a + c) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 + (-a + 3.0 * b - 3.0 * c + d) * t3)
+                    };
+                    out.push((f(p0.0, p1.0, p2.0, p3.0), f(p0.1, p1.1, p2.1, p3.1)));
+                }
+            }
+            out.push(if closed { pts[0] } else { pts[pts.len() - 1] });
+            out
+        }
+
+        /// Cubic Bézier chain: p0, c1, c2, p1, c1, c2, p2, …
+        pub fn bezier(pts: &[Pt]) -> CmdResult<Vec<Pt>> {
+            if pts.len() < 4 || !(pts.len() - 1).is_multiple_of(3) {
+                return Err(CmdError::invalid("bezier 'points' are p0, c1, c2, p1 [, c1, c2, p2 …] (3n+1 points)"));
+            }
+            let mut out = Vec::new();
+            for seg in pts.windows(4).step_by(3) {
+                let (a, b, c, d) = (seg[0], seg[1], seg[2], seg[3]);
+                let len = (b.0 - a.0).hypot(b.1 - a.1) + (c.0 - b.0).hypot(c.1 - b.1) + (d.0 - c.0).hypot(d.1 - c.1);
+                let steps = (len * 4.0).ceil().max(1.0) as usize;
+                for k in 0..steps {
+                    let t = k as f64 / steps as f64;
+                    let u = 1.0 - t;
+                    let f = |p: f64, q: f64, r: f64, s: f64| u * u * u * p + 3.0 * u * u * t * q + 3.0 * u * t * t * r + t * t * t * s;
+                    out.push((f(a.0, b.0, c.0, d.0), f(a.1, b.1, c.1, d.1)));
+                }
+            }
+            out.push(pts[pts.len() - 1]);
+            Ok(out)
+        }
+
+        fn flatten_polyline(pts: &[Pt], closed: bool) -> Vec<Pt> {
+            let mut out = Vec::new();
+            let n = pts.len();
+            let segs = if closed { n } else { n.saturating_sub(1) };
+            for i in 0..segs {
+                let (a, b) = (pts[i], pts[(i + 1) % n]);
+                let steps = ((b.0 - a.0).hypot(b.1 - a.1) * 4.0).ceil().max(1.0) as usize;
+                for k in 0..steps {
+                    let t = k as f64 / steps as f64;
+                    out.push((a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t));
+                }
+            }
+            if let Some(&p) = if closed { pts.first() } else { pts.last() } {
+                out.push(p);
+            }
+            out
+        }
+
+        fn line_pts(a: (i64, i64), b: (i64, i64)) -> Vec<(i64, i64)> {
+            let ((mut x0, mut y0), (x1, y1)) = (a, b);
+            let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
+            let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+            let mut err = dx + dy;
+            let mut out = vec![(x0, y0)];
+            while (x0, y0) != (x1, y1) {
+                let e2 = 2 * err;
+                if e2 >= dy {
+                    err += dy;
+                    x0 += sx;
+                }
+                if e2 <= dx {
+                    err += dx;
+                    y0 += sy;
+                }
+                out.push((x0, y0));
+            }
+            out
+        }
+
+        /// Sampled curve → connected pixel path.
+        pub fn pixel_path(samples: &[Pt]) -> Vec<(i64, i64)> {
+            let mut path: Vec<(i64, i64)> = Vec::new();
+            for &(x, y) in samples {
+                let p = (x.floor() as i64, y.floor() as i64);
+                match path.last().copied() {
+                    Some(q) if q == p => {}
+                    Some(q) => path.extend(line_pts(q, p).into_iter().skip(1)),
+                    None => path.push(p),
+                }
+            }
+            path
+        }
+
+        /// Removes the middle pixel of every L-shaped corner (1-px lines stay one pixel thin).
+        pub fn pixel_perfect(path: &[(i64, i64)]) -> Vec<(i64, i64)> {
+            let mut out: Vec<(i64, i64)> = Vec::with_capacity(path.len());
+            for &p in path {
+                if out.len() >= 2 {
+                    let (a0, b0) = (out[out.len() - 2], out[out.len() - 1]);
+                    if (a0.0 - p.0).abs() == 1 && (a0.1 - p.1).abs() == 1 && (b0.0 == a0.0 || b0.1 == a0.1) {
+                        out.pop();
+                    }
+                }
+                if out.last() != Some(&p) {
+                    out.push(p);
+                }
+            }
+            out
+        }
+
+        /// Integer isotonic fit of the interior run lengths (first and last runs are truncated by
+        /// the section ends and kept). Sum preserved; refused when pixels would move > 2 px.
+        fn monotone_runs(c: &[i64], keep_first: bool, keep_last: bool) -> Vec<i64> {
+            let (a0, b0) = (keep_first as usize, c.len() - keep_last as usize);
+            if b0 < a0 + 3 {
+                return c.to_vec();
+            }
+            let inner = &c[a0..b0];
+            // Trend from the halves (robust to a jagged first or last run).
+            let half = inner.len() / 2;
+            let mean = |s: &[i64]| s.iter().sum::<i64>() as f64 / s.len().max(1) as f64;
+            let inc = mean(&inner[inner.len() - half..]) >= mean(&inner[..half]);
+            let seq: Vec<f64> =
+                if inc { inner.iter().map(|&v| v as f64).collect() } else { inner.iter().rev().map(|&v| v as f64).collect() };
+            let mut blocks: Vec<(f64, usize)> = Vec::new();
+            for v in seq {
+                blocks.push((v, 1));
+                while blocks.len() >= 2 && blocks[blocks.len() - 2].0 > blocks[blocks.len() - 1].0 {
+                    let (b, n2) = blocks.pop().unwrap();
+                    let (a, n1) = blocks.pop().unwrap();
+                    blocks.push(((a * n1 as f64 + b * n2 as f64) / (n1 + n2) as f64, n1 + n2));
+                }
+            }
+            // Each block sums to an integer: floor its mean, give the remainder to its last runs,
+            // then sort so the whole interior is monotone (sum unchanged).
+            let mut ints: Vec<i64> = Vec::new();
+            for &(m, n) in &blocks {
+                let sum = (m * n as f64).round() as i64;
+                let q = sum.div_euclid(n as i64);
+                let r = sum - q * n as i64;
+                for i in 0..n as i64 {
+                    ints.push(q + if i >= n as i64 - r { 1 } else { 0 });
+                }
+            }
+            ints.sort_unstable();
+            if !inc {
+                ints.reverse();
+            }
+            if ints.iter().any(|v| *v < 1) {
+                return c.to_vec();
+            }
+            let (mut s1, mut s2, mut worst) = (0i64, 0i64, 0i64);
+            for (a, b) in inner.iter().zip(&ints) {
+                s1 += a;
+                s2 += b;
+                worst = worst.max((s1 - s2).abs());
+            }
+            if worst > 2 {
+                return c.to_vec();
+            }
+            let mut out = c[..a0].to_vec();
+            out.extend(ints);
+            out.extend_from_slice(&c[b0..]);
+            out
+        }
+
+        /// Makes run lengths monotone inside each consistently-stepping section of a 1-px path, so a
+        /// curve never mixes short and long runs at random (the classic "jaggy").
+        pub fn smooth_runs(path: &[(i64, i64)]) -> (Vec<(i64, i64)>, usize) {
+            if path.len() < 8 {
+                return (path.to_vec(), 0);
+            }
+            let steps: Vec<(i64, i64)> = path.windows(2).map(|w| (w[1].0 - w[0].0, w[1].1 - w[0].1)).collect();
+            let mut out = vec![path[0]];
+            let mut fixed = 0;
+            let mut i = 0;
+            while i < steps.len() {
+                let (mut axis, mut sx, mut sy) = (None::<bool>, 0i64, 0i64);
+                let mut j = i;
+                while j < steps.len() {
+                    let (dx, dy) = steps[j];
+                    if dx.abs() > 1 || dy.abs() > 1 || (dx == 0 && dy == 0) {
+                        break;
+                    }
+                    if dx != 0 {
+                        if sx == 0 {
+                            sx = dx;
+                        } else if sx != dx {
+                            break;
+                        }
+                    }
+                    if dy != 0 {
+                        if sy == 0 {
+                            sy = dy;
+                        } else if sy != dy {
+                            break;
+                        }
+                    }
+                    if dx == 0 || dy == 0 {
+                        let x_major = dy == 0;
+                        match axis {
+                            None => axis = Some(x_major),
+                            Some(a) if a != x_major => break,
+                            _ => {}
+                        }
+                    }
+                    j += 1;
+                }
+                let start = *out.last().unwrap();
+                if j == i {
+                    out.push((start.0 + steps[i].0, start.1 + steps[i].1));
+                    i += 1;
+                    continue;
+                }
+                let sec = &steps[i..j];
+                match axis {
+                    Some(x_major) if sec.len() >= 6 && sx != 0 && sy != 0 => {
+                        let mut runs = vec![1i64];
+                        for &(dx, dy) in sec {
+                            if (x_major && dy == 0) || (!x_major && dx == 0) {
+                                *runs.last_mut().unwrap() += 1;
+                            } else {
+                                runs.push(1);
+                            }
+                        }
+                        // Runs cut by a change of stepping direction are partial and kept; the
+                        // path's own ends are whole runs and take part in the smoothing.
+                        let smooth = monotone_runs(&runs, i != 0, j != steps.len());
+                        if smooth != runs {
+                            fixed += 1;
+                        }
+                        let straight = if x_major { (sx, 0) } else { (0, sy) };
+                        let mut p = start;
+                        for (k, &n) in smooth.iter().enumerate() {
+                            for s in 0..n {
+                                if k == 0 && s == 0 {
+                                    continue;
+                                }
+                                p = if s == 0 { (p.0 + sx, p.1 + sy) } else { (p.0 + straight.0, p.1 + straight.1) };
+                                out.push(p);
+                            }
+                        }
+                    }
+                    _ => {
+                        let mut p = start;
+                        for &(dx, dy) in sec {
+                            p = (p.0 + dx, p.1 + dy);
+                            out.push(p);
+                        }
+                    }
+                }
+                i = j;
+            }
+            (out, fixed)
+        }
+
+        /// Flattens bumps: a short run sitting one pixel off two longer neighbours on the same row
+        /// (or column) — the apex wobble of a curve — joins their row.
+        pub fn flatten_bumps(path: &[(i64, i64)]) -> (Vec<(i64, i64)>, usize) {
+            let mut out = path.to_vec();
+            let mut fixed = 0;
+            for horizontal in [true, false] {
+                let key = |p: (i64, i64)| if horizontal { p.1 } else { p.0 };
+                let mut groups: Vec<(usize, usize)> = Vec::new(); // (start, len)
+                for i in 0..out.len() {
+                    match groups.last_mut() {
+                        Some(g) if key(out[g.0]) == key(out[i]) => g.1 += 1,
+                        _ => groups.push((i, 1)),
+                    }
+                }
+                for w in groups.windows(3) {
+                    let (a, b, c) = (w[0], w[1], w[2]);
+                    let (ka, kb, kc) = (key(out[a.0]), key(out[b.0]), key(out[c.0]));
+                    if ka == kc && (kb - ka).abs() == 1 && b.1 < a.1.min(c.1) && b.1 <= 4 {
+                        for p in &mut out[b.0..b.0 + b.1] {
+                            if horizontal {
+                                p.1 = ka;
+                            } else {
+                                p.0 = ka;
+                            }
+                        }
+                        fixed += 1;
+                    }
+                }
+            }
+            (out, fixed)
+        }
+
+        /// Pixels whose centres lie inside the polygon (even-odd scanline).
+        pub fn fill_mask(pts: &[Pt], w: i64, h: i64) -> Vec<(i64, i64)> {
+            let mut out = Vec::new();
+            if pts.len() < 3 {
+                return out;
+            }
+            let (ymin, ymax) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+            for y in (ymin.floor() as i64).max(0)..=(ymax.ceil() as i64).min(h - 1) {
+                let cy = y as f64 + 0.5;
+                let mut xs: Vec<f64> = Vec::new();
+                for i in 0..pts.len() {
+                    let (a0, b0) = (pts[i], pts[(i + 1) % pts.len()]);
+                    if (a0.1 > cy) != (b0.1 > cy) {
+                        xs.push(a0.0 + (cy - a0.1) * (b0.0 - a0.0) / (b0.1 - a0.1));
+                    }
+                }
+                xs.sort_by(|p, q| p.total_cmp(q));
+                for pair in xs.chunks(2) {
+                    if let [x0, x1] = pair {
+                        for x in ((x0 - 0.5).ceil() as i64).max(0)..=((x1 - 0.5).floor() as i64).min(w - 1) {
+                            out.push((x, y));
+                        }
+                    }
+                }
+            }
+            out
+        }
+
+        /// Tapered capsule outline (p0 radius r0 → p1 radius r1).
+        fn capsule_poly(p0: Pt, r0: f64, p1: Pt, r1: f64) -> Vec<Pt> {
+            let a = (p1.1 - p0.1).atan2(p1.0 - p0.0);
+            let n = 10;
+            let mut pts = Vec::new();
+            for i in 0..=n {
+                let t = a - std::f64::consts::FRAC_PI_2 + std::f64::consts::PI * i as f64 / n as f64;
+                pts.push((p1.0 + r1 * t.cos(), p1.1 + r1 * t.sin()));
+            }
+            for i in 0..=n {
+                let t = a + std::f64::consts::FRAC_PI_2 + std::f64::consts::PI * i as f64 / n as f64;
+                pts.push((p0.0 + r0 * t.cos(), p0.1 + r0 * t.sin()));
+            }
+            pts
+        }
+
+        // ---- lighting -----------------------------------------------------------------------------
+
+        fn norm3(v: [f64; 3]) -> [f64; 3] {
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-9);
+            [v[0] / l, v[1] / l, v[2] / l]
+        }
+
+        /// Direction TOWARD the light (screen space, y down, z toward the viewer).
+        pub fn light_dir(a: &Json) -> CmdResult<[f64; 3]> {
+            let v = match a.get("light") {
+                None | Some(Json::Null) => [-0.7, -0.55, 0.42],
+                Some(Json::Str(s)) => match s.as_str() {
+                    "top-left" => [-0.7, -0.55, 0.42],
+                    "top-right" => [0.7, -0.55, 0.42],
+                    "top" => [0.0, -0.8, 0.6],
+                    "left" => [-0.85, -0.15, 0.5],
+                    "right" => [0.85, -0.15, 0.5],
+                    "front" => [0.0, -0.2, 1.0],
+                    "bottom" => [0.0, 0.8, 0.6],
+                    other => {
+                        return Err(CmdError::invalid(format!(
+                            "unknown light '{other}' (top-left, top-right, top, left, right, front, bottom or [x, y, z])"
+                        )));
+                    }
+                },
+                Some(Json::Arr(l)) if (2..=3).contains(&l.len()) => {
+                    [l[0].as_f64().unwrap_or(0.0), l[1].as_f64().unwrap_or(0.0), l.get(2).and_then(Json::as_f64).unwrap_or(0.5)]
+                }
+                _ => return Err(CmdError::invalid("'light' is a name or [x, y, z]")),
+            };
+            Ok(norm3(v))
+        }
+
+        /// How a Lambert term maps to ramp steps.
+        #[derive(Clone, Copy)]
+        pub struct Bands {
+            pub shadow: i64,
+            pub light: i64,
+            pub reflect: bool,
+            pub bias: f64,
+        }
+
+        impl Bands {
+            /// Step relative to the base tone. The terminator sits at n·l = 0; the lit side is
+            /// split evenly between half-shadows, the base tone and highlights.
+            pub fn step(&self, n: [f64; 3], l: [f64; 3]) -> i64 {
+                let lam = n[0] * l[0] + n[1] * l[1] + n[2] * l[2] + self.bias;
+                if lam <= 0.0 {
+                    // Bounce light: grazing normals facing away from the key light glow a little.
+                    let (lx, ly) = (l[0], l[1]);
+                    let away = -(n[0] * lx + n[1] * ly) / (lx.hypot(ly).max(1e-6));
+                    if self.reflect && self.shadow >= 2 && n[2] < 0.5 && away > 0.55 {
+                        return -self.shadow + 1;
+                    }
+                    return -self.shadow;
+                }
+                let k = self.shadow + self.light;
+                let idx = ((lam.min(1.0).powf(0.8) * k as f64).floor() as i64).min(k - 1);
+                -self.shadow + 1 + idx
+            }
+        }
+
+        fn bands_arg(a: &Json) -> CmdResult<Bands> {
+            Ok(Bands {
+                shadow: opt_i64(a, "shadow_steps")?.unwrap_or(2).clamp(1, 4),
+                light: opt_i64(a, "light_steps")?.unwrap_or(1).clamp(0, 3),
+                reflect: opt_bool(a, "reflected_light")?.unwrap_or(true),
+                bias: opt_f64(a, "bias")?.unwrap_or(0.0).clamp(-0.8, 0.8),
+            })
+        }
+
+        /// Chamfer distance to the outside of a mask, inflated into a round height field, smoothed,
+        /// and differentiated into normals (the "inflate" form for any silhouette).
+        fn inflate_normals(mask: &HashSet<(i64, i64)>) -> HashMap<(i64, i64), [f64; 3]> {
+            let mut out = HashMap::new();
+            if mask.is_empty() {
+                return out;
+            }
+            let (x0, y0) = (mask.iter().map(|p| p.0).min().unwrap() - 1, mask.iter().map(|p| p.1).min().unwrap() - 1);
+            let (x1, y1) = (mask.iter().map(|p| p.0).max().unwrap() + 1, mask.iter().map(|p| p.1).max().unwrap() + 1);
+            let (w, h) = ((x1 - x0 + 1) as usize, (y1 - y0 + 1) as usize);
+            let idx = |x: i64, y: i64| (y - y0) as usize * w + (x - x0) as usize;
+            let mut d = vec![0f64; w * h];
+            for &(x, y) in mask {
+                d[idx(x, y)] = 1e9;
+            }
+            let s2 = std::f64::consts::SQRT_2;
+            for pass in 0..2 {
+                let ys: Vec<i64> = if pass == 0 { (y0..=y1).collect() } else { (y0..=y1).rev().collect() };
+                let xs: Vec<i64> = if pass == 0 { (x0..=x1).collect() } else { (x0..=x1).rev().collect() };
+                let sg = if pass == 0 { -1 } else { 1 };
+                for &y in &ys {
+                    for &x in &xs {
+                        let i = idx(x, y);
+                        if d[i] == 0.0 {
+                            continue;
+                        }
+                        let mut best = d[i];
+                        for (dx, dy, c) in [(sg, 0, 1.0), (0, sg, 1.0), (sg, sg, s2), (-sg, sg, s2)] {
+                            let (nx, ny) = (x + dx, y + dy);
+                            let nd = if nx < x0 || ny < y0 || nx > x1 || ny > y1 { 0.0 } else { d[idx(nx, ny)] };
+                            best = best.min(nd + c);
+                        }
+                        d[i] = best;
+                    }
+                }
+            }
+            let r = d.iter().copied().filter(|v| *v < 1e8).fold(1.0f64, f64::max);
+            let mut hgt: Vec<f64> =
+                d.iter().map(|&v| if v <= 0.0 { 0.0 } else { (r * r - (r - v.min(r)).powi(2)).max(0.0).sqrt() }).collect();
+            for _ in 0..2 {
+                let src = hgt.clone();
+                for y in y0 + 1..y1 {
+                    for x in x0 + 1..x1 {
+                        if !mask.contains(&(x, y)) {
+                            continue;
+                        }
+                        let mut s = 0.0;
+                        for dy in -1..=1 {
+                            for dx in -1..=1 {
+                                s += src[idx(x + dx, y + dy)];
+                            }
+                        }
+                        hgt[idx(x, y)] = s / 9.0;
+                    }
+                }
+            }
+            for &(x, y) in mask {
+                let gx = (hgt[idx(x + 1, y)] - hgt[idx(x - 1, y)]) / 2.0;
+                let gy = (hgt[idx(x, y + 1)] - hgt[idx(x, y - 1)]) / 2.0;
+                out.insert((x, y), norm3([-gx, -gy, 1.0]));
+            }
+            out
+        }
+
+        fn sphere_normal(p: Pt, c: Pt, rx: f64, ry: f64) -> Option<[f64; 3]> {
+            let (u, v) = ((p.0 - c.0) / rx, (p.1 - c.1) / ry);
+            let r2 = u * u + v * v;
+            (r2 <= 1.0).then(|| norm3([u, v, (1.0 - r2).sqrt()]))
+        }
+
+        fn capsule_normal(p: Pt, a: Pt, ra: f64, b: Pt, rb: f64) -> Option<[f64; 3]> {
+            let (vx, vy) = (b.0 - a.0, b.1 - a.1);
+            let len2 = (vx * vx + vy * vy).max(1e-9);
+            let t = (((p.0 - a.0) * vx + (p.1 - a.1) * vy) / len2).clamp(0.0, 1.0);
+            let q = (a.0 + vx * t, a.1 + vy * t);
+            let r = ra + (rb - ra) * t;
+            let (u, v) = ((p.0 - q.0) / r.max(0.5), (p.1 - q.1) / r.max(0.5));
+            let r2 = u * u + v * v;
+            (r2 <= 1.0).then(|| norm3([u, v, (1.0 - r2).sqrt().max(0.05)]))
+        }
+
+        /// Removes lonely tone pixels: a step value that no 4-neighbour shares takes the majority.
+        fn tidy(steps: &mut HashMap<(i64, i64), i64>) {
+            let snapshot = steps.clone();
+            for (&(x, y), s) in steps.iter_mut() {
+                let ns: Vec<i64> =
+                    [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().filter_map(|(dx, dy)| snapshot.get(&(x + dx, y + dy)).copied()).collect();
+                if ns.len() >= 3 && !ns.contains(s) {
+                    let mut counts: HashMap<i64, usize> = HashMap::new();
+                    ns.iter().for_each(|v| *counts.entry(*v).or_default() += 1);
+                    if let Some((&v, _)) = counts.iter().max_by_key(|(v, c)| (**c, -**v)) {
+                        *s = v;
+                    }
+                }
+            }
+        }
+
+        /// Lights pixels of one layer: every pixel must already hold a ramp colour (its base tone).
+        fn apply_steps(doc: &mut Document, l: u32, f: u32, steps: &HashMap<(i64, i64), i64>, base: &HashMap<(i64, i64), u32>) -> u64 {
+            let index = super::artist::ramp_index(doc);
+            let ramps: Vec<Vec<u32>> = doc.ramps.iter().map(|r| r.colors.clone()).collect();
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            for (&(x, y), &s) in steps {
+                let v = base[&(x, y)];
+                if let Some(&(ri, i)) = index.get(&(v | 0xFF)) {
+                    let r = &ramps[ri];
+                    let ni = (i as i64 + s).clamp(0, r.len() as i64 - 1) as usize;
+                    changed += grid.set(x, y, (r[ni] & !0xFF) | (v & 0xFF)) as u64;
+                }
+            }
+            changed
+        }
+
+        /// Form lighting of existing ramp-coloured pixels.
+        pub fn shade_form(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            if doc.ramps.is_empty() {
+                return Err(CmdError::invalid("shade_form steps colours along material ramps: define them first (ramp_set)"));
+            }
+            let light = light_dir(a)?;
+            let bands = bands_arg(a)?;
+            let (l, f) = target(doc, a)?;
+            let index = super::artist::ramp_index(doc);
+            let only_ramp = match opt_str(a, "ramp")? {
+                Some(n) => Some(doc.ramps.iter().position(|r| r.name == n).ok_or_else(|| CmdError::not_found(format!("no ramp '{n}'")))?),
+                None => None,
+            };
+            let only_color = match a.get("only_color") {
+                Some(v) if !v.is_null() => Some(super::args::color_value(doc, v, "only_color")? | 0xFF),
+                _ => None,
+            };
+            let grid = doc.cel_mut(l, f).clone();
+            let px = Px::from_grid(&grid);
+            let region = match (opt_i64(a, "x")?, opt_i64(a, "y")?, opt_i64(a, "width")?, opt_i64(a, "height")?) {
+                (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+                _ => None,
+            };
+            let ok = |x: i64, y: i64| -> bool {
+                let v = px.get(x, y);
+                if v == TRANSPARENT || only_color.is_some_and(|c| c != v | 0xFF) {
+                    return false;
+                }
+                if let Some((rx, ry, rw, rh)) = region
+                    && !(x >= rx && y >= ry && x < rx + rw && y < ry + rh)
+                {
+                    return false;
+                }
+                match index.get(&(v | 0xFF)) {
+                    Some(&(ri, _)) => only_ramp.is_none_or(|o| o == ri),
+                    None => false,
+                }
+            };
+            let center = |x: i64, y: i64| (x as f64 + 0.5, y as f64 + 0.5);
+            let mut normals: HashMap<(i64, i64), [f64; 3]> = HashMap::new();
+            match opt_str(a, "form")?.unwrap_or("inflate") {
+                "sphere" => {
+                    let (cx, cy) = (super::args::req_f64(a, "cx")?, super::args::req_f64(a, "cy")?);
+                    let rx = super::args::req_f64(a, "rx")?.max(0.5);
+                    let ry = opt_f64(a, "ry")?.unwrap_or(rx).max(0.5);
+                    for y in (cy - ry).floor() as i64..=(cy + ry).ceil() as i64 {
+                        for x in (cx - rx).floor() as i64..=(cx + rx).ceil() as i64 {
+                            if ok(x, y)
+                                && let Some(n) = sphere_normal(center(x, y), (cx, cy), rx, ry)
+                            {
+                                normals.insert((x, y), n);
+                            }
+                        }
+                    }
+                }
+                "capsule" => {
+                    let pts = json_points(a, "points", 2)?;
+                    let radii: Vec<f64> = match a.get("radius") {
+                        Some(Json::Arr(list)) => list.iter().filter_map(Json::as_f64).collect(),
+                        Some(v) => vec![v.as_f64().ok_or_else(|| CmdError::invalid("'radius' is a number or [r0, r1, …]"))?],
+                        None => return Err(CmdError::invalid("capsule needs 'radius'")),
+                    };
+                    let r_at = |i: usize| radii.get(i).copied().unwrap_or(*radii.last().unwrap_or(&2.0)).max(0.5);
+                    for i in 0..pts.len() - 1 {
+                        let (p0, p1, r0, r1) = (pts[i], pts[i + 1], r_at(i), r_at(i + 1));
+                        let rm = r0.max(r1);
+                        let (xa, xb) = (p0.0.min(p1.0) - rm, p0.0.max(p1.0) + rm);
+                        let (ya, yb) = (p0.1.min(p1.1) - rm, p0.1.max(p1.1) + rm);
+                        for y in ya.floor() as i64..=yb.ceil() as i64 {
+                            for x in xa.floor() as i64..=xb.ceil() as i64 {
+                                if ok(x, y)
+                                    && let Some(n) = capsule_normal(center(x, y), p0, r0, p1, r1)
+                                {
+                                    normals.entry((x, y)).or_insert(n);
+                                }
+                            }
+                        }
+                    }
+                }
+                "inflate" => {
+                    // One form per connected same-ramp region.
+                    let mut seen: HashSet<(i64, i64)> = HashSet::new();
+                    for y in 0..px.h {
+                        for x in 0..px.w {
+                            if seen.contains(&(x, y)) || !ok(x, y) {
+                                continue;
+                            }
+                            let key = index[&(px.get(x, y) | 0xFF)].0;
+                            let mut comp = HashSet::new();
+                            let mut q = VecDeque::from([(x, y)]);
+                            seen.insert((x, y));
+                            while let Some((cx, cy)) = q.pop_front() {
+                                comp.insert((cx, cy));
+                                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                                    let n = (cx + dx, cy + dy);
+                                    if !seen.contains(&n) && ok(n.0, n.1) && index[&(px.get(n.0, n.1) | 0xFF)].0 == key {
+                                        seen.insert(n);
+                                        q.push_back(n);
+                                    }
+                                }
+                            }
+                            normals.extend(inflate_normals(&comp));
+                        }
+                    }
+                }
+                other => return Err(CmdError::invalid(format!("unknown form '{other}' (inflate, sphere, capsule)"))),
+            }
+            let mut steps: HashMap<(i64, i64), i64> = normals.iter().map(|(&p, &n)| (p, bands.step(n, light))).collect();
+            if let Some(extra) = opt_i64(a, "depth")? {
+                steps.values_mut().for_each(|s| *s += extra.clamp(-3, 3));
+            }
+            tidy(&mut steps);
+            let base: HashMap<(i64, i64), u32> = steps.keys().map(|&(x, y)| ((x, y), px.get(x, y))).collect();
+            let changed = apply_steps(doc, l, f, &steps, &base);
+            Ok(Outcome::new(Json::obj().with("lit", steps.len()).with("changed", changed), changed))
+        }
+
+        // ---- curves -------------------------------------------------------------------------------
+
+        /// Smooth path: 1-px pixel-perfect line, tapered stroke, or filled curved shape.
+        pub fn draw_path(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let pts = json_points(a, "points", 2)?;
+            let closed = opt_bool(a, "closed")?.unwrap_or(false);
+            let filled = opt_bool(a, "filled")?.unwrap_or(false);
+            let samples = match opt_str(a, "curve")?.unwrap_or("spline") {
+                "spline" => catmull(&pts, closed || filled),
+                "bezier" => bezier(&pts)?,
+                "polyline" => flatten_polyline(&pts, closed || filled),
+                other => return Err(CmdError::invalid(format!("unknown curve '{other}' (spline, bezier, polyline)"))),
+            };
+            let widths: Vec<f64> = match a.get("width") {
+                None | Some(Json::Null) => vec![1.0],
+                Some(Json::Arr(list)) => list.iter().filter_map(Json::as_f64).map(|w| w.clamp(0.0, 64.0)).collect(),
+                Some(v) => vec![v.as_f64().ok_or_else(|| CmdError::invalid("'width' is a number or [w0, …, wn]"))?.clamp(0.0, 64.0)],
+            };
+            let v = color(doc, a, "color")?;
+            let (l, f) = target(doc, a)?;
+            let (gw, gh) = doc.layer_dims(l);
+            let (gw, gh) = (gw as i64, gh as i64);
+            let mut pixels: Vec<(i64, i64)> = Vec::new();
+            if filled {
+                pixels.extend(fill_mask(&samples, gw, gh));
+            } else if widths.iter().any(|w| *w > 1.5) {
+                // Tapered stroke: offset outline along the normals, width interpolated along the path.
+                let n = samples.len();
+                let mut acc = vec![0.0f64; n];
+                for i in 1..n {
+                    acc[i] = acc[i - 1] + (samples[i].0 - samples[i - 1].0).hypot(samples[i].1 - samples[i - 1].1);
+                }
+                let total = acc[n - 1].max(1e-6);
+                let width_at = |t: f64| -> f64 {
+                    if widths.len() == 1 {
+                        return widths[0];
+                    }
+                    let s = t * (widths.len() - 1) as f64;
+                    let i = (s.floor() as usize).min(widths.len() - 2);
+                    widths[i] + (widths[i + 1] - widths[i]) * (s - i as f64)
+                };
+                let (mut left, mut right) = (Vec::with_capacity(n), Vec::with_capacity(n));
+                for i in 0..n {
+                    let (p0, p1) = (samples[i.saturating_sub(1)], samples[(i + 1).min(n - 1)]);
+                    let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
+                    let len = dx.hypot(dy).max(1e-6);
+                    let hw = width_at(acc[i] / total) / 2.0;
+                    left.push((samples[i].0 - dy / len * hw, samples[i].1 + dx / len * hw));
+                    right.push((samples[i].0 + dy / len * hw, samples[i].1 - dx / len * hw));
+                }
+                right.reverse();
+                left.extend(right);
+                pixels.extend(fill_mask(&left, gw, gh));
+            }
+            // Centre line / outline: pixel-perfect with monotone runs (also keeps tapered tips).
+            let mut fixed = 0;
+            if !filled || opt_bool(a, "edge")?.unwrap_or(true) {
+                let raw = pixel_path(&samples);
+                let mut path = if opt_bool(a, "pixel_perfect")?.unwrap_or(true) { pixel_perfect(&raw) } else { raw };
+                if opt_bool(a, "smooth")?.unwrap_or(true) {
+                    let (p, n) = smooth_runs(&path);
+                    let (p, m) = flatten_bumps(&p);
+                    path = p;
+                    fixed = n + m;
+                }
+                pixels.extend(path);
+            }
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            let mut seen = HashSet::new();
+            for p in pixels {
+                if seen.insert(p) {
+                    changed += grid.set(p.0, p.1, v) as u64;
+                }
+            }
+            Ok(Outcome::new(Json::obj().with("changed", changed).with("smoothedSections", fixed), changed))
+        }
+
+        // ---- selective anti-aliasing ----------------------------------------------------------------
+
+        /// Interior-only selective AA of stair-steps between a darker line colour A and a fill B.
+        pub fn antialias(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let (l, f) = target(doc, a)?;
+            let k = opt_f64(a, "amount")?.unwrap_or(0.5).clamp(0.0, 1.0);
+            let min_contrast = opt_f64(a, "min_contrast")?.unwrap_or(18.0).clamp(1.0, 100.0) as f32;
+            let allow_new = opt_bool(a, "allow_new_colors")?.unwrap_or(false);
+            let only = match a.get("color") {
+                Some(v) if !v.is_null() => Some(super::args::color_value(doc, v, "color")? | 0xFF),
+                _ => None,
+            };
+            let ramps = super::artist::ramp_index(doc);
+            let px = Px::from_grid(doc.cel_mut(l, f));
+            let is_line = |c: u32, b: u32| -> bool {
+                c != TRANSPARENT
+                    && b != TRANSPARENT
+                    && c != b
+                    && only.is_none_or(|o| o == c | 0xFF)
+                    && lightness(b) - lightness(c) >= min_contrast
+            };
+            let mut planned: HashMap<(i64, i64), u32> = HashMap::new();
+            let mut mids: HashMap<(u32, u32), Option<u32>> = HashMap::new();
+            for y in 0..px.h {
+                for x in 0..px.w {
+                    let b = px.get(x, y);
+                    if b == TRANSPARENT {
+                        continue;
+                    }
+                    for (ux, vy) in [(-1i64, -1i64), (1, -1), (-1, 1), (1, 1)] {
+                        // Inner corner: line pixels beside AND above/below (an L around this pixel).
+                        let (ha, va) = (px.get(x + ux, y), px.get(x, y + vy));
+                        if ha != va || !is_line(ha, b) {
+                            continue;
+                        }
+                        // Skip 45° steps; the run on the other row/column decides the AA length.
+                        let mut run_h = 0;
+                        while run_h < 64 && px.get(x - ux * run_h, y + vy) == ha {
+                            run_h += 1;
+                        }
+                        let mut run_v = 0;
+                        while run_v < 64 && px.get(x + ux, y - vy * run_v) == ha {
+                            run_v += 1;
+                        }
+                        let (run, dir) = if run_h >= run_v { (run_h, (-ux, 0)) } else { (run_v, (0, -vy)) };
+                        if run < 2 {
+                            continue;
+                        }
+                        let Some(mid) = *mids.entry((ha, b)).or_insert_with(|| between(doc, &ramps, ha, b, allow_new)) else { continue };
+                        let n = ((run as f64 * k).floor() as i64).max(1);
+                        for s in 0..n {
+                            let q = (x + dir.0 * s, y + dir.1 * s);
+                            let partner = if dir.1 == 0 { px.get(q.0, q.1 + vy) } else { px.get(q.0 + ux, q.1) };
+                            if px.get(q.0, q.1) != b || partner != ha {
+                                break;
+                            }
+                            planned.insert(q, (mid & !0xFF) | (b & 0xFF));
+                        }
+                    }
+                }
+            }
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            for ((x, y), v) in planned {
+                changed += grid.set(x, y, v) as u64;
+            }
+            Ok(Outcome::new(Json::obj().with("changed", changed), changed))
+        }
+
+        // ---- critic -------------------------------------------------------------------------------
+
+        /// Banding pairs: maximal same-colour runs (≥ 2 px) in adjacent rows (or columns) with the
+        /// same start and end and different colours. Returns (x, y, len, horizontal).
+        pub fn banding(px: &Px, fig: &dyn Fn(u32) -> bool) -> Vec<(i64, i64, i64, bool)> {
+            let mut out = Vec::new();
+            for horizontal in [true, false] {
+                let (outer, inner) = if horizontal { (px.h, px.w) } else { (px.w, px.h) };
+                let at = |o: i64, i: i64| if horizontal { px.get(i, o) } else { px.get(o, i) };
+                let mut runs: HashMap<(i64, i64, i64), u32> = HashMap::new();
+                let mut list = Vec::new();
+                for o in 0..outer {
+                    let mut i = 0;
+                    while i < inner {
+                        let c = at(o, i);
+                        if !fig(c) {
+                            i += 1;
+                            continue;
+                        }
+                        let s = i;
+                        while i < inner && at(o, i) == c {
+                            i += 1;
+                        }
+                        if i - s >= 2 {
+                            runs.insert((o, s, i - s), c);
+                            list.push((o, s, i - s, c));
+                        }
+                    }
+                }
+                for (o, s, len, c) in list {
+                    if let Some(&c2) = runs.get(&(o + 1, s, len))
+                        && c2 != c
+                    {
+                        out.push(if horizontal { (s, o, len, true) } else { (o, s, len, false) });
+                    }
+                }
+            }
+            out
+        }
+
+        fn pearson(xs: &[f64], ys: &[f64]) -> f64 {
+            let n = xs.len() as f64;
+            let (mx, my) = (xs.iter().sum::<f64>() / n, ys.iter().sum::<f64>() / n);
+            let (mut sxy, mut sxx, mut syy) = (0.0, 0.0, 0.0);
+            for (x, y) in xs.iter().zip(ys) {
+                sxy += (x - mx) * (y - my);
+                sxx += (x - mx).powi(2);
+                syy += (y - my).powi(2);
+            }
+            if sxx <= 1e-9 || syy <= 1e-9 { 0.0 } else { sxy / (sxx * syy).sqrt() }
+        }
+
+        /// The critic. Renders a frame (or one layer) in canvas pixels, measures it and returns a
+        /// report plus a value-map PNG with the problems marked.
+        pub fn art_review(doc: &Document, a: &Json) -> CmdResult<Query> {
+            let fi = frame_index(doc, a, "frame")?;
+            let mut opts = RenderOptions { density: Some(1), ..Default::default() };
+            if a.get("layer").is_some_and(|v| !v.is_null()) {
+                opts.only_layer = Some(doc.layers[layer_index(doc, a, "layer")?].id);
+            }
+            let img = render(doc, fi, &opts);
+            let px = Px::from_image(&img);
+            if px.w * px.h > 4_194_304 {
+                return Err(CmdError::new("limit", "art_review works on canvases up to 2048×2048"));
+            }
+            // Background: the dominant border colour when the border is mostly opaque (a painted
+            // backdrop), else transparency.
+            let bg: Option<u32> = {
+                let mut counts: HashMap<u32, usize> = HashMap::new();
+                for x in 0..px.w {
+                    *counts.entry(px.get(x, 0)).or_default() += 1;
+                    *counts.entry(px.get(x, px.h - 1)).or_default() += 1;
+                }
+                for y in 0..px.h {
+                    *counts.entry(px.get(0, y)).or_default() += 1;
+                    *counts.entry(px.get(px.w - 1, y)).or_default() += 1;
+                }
+                let clear = counts.get(&TRANSPARENT).copied().unwrap_or(0);
+                let opaque_top = counts.iter().filter(|e| *e.0 != TRANSPARENT).max_by_key(|e| *e.1).map(|e| (*e.0, *e.1));
+                match opaque_top {
+                    Some((c, n)) if n > clear => Some(c),
+                    _ => None,
+                }
+            };
+            let fig = |v: u32| v != TRANSPARENT && Some(v) != bg;
+            let at = |x: i64, y: i64| fig(px.get(x, y));
+            let mut figure = Vec::new();
+            let (mut edge, mut interior) = (Vec::new(), Vec::new());
+            for y in 0..px.h {
+                for x in 0..px.w {
+                    if !at(x, y) {
+                        continue;
+                    }
+                    figure.push((x, y));
+                    if [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| !at(x + dx, y + dy)) {
+                        edge.push((x, y));
+                    } else {
+                        interior.push((x, y));
+                    }
+                }
+            }
+            if figure.is_empty() {
+                return Err(CmdError::invalid("nothing to review: the frame is empty"));
+            }
+            let colors: HashSet<u32> = figure.iter().map(|&(x, y)| px.get(x, y)).collect();
+            let mut ls: Vec<f32> = interior.iter().map(|&(x, y)| lightness(px.get(x, y))).collect();
+            if ls.is_empty() {
+                ls = figure.iter().map(|&(x, y)| lightness(px.get(x, y))).collect();
+            }
+            ls.sort_by(|p, q| p.total_cmp(q));
+            let pct = |f: f32| ls[((ls.len() - 1) as f32 * f) as usize];
+            let (p10, p50, p90) = (pct(0.1), pct(0.5), pct(0.9));
+            let span = p90 - p10;
+            let mut edge_counts: HashMap<u32, usize> = HashMap::new();
+            edge.iter().for_each(|&(x, y)| *edge_counts.entry(px.get(x, y)).or_default() += 1);
+            let (outline_color, outline_n) = edge_counts.iter().max_by_key(|e| e.1).map(|(c, n)| (*c, *n)).unwrap_or((0, 0));
+            let bg_l = bg.map(lightness);
+            let edge_contrast =
+                bg_l.map(|b| edge.iter().map(|&(x, y)| (lightness(px.get(x, y)) - b).abs()).sum::<f32>() / edge.len() as f32);
+            // Figure/ground separation: the interior's median value against the backdrop.
+            let fig_contrast = bg_l.map(|b| (p50 - b).abs());
+
+            // Banding (Pixel Fixer's Eb).
+            let bands = banding(&px, &fig);
+            // Stripes and orphans.
+            let (mut stripes, mut orphans) = (Vec::new(), Vec::new());
+            for &(x, y) in &interior {
+                let c = px.get(x, y);
+                let (l, r, u, d) = (px.get(x - 1, y), px.get(x + 1, y), px.get(x, y - 1), px.get(x, y + 1));
+                if (u == c && d == c && l != c && r != c && l == r) || (l == c && r == c && u != c && d != c && u == d) {
+                    stripes.push((x, y));
+                }
+                let lonely = (-1..=1).all(|dy| (-1..=1).all(|dx| (dx == 0 && dy == 0) || px.get(x + dx, y + dy) != c));
+                if lonely {
+                    orphans.push((x, y));
+                }
+            }
+            // Pillow shading per material region.
+            let ramps = super::artist::ramp_index(doc);
+            let family = |v: u32| -> Option<u32> {
+                if let Some(&(ri, _)) = ramps.get(&(v | 0xFF)) {
+                    return Some(1000 + ri as u32);
+                }
+                let [l, c, h] = crate::pixelart::lch(Rgba::from_u32(v | 0xFF));
+                if l < 0.22 {
+                    None
+                } else if c < 0.03 {
+                    Some(900)
+                } else {
+                    Some(((h + 15.0) % 360.0 / 30.0) as u32)
+                }
+            };
+            let mut seen: HashSet<(i64, i64)> = HashSet::new();
+            let mut pillows: Vec<Json> = Vec::new();
+            let mut pillow_px: Vec<(i64, i64)> = Vec::new();
+            for &(x, y) in &figure {
+                if seen.contains(&(x, y)) {
+                    continue;
+                }
+                let Some(key) = family(px.get(x, y)) else { continue };
+                let mut comp = Vec::new();
+                let mut q = VecDeque::from([(x, y)]);
+                seen.insert((x, y));
+                while let Some(p) = q.pop_front() {
+                    comp.push(p);
+                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let n = (p.0 + dx, p.1 + dy);
+                        if !seen.contains(&n) && at(n.0, n.1) && family(px.get(n.0, n.1)) == Some(key) {
+                            seen.insert(n);
+                            q.push_back(n);
+                        }
+                    }
+                }
+                let tones: HashSet<u32> = comp.iter().map(|&(x, y)| px.get(x, y)).collect();
+                if comp.len() < 60 || tones.len() < 3 {
+                    continue;
+                }
+                let set: HashSet<(i64, i64)> = comp.iter().copied().collect();
+                // BFS distance from the region's edge.
+                let mut dist: HashMap<(i64, i64), f64> = HashMap::new();
+                let mut q = VecDeque::new();
+                for &p in &comp {
+                    if [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| !set.contains(&(p.0 + dx, p.1 + dy))) {
+                        dist.insert(p, 0.0);
+                        q.push_back(p);
+                    }
+                }
+                while let Some(p) = q.pop_front() {
+                    let d = dist[&p];
+                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let n = (p.0 + dx, p.1 + dy);
+                        if set.contains(&n) && !dist.contains_key(&n) {
+                            dist.insert(n, d + 1.0);
+                            q.push_back(n);
+                        }
+                    }
+                }
+                let lv: Vec<f64> = comp.iter().map(|&(x, y)| lightness(px.get(x, y)) as f64).collect();
+                let dv: Vec<f64> = comp.iter().map(|p| dist[p]).collect();
+                let mut sorted = lv.clone();
+                sorted.sort_by(|p, q| p.total_cmp(q));
+                let median = sorted[sorted.len() / 2];
+                let light: Vec<(i64, i64)> = comp.iter().zip(&lv).filter(|(_, l)| **l > median).map(|(p, _)| *p).collect();
+                if light.len() * 20 < comp.len() {
+                    continue;
+                }
+                let cen = |pts: &[(i64, i64)]| {
+                    let n = pts.len() as f64;
+                    (pts.iter().map(|p| p.0 as f64).sum::<f64>() / n, pts.iter().map(|p| p.1 as f64).sum::<f64>() / n)
+                };
+                let (c0, c1) = (cen(&comp), cen(&light));
+                let (xa, xb) = (comp.iter().map(|p| p.0).min().unwrap(), comp.iter().map(|p| p.0).max().unwrap());
+                let (ya, yb) = (comp.iter().map(|p| p.1).min().unwrap(), comp.iter().map(|p| p.1).max().unwrap());
+                let short = ((xb - xa + 1).min(yb - ya + 1)) as f64;
+                let offset = (c1.0 - c0.0).hypot(c1.1 - c0.1) / short.max(1.0);
+                let r = pearson(&dv, &lv);
+                if offset < 0.08 && r > 0.4 {
+                    pillows.push(
+                        Json::obj()
+                            .with("x", xa)
+                            .with("y", ya)
+                            .with("width", xb - xa + 1)
+                            .with("height", yb - ya + 1)
+                            .with("offset", (offset * 100.0).round() / 100.0)
+                            .with("edgeCorrelation", (r * 100.0).round() / 100.0),
+                    );
+                    pillow_px.extend(comp.iter().filter(|p| dist[p] == 0.0));
+                }
+            }
+            // Silhouette jaggies: on each outer profile, a run that is ≥ 2 px longer or shorter than
+            // both neighbours inside a steadily stepping section.
+            let mut jag: HashSet<(i64, i64)> = HashSet::new();
+            let mut profile = |samples: Vec<(i64, i64)>, map: &dyn Fn(i64, i64) -> (i64, i64)| {
+                // samples: (t, e) for consecutive t
+                let mut groups: Vec<(i64, i64, i64)> = Vec::new(); // (t_start, len, e)
+                for (t, e) in samples {
+                    match groups.last_mut() {
+                        Some(g) if g.2 == e && g.0 + g.1 == t => g.1 += 1,
+                        _ => groups.push((t, 1, e)),
+                    }
+                }
+                let mut k = 0;
+                while k + 2 < groups.len() {
+                    // section of groups with constant unit step
+                    let mut j = k + 1;
+                    let step = groups[k + 1].2 - groups[k].2;
+                    while j < groups.len()
+                        && groups[j].2 - groups[j - 1].2 == step
+                        && step.abs() == 1
+                        && groups[j].0 == groups[j - 1].0 + groups[j - 1].1
+                    {
+                        j += 1;
+                    }
+                    if j - k >= 4 {
+                        for m in k + 1..j - 1 {
+                            let (a0, b0, c0) = (groups[m - 1].1, groups[m].1, groups[m + 1].1);
+                            if (b0 >= a0 + 2 && b0 >= c0 + 2) || (b0 + 2 <= a0 && b0 + 2 <= c0) {
+                                jag.insert(map(groups[m].0 + groups[m].1 / 2, groups[m].2));
+                            }
+                        }
+                    }
+                    k = j.max(k + 1);
+                }
+            };
+            let mut rows: Vec<(i64, i64, i64)> = Vec::new(); // (y, minx, maxx)
+            for y in 0..px.h {
+                let xs: Vec<i64> = (0..px.w).filter(|&x| at(x, y)).collect();
+                if let (Some(&a0), Some(&b0)) = (xs.first(), xs.last()) {
+                    rows.push((y, a0, b0));
+                }
+            }
+            let mut cols: Vec<(i64, i64, i64)> = Vec::new();
+            for x in 0..px.w {
+                let ys: Vec<i64> = (0..px.h).filter(|&y| at(x, y)).collect();
+                if let (Some(&a0), Some(&b0)) = (ys.first(), ys.last()) {
+                    cols.push((x, a0, b0));
+                }
+            }
+            profile(rows.iter().map(|r| (r.0, r.1)).collect(), &|t, e| (e, t));
+            profile(rows.iter().map(|r| (r.0, r.2)).collect(), &|t, e| (e, t));
+            profile(cols.iter().map(|c| (c.0, c.1)).collect(), &|t, e| (t, e));
+            profile(cols.iter().map(|c| (c.0, c.2)).collect(), &|t, e| (t, e));
+
+            // ---- verdict --------------------------------------------------------------------
+            let n_fig = figure.len() as f32;
+            let band_per100 = bands.len() as f32 * 100.0 / n_fig;
+            let stripe_pct = stripes.len() as f32 * 100.0 / n_fig;
+            let orphan_pct = orphans.len() as f32 * 100.0 / n_fig;
+            let jag_per100 = jag.len() as f32 * 100.0 / edge.len().max(1) as f32;
+            let mut issues: Vec<Json> = Vec::new();
+            let mut score = 100.0f32;
+            let mut issue = |code: &str, sev: f32, msg: String, fix: &str| {
+                score -= sev;
+                issues.push(
+                    Json::obj()
+                        .with("code", code)
+                        .with(
+                            "severity",
+                            if sev >= 15.0 {
+                                "high"
+                            } else if sev >= 7.0 {
+                                "medium"
+                            } else {
+                                "low"
+                            },
+                        )
+                        .with("message", msg)
+                        .with("fix", fix),
+                );
+            };
+            if span < 55.0 {
+                issue(
+                    "low_value_contrast",
+                    ((55.0 - span) * 0.8).clamp(5.0, 30.0),
+                    format!("light/dark span of the interior is {span:.0} (aim ≥ 55): the sprite reads flat and muddy in greyscale"),
+                    "widen the ramps (lightest tone L ≥ 80, darkest ≤ 25), pick lighter base colours, re-light with shade_form",
+                );
+            }
+            if p90 < 62.0 {
+                issue(
+                    "no_light_side",
+                    10.0,
+                    format!("the brightest 10% of the interior only reach L {p90:.0}"),
+                    "give every material a real lit tone (light_steps ≥ 1) and use it on the side facing the light",
+                );
+            }
+            if let Some(ec) = edge_contrast
+                && ec < 10.0
+            {
+                issue(
+                    "weak_silhouette",
+                    12.0,
+                    format!("silhouette edge differs from the background by only {ec:.0} L"),
+                    "use a darker outline or a lighter background so the shape pops",
+                );
+            }
+            if let Some(fc) = fig_contrast
+                && fc < 15.0
+            {
+                issue(
+                    "figure_blends_into_background",
+                    10.0,
+                    format!("the figure's average value is only {fc:.0} L from the background"),
+                    "separate figure and background values (light figure on dark ground or vice versa)",
+                );
+            }
+            if band_per100 > 4.0 {
+                issue(
+                    "banding",
+                    (band_per100 - 4.0).clamp(3.0, 15.0),
+                    format!("{} banding pairs ({band_per100:.1} per 100 px): parallel same-length runs of different colours", bands.len()),
+                    "fix_banding, or shift one end of each marked run by hand",
+                );
+            }
+            if !pillows.is_empty() {
+                issue(
+                    "pillow_shading",
+                    (pillows.len() as f32 * 6.0).min(25.0),
+                    format!("{} region(s) lit from their own centre (light follows the outline, not a light direction)", pillows.len()),
+                    "re-light those regions with shade_form (inflate/capsule/sphere) from one light direction",
+                );
+            }
+            if stripe_pct > 1.2 {
+                issue(
+                    "stripes",
+                    (stripe_pct * 4.0).clamp(3.0, 12.0),
+                    format!("{stripe_pct:.1}% of pixels are 1-px streaks"),
+                    "merge streaks into the neighbouring cluster (pixel_cleanup) or re-light with shade_form",
+                );
+            }
+            if jag_per100 > 2.5 {
+                issue(
+                    "jaggies",
+                    (jag_per100 * 1.5).clamp(3.0, 12.0),
+                    format!("{} jagged steps on the silhouette ({jag_per100:.1} per 100 edge px)", jag.len()),
+                    "redraw the curve with draw_path (monotone runs) or antialias the stair-steps",
+                );
+            }
+            if orphan_pct > 9.0 {
+                issue(
+                    "noise",
+                    ((orphan_pct - 9.0) * 1.5).clamp(3.0, 10.0),
+                    format!("{orphan_pct:.1}% of interior pixels are isolated single pixels"),
+                    "group tones into clusters; remove stray pixels",
+                );
+            }
+            if colors.len() > 64 {
+                issue("too_many_colors", 8.0, format!("{} colours", colors.len()), "quantize to the material ramps");
+            }
+            let score = score.clamp(0.0, 100.0).round();
+
+            // ---- marked value map ---------------------------------------------------------------
+            let s = super::args::scale(a, (512 / px.w.max(px.h)).clamp(1, 8) as u32)? as i64;
+            let mut out = Image::new((px.w * s) as u32, (px.h * s) as u32);
+            let mut put = |x: i64, y: i64, c: [u8; 4]| {
+                for yy in 0..s {
+                    for xx in 0..s {
+                        let o = (((y * s + yy) * px.w * s + x * s + xx) * 4) as usize;
+                        out.pixels[o..o + 4].copy_from_slice(&c);
+                    }
+                }
+            };
+            for y in 0..px.h {
+                for x in 0..px.w {
+                    let v = px.get(x, y);
+                    if v == TRANSPARENT {
+                        put(x, y, if (x + y) % 2 == 0 { [40, 40, 44, 255] } else { [52, 52, 56, 255] });
+                    } else {
+                        let g = (lightness(v) * 2.55).clamp(0.0, 255.0) as u8;
+                        put(x, y, [g, g, g, 255]);
+                    }
+                }
+            }
+            let tint = |v: u32, c: [u8; 3]| -> [u8; 4] {
+                let g = lightness(v) / 100.0;
+                [
+                    (c[0] as f32 * (0.45 + 0.55 * g)) as u8,
+                    (c[1] as f32 * (0.45 + 0.55 * g)) as u8,
+                    (c[2] as f32 * (0.45 + 0.55 * g)) as u8,
+                    255,
+                ]
+            };
+            for &(x, y, len, h) in &bands {
+                for i in 0..len {
+                    for o in 0..2 {
+                        let (bx, by) = if h { (x + i, y + o) } else { (x + o, y + i) };
+                        put(bx, by, tint(px.get(bx, by), [255, 70, 70]));
+                    }
+                }
+            }
+            for &(x, y) in &stripes {
+                put(x, y, tint(px.get(x, y), [255, 220, 60]));
+            }
+            for &(x, y) in &pillow_px {
+                put(x, y, [60, 220, 255, 255]);
+            }
+            for &(x, y) in &jag {
+                put(x, y, [255, 60, 255, 255]);
+            }
+            let png = crate::export::png::encode(&out);
+            let result = Json::obj()
+                .with("score", score)
+                .with("pixels", figure.len())
+                .with("colors", colors.len())
+                .with(
+                    "values",
+                    Json::obj().with("p10", p10.round()).with("median", p50.round()).with("p90", p90.round()).with("span", span.round()).with("background", bg_l.map(|b| b.round())),
+                )
+                .with("silhouette", Json::obj().with("edgeContrast", edge_contrast.map(|v| v.round())).with("figureContrast", fig_contrast.map(|v| v.round())).with("outlineColor", Rgba::from_u32(outline_color).to_hex()).with("outlineShare", ((outline_n as f32 / edge.len().max(1) as f32) * 100.0).round() / 100.0))
+                .with("banding", Json::obj().with("pairs", bands.len()).with("per100", (band_per100 * 10.0).round() / 10.0))
+                .with("pillow", Json::Arr(pillows))
+                .with("stripesPercent", (stripe_pct * 10.0).round() / 10.0)
+                .with("orphansPercent", (orphan_pct * 10.0).round() / 10.0)
+                .with("jaggies", jag.len())
+                .with("issues", Json::Arr(issues))
+                .with("legend", "PNG: greyscale value map; red = banding pairs, yellow = 1-px stripes, cyan = pillow-shaded region edges, magenta = silhouette jaggies");
+            Ok(Query { result, binary: png })
+        }
+
+        /// Pixel Fixer automatic banding correction on one cel: shrink one end of each banded run,
+        /// using the in-between ramp tone (or the neighbour's colour), while the error keeps falling.
+        pub fn fix_banding(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let (l, f) = target(doc, a)?;
+            let passes = opt_i64(a, "passes")?.unwrap_or(6).clamp(1, 32);
+            let mode = opt_str(a, "mode")?.unwrap_or("average");
+            if !matches!(mode, "average" | "copy") {
+                return Err(CmdError::invalid("'mode' is average or copy"));
+            }
+            let ramps = super::artist::ramp_index(doc);
+            let mut px = Px::from_grid(doc.cel_mut(l, f));
+            let fig = |v: u32| v != TRANSPARENT;
+            let before = banding(&px, &fig).len();
+            let mut best = before;
+            for pass in 0..passes {
+                let bands = banding(&px, &fig);
+                if bands.is_empty() {
+                    break;
+                }
+                let mut next = px.clone();
+                let mut touched: HashSet<(i64, i64)> = HashSet::new();
+                for &(x, y, len, h) in &bands {
+                    // The lower/right run of the pair is S; try its start, then its end.
+                    let (sx, sy) = if h { (x, y + 1) } else { (x + 1, y) };
+                    let ends = if pass % 2 == 0 { [0, len - 1] } else { [len - 1, 0] };
+                    for e in ends {
+                        let (ex, ey) = if h { (sx + e, sy) } else { (sx, sy + e) };
+                        let (ox, oy) = if h { (ex + if e == 0 { -1 } else { 1 }, ey) } else { (ex, ey + if e == 0 { -1 } else { 1 }) };
+                        let (c, nb) = (px.get(ex, ey), px.get(ox, oy));
+                        if nb == TRANSPARENT || touched.contains(&(ex, ey)) {
+                            continue;
+                        }
+                        let v = if mode == "average" { between(doc, &ramps, c, nb, false).unwrap_or(nb) } else { nb };
+                        next.d[(ey * px.w + ex) as usize] = v;
+                        touched.insert((ex, ey));
+                        break;
+                    }
+                }
+                let after = banding(&next, &fig).len();
+                if after >= best {
+                    break;
+                }
+                best = after;
+                px = next;
+            }
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            for y in 0..px.h {
+                for x in 0..px.w {
+                    let v = px.get(x, y);
+                    if grid.get(x, y) != v {
+                        changed += grid.set(x, y, v) as u64;
+                    }
+                }
+            }
+            Ok(Outcome::new(Json::obj().with("before", before).with("after", best).with("changed", changed), changed))
+        }
+
+        // ---- mannequin ----------------------------------------------------------------------------
+
+        /// A proportioned, posed body built from tapered capsules and form-lit with a skin ramp.
+        pub fn draw_figure(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let x0 = req_i64(a, "x")? as f64;
+            let ground = req_i64(a, "y")? as f64;
+            let height = opt_f64(a, "height")?.unwrap_or(doc.height as f64 * 0.8).clamp(16.0, 4096.0);
+            let heads = opt_f64(a, "heads")?.unwrap_or(7.0).clamp(2.0, 9.0);
+            let pose = opt_str(a, "pose")?.unwrap_or("contrapposto");
+            if !matches!(pose, "stand" | "contrapposto" | "walk") {
+                return Err(CmdError::invalid("'pose' is stand, contrapposto or walk"));
+            }
+            let fs = if opt_str(a, "facing")?.unwrap_or("right") == "left" { -1.0 } else { 1.0 };
+            let build = opt_f64(a, "build")?.unwrap_or(1.0).clamp(0.6, 1.6);
+            let hips = opt_f64(a, "hips")?.unwrap_or(1.0).clamp(0.7, 1.5);
+            let ramp_name = opt_str(a, "ramp")?.unwrap_or("skin").to_string();
+            let ri = doc
+                .ramps
+                .iter()
+                .position(|r| r.name == ramp_name)
+                .ok_or_else(|| CmdError::invalid(format!("define the '{ramp_name}' ramp first (ramp_set)")))?;
+            let ramp = doc.ramps[ri].colors.clone();
+            let base_i = opt_i64(a, "base")?.map(|b| b.clamp(0, ramp.len() as i64 - 1) as usize).unwrap_or((ramp.len() - 1) / 2);
+            let shade = opt_bool(a, "shade")?.unwrap_or(true);
+            let light = light_dir(a)?;
+            let bands = bands_arg(a)?;
+            let prefix = opt_str(a, "name")?.unwrap_or("Body").to_string();
+            let fi = frame_index(doc, a, "frame")?;
+            let fid = doc.frames[fi].id;
+
+            let h = height / heads; // one head
+            let body = height - h;
+            let yf = |f: f64| ground - f * body;
+            let top = ground - height;
+            // Pose: pelvis/shoulder shifts and tilts, foot placement, arm swing (in heads).
+            let (near, far) = (-fs, fs); // near side faces the viewer, opposite the facing direction
+            let (pdx, tilt, sdx, s_tilt, near_foot, far_foot, far_raise, near_swing, far_swing, knee_bend) = match pose {
+                "stand" => (0.0, 0.0, 0.0, 0.0, (near * 0.32, 0.0), (far * 0.28, 0.0), 0.0, 0.0, 0.0, 0.0),
+                "walk" => (0.05 * fs, 0.04, 0.08 * fs, 0.0, (fs * 0.6, 0.0), (-fs * 0.5, 0.0), 0.18, -0.35 * fs, 0.3 * fs, 0.12),
+                _ => (near * 0.16, 0.12, near * 0.04, -0.08, (near * 0.08, 0.0), (far * 0.5, 0.0), 0.06, 0.0, 0.05 * fs, 0.16),
+            };
+            let pelvis = (x0 + pdx * h, yf(0.585));
+            let hipw = 0.4 * h * hips * build;
+            // In a walk the pelvis turns: the forward (near) hip leads toward the facing side.
+            let (nh, fh) = if pose == "walk" { (fs * 0.35, -fs * 0.3) } else { (near, far * 0.85) };
+            let near_hip = (pelvis.0 + nh * hipw, pelvis.1 - tilt * h * 0.5);
+            let far_hip = (pelvis.0 + fh * hipw, pelvis.1 + tilt * h * 0.5);
+            let shoulder_c = (x0 + sdx * h, yf(0.94));
+            let shw = 0.82 * h * build;
+            let near_sh = (shoulder_c.0 + near * shw, shoulder_c.1 - s_tilt * h * 0.5);
+            let far_sh = (shoulder_c.0 + far * shw * 0.82, shoulder_c.1 + s_tilt * h * 0.5);
+            let head_c = (x0 + (sdx * 0.6 + 0.06 * fs) * h, top + 0.5 * h);
+            let ankle = |foot: (f64, f64), raise: f64| (x0 + foot.0 * h, ground - 0.24 * h - raise * h);
+            let near_ankle = ankle(near_foot, 0.0);
+            let far_ankle = ankle(far_foot, far_raise);
+            let knee = |hip: (f64, f64), ank: (f64, f64), bend: f64| {
+                let m = (hip.0 + (ank.0 - hip.0) * 0.48, hip.1 + (ank.1 - hip.1) * 0.48);
+                (m.0 + fs * bend * h, m.1)
+            };
+            let near_knee = knee(near_hip, near_ankle, if pose == "walk" { knee_bend } else { 0.0 });
+            let far_knee = knee(far_hip, far_ankle, knee_bend);
+            let toe = |ank: (f64, f64)| (ank.0 + fs * 0.5 * h, ground - 0.08 * h);
+            let arm = |sh: (f64, f64), side: f64, swing: f64| {
+                let elbow = (sh.0 + side * 0.2 * h + swing * h * 0.5, sh.1 + 1.3 * h);
+                let wrist = (elbow.0 + side * 0.1 * h + swing * h * 0.5, elbow.1 + 1.1 * h);
+                (elbow, wrist)
+            };
+            let (near_elbow, near_wrist) = arm(near_sh, near, near_swing);
+            let (far_elbow, far_wrist) = arm(far_sh, far, far_swing);
+
+            // Layers: far limbs, body, near limbs — or, with layers 5, each limb group apart so
+            // clothing can be stacked between them (sleeves over arms, skirts over thighs).
+            let split = opt_i64(a, "layers")?.unwrap_or(3) == 5;
+            let names: Vec<String> = if split {
+                vec![
+                    format!("{prefix} Far Arm"),
+                    format!("{prefix} Far Leg"),
+                    prefix.clone(),
+                    format!("{prefix} Near Leg"),
+                    format!("{prefix} Near Arm"),
+                ]
+            } else {
+                vec![format!("{prefix} Far"), prefix.clone(), format!("{prefix} Near")]
+            };
+            // role: 0 far arm, 1 far leg, 2 body, 3 near leg, 4 near arm → layer slot
+            let slot = |role: usize| if split { role } else { [0, 0, 1, 2, 2][role] };
+            let mut ids = Vec::new();
+            for n in &names {
+                let id = match doc.layers.iter().find(|l| &l.name == n) {
+                    Some(l) => l.id,
+                    None => doc.insert_layer(n, doc.layers.len()),
+                };
+                ids.push(id);
+            }
+            enum Form {
+                Capsule(Pt, f64, Pt, f64),
+                Ellipse(Pt, f64, f64),
+                Inflate,
+            }
+            struct Part {
+                layer: usize,
+                poly: Vec<Pt>,
+                form: Form,
+                depth: i64,
+            }
+            let cap = |layer: usize, p0: Pt, r0: f64, p1: Pt, r1: f64, depth: i64| Part {
+                layer,
+                poly: capsule_poly(p0, r0, p1, r1),
+                form: Form::Capsule(p0, r0, p1, r1),
+                depth,
+            };
+            let ell = |layer: usize, c: Pt, rx: f64, ry: f64, depth: i64| Part {
+                layer,
+                poly: (0..24)
+                    .map(|i| {
+                        let t = i as f64 / 24.0 * std::f64::consts::TAU;
+                        (c.0 + rx * t.cos(), c.1 + ry * t.sin())
+                    })
+                    .collect(),
+                form: Form::Ellipse(c, rx, ry),
+                depth,
+            };
+            let b = build;
+            let calf = |k: Pt, an: Pt| (k.0 + (an.0 - k.0) * 0.32, k.1 + (an.1 - k.1) * 0.32);
+            let mut parts: Vec<Part> = vec![
+                // far side (one tone deeper)
+                cap(slot(1), far_hip, 0.36 * h * b * hips, far_knee, 0.22 * h * b, -1),
+                cap(slot(1), far_knee, 0.22 * h * b, calf(far_knee, far_ankle), 0.25 * h * b, -1),
+                cap(slot(1), calf(far_knee, far_ankle), 0.25 * h * b, far_ankle, 0.12 * h * b, -1),
+                cap(slot(1), far_ankle, 0.13 * h * b, toe(far_ankle), 0.11 * h * b, -1),
+                ell(slot(0), far_sh, 0.26 * h * b, 0.3 * h * b, -1),
+                cap(slot(0), far_sh, 0.22 * h * b, far_elbow, 0.16 * h * b, -1),
+                cap(slot(0), far_elbow, 0.17 * h * b, far_wrist, 0.11 * h * b, -1),
+                ell(slot(0), (far_wrist.0, far_wrist.1 + 0.3 * h), 0.15 * h * b, 0.27 * h, -1),
+                // body
+                cap(slot(2), (head_c.0 - 0.02 * h * fs, head_c.1 + 0.4 * h), 0.19 * h * b, shoulder_c, 0.22 * h * b, 0),
+                ell(slot(2), head_c, 0.4 * h, 0.5 * h, 0),
+            ];
+            // Torso: closed spline through shoulder, armpit, waist, hip, crotch on both sides.
+            let side_pts = |side: f64, sh: Pt, hip: Pt, k: f64| {
+                vec![
+                    (sh.0 - side * 0.02 * h * k, sh.1 + 0.02 * h),
+                    (sh.0 - side * 0.1 * h, sh.1 + 0.6 * h),
+                    (shoulder_c.0 + (pelvis.0 - shoulder_c.0) * 0.55 + side * 0.55 * h * b * k, yf(0.74)),
+                    (hip.0 + side * 0.3 * h * k, hip.1 + 0.02 * h),
+                    (hip.0 + side * 0.1 * h, hip.1 + 0.32 * h),
+                ]
+            };
+            let mut torso = side_pts(near, near_sh, near_hip, 1.0);
+            torso.push((pelvis.0, pelvis.1 + 0.36 * h));
+            let mut far_side = side_pts(far, far_sh, far_hip, 0.85);
+            far_side.reverse();
+            torso.extend(far_side);
+            torso.push((shoulder_c.0 + far * 0.32 * h, shoulder_c.1 - 0.06 * h));
+            torso.push((shoulder_c.0 + far * 0.14 * h, shoulder_c.1 - 0.16 * h));
+            torso.push((shoulder_c.0 + near * 0.14 * h, shoulder_c.1 - 0.16 * h));
+            torso.push((shoulder_c.0 + near * 0.36 * h, shoulder_c.1 - 0.06 * h));
+            parts.push(Part { layer: slot(2), poly: catmull(&torso, true), form: Form::Inflate, depth: 0 });
+            parts.extend([
+                cap(slot(3), near_hip, 0.38 * h * b * hips, near_knee, 0.23 * h * b, 0),
+                cap(slot(3), near_knee, 0.23 * h * b, calf(near_knee, near_ankle), 0.26 * h * b, 0),
+                cap(slot(3), calf(near_knee, near_ankle), 0.26 * h * b, near_ankle, 0.13 * h * b, 0),
+                cap(slot(3), near_ankle, 0.14 * h * b, toe(near_ankle), 0.12 * h * b, 0),
+                ell(slot(4), near_sh, 0.28 * h * b, 0.32 * h * b, 0),
+                cap(slot(4), near_sh, 0.24 * h * b, near_elbow, 0.17 * h * b, 0),
+                cap(slot(4), near_elbow, 0.18 * h * b, near_wrist, 0.12 * h * b, 0),
+                ell(slot(4), (near_wrist.0, near_wrist.1 + 0.3 * h), 0.16 * h * b, 0.28 * h, 0),
+            ]);
+            let base = ramp[base_i];
+            let mut changed = 0u64;
+            for (li, &lid) in ids.iter().enumerate() {
+                let d = doc.layers.iter().find(|l| l.id == lid).map(|l| l.density.max(1)).unwrap_or(1) as f64;
+                let (gw, gh) = doc.layer_dims(lid);
+                let mut steps: HashMap<(i64, i64), i64> = HashMap::new();
+                let mut bases: HashMap<(i64, i64), u32> = HashMap::new();
+                for p in parts.iter().filter(|p| p.layer == li) {
+                    let poly: Vec<Pt> = p.poly.iter().map(|q| (q.0 * d, q.1 * d)).collect();
+                    let mask = fill_mask(&poly, gw as i64, gh as i64);
+                    let set: HashSet<(i64, i64)> = mask.iter().copied().collect();
+                    let inflate = if matches!(p.form, Form::Inflate) { inflate_normals(&set) } else { HashMap::new() };
+                    for &(x, y) in &mask {
+                        let c = ((x as f64 + 0.5) / d, (y as f64 + 0.5) / d);
+                        let n = match p.form {
+                            Form::Capsule(a0, r0, a1, r1) => capsule_normal(c, a0, r0, a1, r1).unwrap_or([0.0, 0.0, 1.0]),
+                            Form::Ellipse(cc, rx, ry) => sphere_normal(c, cc, rx, ry).unwrap_or([0.0, 0.0, 1.0]),
+                            Form::Inflate => inflate.get(&(x, y)).copied().unwrap_or([0.0, 0.0, 1.0]),
+                        };
+                        steps.insert((x, y), if shade { bands.step(n, light) + p.depth } else { p.depth });
+                        bases.insert((x, y), base);
+                    }
+                }
+                tidy(&mut steps);
+                {
+                    let grid = doc.cel_mut(lid, fid);
+                    for &(x, y) in bases.keys() {
+                        grid.set(x, y, base);
+                    }
+                }
+                changed += apply_steps(doc, lid, fid, &steps, &bases);
+            }
+            let pt = |p: Pt| Json::Arr(vec![Json::from((p.0 * 10.0).round() / 10.0), Json::from((p.1 * 10.0).round() / 10.0)]);
+            let joints = Json::obj()
+                .with("head", pt(head_c))
+                .with("headRadius", (h * 0.45 * 10.0).round() / 10.0)
+                .with("neck", pt(shoulder_c))
+                .with("shoulderNear", pt(near_sh))
+                .with("shoulderFar", pt(far_sh))
+                .with("elbowNear", pt(near_elbow))
+                .with("elbowFar", pt(far_elbow))
+                .with("wristNear", pt(near_wrist))
+                .with("wristFar", pt(far_wrist))
+                .with("waist", pt((shoulder_c.0 + (pelvis.0 - shoulder_c.0) * 0.55, yf(0.74))))
+                .with("pelvis", pt(pelvis))
+                .with("hipNear", pt(near_hip))
+                .with("hipFar", pt(far_hip))
+                .with("kneeNear", pt(near_knee))
+                .with("kneeFar", pt(far_knee))
+                .with("ankleNear", pt(near_ankle))
+                .with("ankleFar", pt(far_ankle))
+                .with("toeNear", pt(toe(near_ankle)))
+                .with("toeFar", pt(toe(far_ankle)));
+            Ok(Outcome::new(
+                Json::obj()
+                    .with("layers", Json::Arr(names.iter().map(|n| Json::from(n.as_str())).collect()))
+                    .with("headSize", (h * 10.0).round() / 10.0)
+                    .with("joints", joints)
                     .with("changed", changed),
                 changed,
             ))
@@ -4754,6 +6445,7 @@ pub mod commands {
                 "voxel_render_sheet" => super::voxel::voxel_render_sheet(doc, cache, a),
                 "voxel_pick" => super::voxel::voxel_pick(doc, cache, a),
                 "render_lit" => super::gamedev::render_lit(doc, a),
+                "art_review" => super::artkit::art_review(doc, a),
                 "tilemap_render" => super::gamedev::tilemap_render(doc, a),
                 "status" => q(Json::obj()
                     .with("engine", "pixcore")
@@ -6954,6 +8646,12 @@ pub mod commands {
         ("shade", Kind::Mutate),
         ("draw_stroke", Kind::Mutate),
         ("layer_set", Kind::Mutate),
+        ("art_review", Kind::Read),
+        ("fix_banding", Kind::Mutate),
+        ("shade_form", Kind::Mutate),
+        ("draw_path", Kind::Mutate),
+        ("antialias", Kind::Mutate),
+        ("draw_figure", Kind::Mutate),
         // game production
         ("slice_set", Kind::Mutate),
         ("slice_delete", Kind::Mutate),
@@ -7015,6 +8713,11 @@ pub mod commands {
             "shade" => artist::shade(doc, a),
             "draw_stroke" => artist::draw_stroke(doc, a),
             "layer_set" => artist::layer_set(doc, a),
+            "fix_banding" => artkit::fix_banding(doc, a),
+            "shade_form" => artkit::shade_form(doc, a),
+            "draw_path" => artkit::draw_path(doc, a),
+            "antialias" => artkit::antialias(doc, a),
+            "draw_figure" => artkit::draw_figure(doc, a),
             "image_import" => artist::reference_import(doc, a, payload),
             "slice_set" => gamedev::slice_set(doc, a),
             "slice_delete" => gamedev::slice_delete(doc, a),
