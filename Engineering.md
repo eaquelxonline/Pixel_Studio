@@ -37,6 +37,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 17. [Editör arayüzü (Windows 10/11 ve Android)](#17-editör-arayüzü-windows-1011-ve-android)
 18. [Kalite araçları: eleştirmen, form ışığı, eğriler, manken](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)
 19. [Şelale: 256×256, 30 karelik döngü](#19-şelale-256256-30-karelik-döngü)
+20. [Korku aurası: 256×256, 30 karelik döngü](#20-korku-aurası-256256-30-karelik-döngü)
 
 ---
 
@@ -1075,4 +1076,35 @@ Kaynaklar:
 | Sis | Bayer 4×4 dither'lı, yavaşça kıpırdayan bulut (yarı saydam piksel yerine) | 30 kare |
 
 **Doğrulama:** 30. kare 0. kareyle piksel piksel aynı (hesaplanarak denetlendi). Son kareden ilk kareye geçişte değişen piksel sayısı (4159), normal kare geçişleriyle (4012–4357) aynı aralıkta. Yani döngüde atlama yok. `art_review` puanı 86. Kalan tek uyarı, sahnenin açık gökyüzü kenarını arka plan saydığı için değer aralığını düşük ölçmesi.
+
+## 20. Korku aurası: 256×256, 30 karelik döngü
+
+![Aura önizleme](Assets/Gallery/aura_preview_x2.gif) ![Yalnız aura](Assets/Gallery/aura_only.gif)
+
+256×256, 30 kare × 60 ms = 1,8 saniyelik dikişsiz döngü. Üretici: `python3 Assets/Sprites.py aura` → `run_script Assets/Build/aura_showcase.jsonl out/`.
+
+**Çıktılar:**
+- Figürlü önizleme GIF'i.
+- Oyun için yalnızca auradan oluşan saydam GIF, 6×5 sprite sheet + JSON (`Assets/Gallery/aura_sheet.png`) ve 30 PNG kare.
+- `.pxs` proje dosyası.
+
+Aura katmanları yarı saydam piksel içermez; her oyun motorunda keskin kalır.
+
+**Figür (önizleme):** Boynuzlu, kukuletalı, yırtık pelerinli bir silüet. Gövde `draw_figure` ile, pelerin, kukuleta ve boynuzlar `draw_path` ile çizildi; pelerin `shade_form` ile gölgelendi. Altta duran kırmızı bir kopyaya kontur verildiği için yalnızca **dış** silüet parlıyor; içeride eklem çizgisi yok. Kukuletanın içi boşluk gibi siyah, iki yanan göz var.
+
+**Aura öğeleri** (hepsinin periyodu 30'u tam böler):
+
+| Öğe | Yöntem |
+| --- | --- |
+| Kara alev | Ters ateş: kenar kan kırmızısı, iç boşluk siyahı. Dikeyde uzun, yatayda dar periyodik gürültü sayesinde alev dilleri yükseldikçe kopar. 30 karede bir "nefes alır". |
+| Hale | Silüetin dışındaki 12 piksellik mesafe alanında yukarı akan titrek ateş, gövdeyi sarar. |
+| Rün çemberi | İki elips ve 3 şekilden oluşan 12 rün. Döngüde 3 rün aralığı döner; açılar tamsayı adımdan hesaplanır. |
+| Ruhlar | Çığlık atan, çenesi açılıp kapanan kafatasları yükselir ve Bayer dither ile dağılarak kaybolur. |
+| Gözler | Alevlerin içinde açılıp kapanan kırmızı göz çiftleri. |
+| Şimşek | İki vuruşta ellerden zemine dallanan kızıl şimşek. |
+| Kıvılcım ve pençeler | 54 yükselen kıvılcım; zeminde nefesle uzayıp kısalan gölge pençeleri. |
+
+Alev ve hale tek piksellik benekleri çoğunluk filtresiyle temizlenir.
+
+**Döngü doğrulaması:** Hareket fonksiyonları 30 kare kaydırıldığında piksel piksel aynı sonucu veriyor. Bunun için iki önlem alındı: faz periyoda indirgeniyor, kare indeksi 30'a göre normalize ediliyor (`sin(2π)` ≠ 0 kaymasına karşı). Son kareden ilk kareye geçişte değişen piksel sayısı (12876), normal kare geçişleri (11493–13900) aralığında.
 

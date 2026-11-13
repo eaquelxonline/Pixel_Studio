@@ -2756,12 +2756,410 @@ def build_waterfall(out):
     print(f"Waterfall: {len(cmds)} scenery commands + {N} frames of moving water")
 
 
+# ═══ Dread aura: 256×256, 30-frame seamless loop ════════════════════════════════════════════════
+
+def build_aura(out):
+    """A terrifying dark aura, 256×256, 30 frames @ 60 ms, seamless. Preview: a hooded, horned
+    silhouette (draw_figure + draw_path cloak, red rim only on the outer edge). The aura itself is
+    transparent and game-ready: inverted dark fire (blood-red rim, void core), a flickering halo
+    hugging the silhouette, a rotating rune circle, wailing skull-souls dissolving as they rise,
+    eyes opening in the flames, embers, cracking red lightning and clawing ground tendrils."""
+    import base64
+    import struct
+    import zlib
+    W = H = 256
+    N = 30
+    MS = 60
+    V = 4                    # rise speed px/frame
+    PER = V * N              # 120 px vertical period
+    CX, GY = 128, 214        # aura axis, ground line
+
+    RAMPS = {
+        "dread": ["#050208", "#12061A", "#2A0A20", "#4E0C1C", "#8A1222", "#C8202A", "#F2433A", "#FF8C64", "#FFE2D2"],
+        "shade": ["#030206", "#08050E", "#110A18", "#1C1024"],
+        "night": ["#06040A", "#0B0710", "#120B18", "#1A1022"],
+        "rune":  ["#3A0814", "#7A0E1E", "#D0202C", "#FF6A50", "#FFD8C8"],
+    }
+    D = RAMPS["dread"]
+    rng = random.Random(13)
+    cmds = []
+
+
+    def c(op, **a):
+        cmds.append({"op": op, **a})
+
+
+    def rgba(h):
+        h = h.lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+
+
+    DC = [rgba(h) for h in D]
+    RC = [rgba(h) for h in RAMPS["rune"]]
+
+
+    def png(rows):
+        raw = bytearray()
+        for row in rows:
+            raw.append(0)
+            for p in row:
+                raw.extend(p if p else (0, 0, 0, 0))
+
+        def chunk(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+
+
+    def blank():
+        return [[None] * W for _ in range(H)]
+
+
+    BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+
+    # ---- scene (engine commands) --------------------------------------------------------------------
+    LAYERS = ["BG", "AuraBack", "Rim Far", "Rim", "Rim Near", "Figure Far", "Figure", "Figure Near", "Cloak", "AuraFront", "FX"]
+    c("project_new", width=W, height=H, name="Dread Aura")
+    c("layer_set", layer=0, name="BG")
+    for i, n in enumerate(LAYERS[1:], start=1):
+        c("layer_create", name=n, index=i)
+    for n, r in RAMPS.items():
+        c("ramp_set", name=n, colors=r)
+    NIGHT = RAMPS["night"]
+    for y0, y1, k in [(0, 70, 0), (70, 140, 1), (140, 200, 2), (200, 256, 1)]:
+        c("draw_rectangle", layer="BG", x=0, y=y0, width=W, height=y1 - y0, color=NIGHT[k], filled=True)
+    for y0, k in [(70, 1), (140, 2)]:
+        c("set_pixels", layer="BG", color=NIGHT[k], pixels=[[x, y0 - 1 - (x // 2) % 2] for x in range(0, W, 2)])
+    c("draw_path", layer="BG", points=[[10, 222], [128, 206], [246, 222], [128, 240]], closed=True, filled=True, color=NIGHT[0])
+    # The figure: a hooded, horned silhouette in a tattered cloak. A red copy underneath is outlined,
+    # so only the OUTER rim glows (no puppet-like joint lines).
+    FIG = dict(x=CX, y=GY, height=122, heads=7.2, pose="stand", facing="right", build=1.08)
+    c("ramp_set", name="rimred", colors=[D[4], D[4]])
+    c("draw_figure", ramp="shade", shade=True, light=[0, -0.4, 1], shadow_steps=1, light_steps=1, name="Figure", **FIG)
+    c("draw_figure", ramp="rimred", shade=False, name="Rim", **FIG)
+    CLOAK = [[110, 56], [120, 48], [136, 48], [146, 56], [154, 80], [160, 120], [166, 160], [172, 196], [164, 191], [160, 203],
+             [152, 194], [146, 205], [138, 195], [130, 206], [122, 195], [114, 204], [108, 193], [100, 202], [96, 190], [88, 196],
+             [94, 160], [100, 120], [104, 80]]
+    HOOD = [[112, 40], [117, 26], [128, 21], [139, 26], [144, 40], [146, 56], [128, 62], [110, 56]]
+    HORNS = [([[118, 28], [112, 18], [106, 6], [110, 2]], [4, 3, 2, 1]), ([[138, 28], [144, 18], [150, 6], [146, 2]], [4, 3, 2, 1])]
+    for layer, col in (("Cloak", RAMPS["shade"][2]), ("Rim", D[4])):
+        c("draw_path", layer=layer, points=CLOAK, curve="polyline", closed=True, filled=True, color=col)
+        c("draw_path", layer=layer, points=HOOD, closed=True, filled=True, color=col)
+        for pts, w in HORNS:
+            c("draw_path", layer=layer, points=pts, width=w, color=col)
+    c("shade_form", layer="Cloak", ramp="shade", light=[0, -0.6, 0.8], shadow_steps=2, light_steps=1)
+    # folds and the black void of the hood, with two burning eyes
+    for x0 in (112, 124, 134, 146):
+        c("draw_path", layer="Cloak", points=[[x0, 70], [x0 + (x0 - 128) * 0.15, 130], [x0 + (x0 - 128) * 0.3, 190]], color=RAMPS["shade"][0])
+    c("draw_path", layer="Cloak", points=[[119, 36], [128, 30], [137, 36], [136, 50], [128, 54], [120, 50]], closed=True, filled=True, color="#000000")
+    c("set_pixels", layer="Cloak", pixels=[[122, 41, D[6]], [123, 41, D[8]], [124, 41, D[6]], [132, 41, D[6]], [133, 41, D[8]], [134, 41, D[6]],
+                                          [123, 42, D[4]], [133, 42, D[4]]])
+    for layer in ("Rim Far", "Rim", "Rim Near"):
+        c("outline", layer=layer, color=D[5], mode="solid")
+    c("frame_set_duration", frame=0, duration=MS)
+    for i in range(1, N):
+        c("frame_duplicate", frame=i - 1)
+
+
+    # ---- periodic fields ----------------------------------------------------------------------------
+    def field(seed, terms, kx=(0.05, 0.3), ky=(1, 5)):
+        r = random.Random(seed)
+        comps = [(r.uniform(*kx) * r.choice([-1, 1]), r.randint(*ky), r.uniform(0, 2 * math.pi), r.uniform(0.5, 1.0)) for _ in range(terms)]
+        tot = sum(c[3] for c in comps)
+        def f(x, yy):
+            return sum(a * math.sin(fx * x + 2 * math.pi * k * yy / PER + p) for fx, k, p, a in comps) / tot
+        return f
+
+
+    BACK = field(1, 7, (0.16, 0.5), (1, 3))
+    FRONT = field(2, 6, (0.2, 0.55), (1, 4))
+    WOB = field(3, 3, (0.02, 0.06), (1, 2))
+
+
+    def half_width(y):
+        t = max(0.0, min(1.0, (y - 10) / (GY - 10)))
+        return 34 + 52 * t ** 0.7
+
+
+    def flames(rows, f, t, y_from, y_to, scale, thr, front=False):
+        pulse = 0.07 * math.sin(2 * math.pi * t / N)
+        for y in range(y_from, y_to):
+            hw = half_width(y) * scale * (1 + pulse)
+            for x in range(int(CX - hw - 20), int(CX + hw + 21)):
+                if not 0 <= x < W:
+                    continue
+                yy = (y + V * t) % PER                                           # exact phase: frame 30 == frame 0
+                sway = 6 * WOB(x, yy)
+                shape = 1 - abs(x - CX + sway) / hw
+                n = f(x, yy)
+                v = shape * 0.85 + 0.6 * n + pulse
+                v -= 0.22 * max(0.0, 1 - (y - 4) / (GY - 4)) ** 1.6                  # tongues break apart as they rise
+                if front:
+                    v -= 0.25 * max(0.0, (GY - 26 - y) / 26)                     # front tongues only near the feet
+                if v <= thr:
+                    continue
+                e = v - thr
+                # Bright rim, void core: the inverted fire of a dark aura.
+                if e < 0.05:
+                    k = 6 if n > 0.35 else 5
+                elif e < 0.11:
+                    k = 4
+                elif e < 0.2:
+                    k = 3
+                elif e < 0.32:
+                    k = 2
+                elif e < 0.5:
+                    k = 1
+                else:
+                    k = 0
+                if k >= 5 and n > 0.62:
+                    k = 7                                                       # hot sparks on the rim
+                rows[y][x] = DC[k]
+
+
+    def rune_ring(rows, t):
+        """Ground circle: two ellipses and 12 runes, rotating one rune spacing per loop."""
+        rx, ry, cy = 76, 17, GY + 4
+        glow = 2 if (t // 3) % 5 else 3
+        for i in range(720):
+            a = 2 * math.pi * i / 720
+            for rr, k in ((1.0, glow), (0.82, 1)):
+                x, y = round(CX + math.cos(a) * rx * rr), round(cy + math.sin(a) * ry * rr)
+                if 0 <= x < W and 0 <= y < H:
+                    rows[y][x] = RC[k]
+        glyphs = [[(0, -2), (0, -1), (0, 0), (0, 1), (-1, -1), (1, 1)], [(-1, -2), (0, -1), (1, 0), (0, 1), (-1, 2)],
+                  [(-1, 0), (0, 0), (1, 0), (0, -2), (0, 2), (0, -1)], [(-1, -2), (-1, -1), (-1, 0), (0, 0), (1, 0), (1, 1)]]
+        for i in range(12):
+            # three rune spacings per loop (the glyph pattern repeats every 3); the angle comes from an
+            # integer step so frame 30 lands on exactly the same pixels as frame 0
+            a = 2 * math.pi * ((i * N + 3 * t) % (12 * N)) / (12 * N)
+            gx, gy = CX + math.cos(a) * rx * 0.91, cy + math.sin(a) * ry * 0.91
+            lit = 3 if ((i + t // 5) % 3 == 0) else 2
+            for dx, dy in glyphs[i % 3]:
+                x, y = round(gx + dx), round(gy + dy * 0.6)
+                if 0 <= x < W and 0 <= y < H:
+                    rows[y][x] = RC[lit]
+
+
+    SKULL = [
+        "...XXXXXXX...",
+        "..XXXXXXXXX..",
+        ".XXXXXXXXXXX.",
+        "XXXXXXXXXXXXX",
+        "XXX...X...XXX",
+        "XX....X....XX",
+        "XXX..XXX..XXX",
+        "XXXXXX.XXXXXX",
+        ".XXXX...XXXX.",
+        "..XX.X.X.XX..",
+        "..X.......X..",
+        "..X.......X..",
+        "...X.X.X.X...",
+        "....X...X....",
+    ]
+
+
+    def souls(rows, t):
+        """Wailing skull-souls rising out of the aura and dissolving (life 30, offsets 0/10/20)."""
+        for i, (off, x0, amp) in enumerate([(0, 66, 8), (10, 190, 7), (20, 52, 9)]):
+            a = (t + off) % N
+            p = a / N
+            y = 176 - p * 150
+            x = x0 + amp * math.sin(2 * math.pi * (p + i * 0.3))
+            for j, line in enumerate(SKULL):
+                for k, ch in enumerate(line):
+                    if ch != "X":
+                        continue
+                    px, py = int(x + k - 6), int(y + j - 7 + (2 if (j >= 9 and (a // 2) % 2) else 0))   # the jaw screams open
+                    if not (0 <= px < W and 0 <= py < H):
+                        continue
+                    if p * 22 > BAYER[py % 4][px % 4] + 4 + (j * 0.4):
+                        continue                                                  # dissolves as it rises
+                    rows[py][px] = DC[8] if p < 0.35 else (DC[7] if p < 0.6 else DC[5])
+            # burning pinpoint eyes in the sockets
+            for ex in (-3, 3):
+                ey, exx = int(y - 2), int(x + ex)
+                if 0 <= exx < W and 0 <= ey < H and p < 0.8:
+                    rows[ey][exx] = DC[6]
+
+
+    def eyes(rows, t):
+        """Pairs of eyes opening inside the dark flames."""
+        for (ex, ey, off) in [(96, 120, 0), (162, 98, 9), (110, 70, 17), (150, 150, 24)]:
+            a = (t + off) % N
+            if a > 13:
+                continue
+            open_ = 2 if 3 <= a <= 10 else 1
+            for side in (-5, 5):
+                for dx in range(-2, 3):
+                    for dy in range(open_):
+                        x, y = ex + side + dx, ey + dy - open_ // 2
+                        rows[y][x] = DC[8] if (dx == 0 and dy == 0 and open_ == 2) else DC[6]
+
+
+    PART = [dict(life=rng.choice([10, 15, 30]), off=0, x0=CX + rng.uniform(-70, 70), drift=rng.uniform(-0.8, 0.8),
+                 vy=rng.uniform(2.0, 5.0), k=rng.choice([5, 6, 7])) for _ in range(54)]
+    for p in PART:
+        p["off"] = rng.randrange(p["life"])
+
+
+    def embers(rows, t):
+        for p in PART:
+            a = (t + p["off"]) % p["life"]
+            y = GY - 6 - p["vy"] * a
+            x = p["x0"] + p["drift"] * a + 2 * math.sin(a * 0.7)
+            if 0 <= int(x) < W and 0 <= int(y) < H:
+                rows[int(y)][int(x)] = DC[p["k"] if a < p["life"] * 0.6 else 4]
+
+
+    def lightning(rows, t):
+        """Red arcs that crack from the figure to the ground ring on two beats per loop."""
+        for beat, seed in ((5, 11), (19, 29)):
+            if t not in (beat, beat + 1):
+                continue
+            r = random.Random(seed + (t - beat) * 3)
+            starts = [(CX + side * 22.0, 150.0, side, GY) for side in (-1, 1)]
+            while starts:
+                x, y, side, stop = starts.pop()
+                while y < stop:
+                    nx, ny = x + side * r.uniform(-2, 6), y + r.uniform(2, 6)
+                    if r.random() < 0.12 and len(starts) < 6:
+                        starts.append((nx, ny, side, ny + r.uniform(10, 24)))
+                    steps = int(max(abs(nx - x), abs(ny - y))) + 1
+                    for s in range(steps + 1):
+                        px, py = int(x + (nx - x) * s / steps), int(y + (ny - y) * s / steps)
+                        if 0 <= px < W and 0 <= py < H:
+                            rows[py][px] = DC[8] if t == beat else DC[6]
+                            if px + 1 < W and rows[py][px + 1] is None:
+                                rows[py][px + 1] = DC[5]
+                    x, y = nx, ny
+
+
+    def tendrils(rows, t):
+        """Shadow spikes clawing outward along the ground, pulsing with the breath."""
+        reach = 0.75 + 0.25 * math.sin(2 * math.pi * t / N)
+        for i in range(10):
+            ang = math.pi * (0.05 + 0.9 * i / 9)
+            side = math.cos(ang)
+            length = (60 + 26 * ((i * 37) % 7) / 7) * reach
+            for s in range(int(length)):
+                x = int(CX + side * (40 + s))
+                y = int(GY + 6 + abs(math.sin(ang)) * 4 + 0.08 * s * (1 if i % 2 else -0.4))
+                w = max(0, 2 - s // max(1, int(length / 3)))
+                for dy in range(-w, w + 1):
+                    if 0 <= x < W and 0 <= y + dy < H:
+                        rows[y + dy][x] = DC[0] if dy else DC[1]
+
+
+    def inside(poly, x, y):
+        j, c_ = len(poly) - 1, False
+        for i in range(len(poly)):
+            (xi, yi), (xj, yj) = poly[i], poly[j]
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                c_ = not c_
+            j = i
+        return c_
+
+
+    # Silhouette mask (cloak, hood, horns, legs) and the distance of every pixel outside it.
+    SIL = set()
+    for yy in range(H):
+        for xx in range(W):
+            if inside(CLOAK, xx + 0.5, yy + 0.5) or inside(HOOD, xx + 0.5, yy + 0.5):
+                SIL.add((xx, yy))
+    for pts, _ in HORNS:
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            for s_ in range(20):
+                for w_ in (-1, 0, 1):
+                    SIL.add((int(x0 + (x1 - x0) * s_ / 19) + w_, int(y0 + (y1 - y0) * s_ / 19)))
+    for yy in range(196, GY + 1):
+        for xx in range(108, 150):
+            SIL.add((xx, yy))
+    DIST = {}
+    frontier = list(SIL)
+    for d in range(1, 13):
+        nxt = []
+        for (x, y) in frontier:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                q = (x + dx, y + dy)
+                if q not in SIL and q not in DIST and 0 <= q[0] < W and 0 <= q[1] < H:
+                    DIST[q] = d
+                    nxt.append(q)
+        frontier = nxt
+    HALO = field(5, 5, (0.25, 0.6), (2, 5))
+
+
+    def halo(rows, t):
+        """The aura proper: a flickering rim of dark fire hugging the silhouette, flowing upward."""
+        pulse = 0.08 * math.sin(2 * math.pi * t / N)
+        for (x, y), d in DIST.items():
+            v = 1 - d / 12 + 0.55 * HALO(x, (y + V * t) % PER) + pulse
+            if v < 0.55:
+                continue
+            e = v - 0.55
+            k = 6 if d <= 2 and e > 0.25 else (5 if e > 0.3 else (4 if e > 0.18 else (3 if e > 0.09 else 2)))
+            if rows[y][x] is None or d <= 3:
+                rows[y][x] = DC[k]
+
+
+    def despeckle(rows):
+        """Merges lone pixels into the tone most of their neighbours share (cleaner clusters)."""
+        src = [r[:] for r in rows]
+        for y in range(1, H - 1):
+            for x in range(1, W - 1):
+                v = src[y][x]
+                if v is None:
+                    continue
+                ns = [src[y - 1][x], src[y + 1][x], src[y][x - 1], src[y][x + 1]]
+                if v in ns:
+                    continue
+                best = max(set(ns), key=ns.count)
+                if best is not None and ns.count(best) >= 3:
+                    rows[y][x] = best
+
+
+    def frame(t):
+        t %= N                                   # every effect is periodic in N; avoids sin(2π) ≠ 0 drift
+        back, front, fx = blank(), blank(), blank()
+        tendrils(back, t)
+        flames(back, BACK, t, 4, GY + 6, 1.0, 0.18)
+        halo(back, t)
+        despeckle(back)
+        rune_ring(back, t)
+        flames(front, FRONT, t, GY - 60, GY + 8, 0.82, 0.32, front=True)
+        despeckle(front)
+        eyes(back, t)
+        souls(fx, t)
+        embers(fx, t)
+        lightning(fx, t)
+        return back, front, fx
+    os.makedirs(os.path.join(out, "aura", "frames"), exist_ok=True)
+    lines = [json.dumps(x) for x in cmds]
+    for t in range(N):
+        for layer, img in zip(("AuraBack", "AuraFront", "FX"), frame(t)):
+            lines.append(json.dumps({"op": "image_import", "data_base64": base64.b64encode(png(img)).decode(), "grid": "none",
+                                     "transparent": "none", "layer": layer, "frame": t}))
+    with open(os.path.join(out, "aura.jsonl"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    hide = ["BG", "Rim Far", "Rim", "Rim Near", "Figure Far", "Figure", "Figure Near", "Cloak"]
+    show = lines + [
+        json.dumps({"op": "export", "format": "gif", "scale": 2, "_save": "aura/aura_preview_x2.gif"}),
+        json.dumps({"op": "export", "format": "png", "frame": 5, "scale": 2, "_save": "aura/aura_preview_f5_x2.png"}),
+        json.dumps({"op": "project_save", "_save": "aura/aura.pxs"}),
+    ] + [json.dumps({"op": "layer_set", "layer": n, "visible": False}) for n in hide] + [
+        json.dumps({"op": "export", "format": "gif", "scale": 1, "_save": "aura/aura_only.gif"}),
+        json.dumps({"op": "export", "format": "spritesheet", "columns": 6, "_save": "aura/aura_sheet.png", "_json": True}),
+    ] + [json.dumps({"op": "export", "format": "png", "frame": t, "scale": 1, "_save": f"aura/frames/aura_{t:02d}.png"}) for t in range(N)]
+    with open(os.path.join(out, "aura_showcase.jsonl"), "w") as fh:
+        fh.write("\n".join(show) + "\n")
+    print(f"Aura: {len(cmds)} scene commands + {N} frames")
+
+
 def main(argv):
-    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|waterfall|all]   → command scripts in Assets/Build/."""
+    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|waterfall|aura|all]   → command scripts in Assets/Build/."""
     import os
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Build")
     os.makedirs(out, exist_ok=True)
-    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela, "waterfall": build_waterfall}
+    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela, "waterfall": build_waterfall, "aura": build_aura}
     wanted = argv[1:] or ["all"]
     for name, fn in targets.items():
         if "all" in wanted or name in wanted:
