@@ -36,6 +36,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 16. [128×128 özgün karakter: Sela](#16-128128-özgün-karakter-sela)
 17. [Editör arayüzü (Windows 10/11 ve Android)](#17-editör-arayüzü-windows-1011-ve-android)
 18. [Kalite araçları: eleştirmen, form ışığı, eğriler, manken](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)
+19. [Şelale: 256×256, 30 karelik döngü](#19-şelale-256256-30-karelik-döngü)
 
 ---
 
@@ -1045,4 +1046,33 @@ Kaynaklar:
 - Ricky Han, *Pixel Art Algorithm: Selective Anti-Aliasing* — <http://rickyhan.com/jekyll/update/2019/09/01/pixel-art-algorithm-selective-outlining-anti-aliasing.html>
 - Pixel Parmesan, *Anti-Aliasing Fundamentals for Pixel Artists* — <https://pixelparmesan.com/anti-aliasing-fundamentals-for-pixel-artists>
 - PixNote, *Shading & Lighting* — <https://pixnote.net/en/learn/shading>
+
+## 19. Şelale: 256×256, 30 karelik döngü
+
+![Şelale](Assets/Gallery/waterfall_x2.gif)
+
+256×256 piksel, 30 kare × 70 ms = 2,1 saniyelik **dikişsiz** döngü. Üretici: `python3 Assets/Sprites.py waterfall` → `run_script Assets/Build/waterfall_showcase.jsonl out/`. Çıktılar: GIF (1× ve 2×), 6×5 sprite sheet + JSON (`Assets/Gallery/waterfall_sheet.png`), 30 ayrı PNG kare, `.pxs` proje.
+
+**Sabit sahne (motor araçlarıyla):**
+- Gökyüzü dither'lı sert bantlarla çizildi (yumuşak gradyan yok); iki ağaç silüeti var, uzaktaki daha açık.
+- Kayalık iki katmandan oluşuyor:
+  - Her yanda boşluksuz bir kaya kütlesi.
+  - Önünde düzensiz katmanlar halinde açısal bloklar. Her blokta aydınlık üst yüz, orta ön yüz, koyu sağ yüz, alt kısımda gölge, çatlak ve koyu derz var.
+  - Şelaleye yakın (ıslak, gölgede) ve alt sıradaki bloklar bir ton koyu.
+- Yosun şeritleri, sarkan yosunlar ve ot demetleri `draw_path` + `shade_form` ile çizildi.
+- Kayalara kontur, `antialias` ve `fix_banding` uygulandı.
+
+**Hareketli su (her kare hesaplanıp `image_import` ile yerleştirilir).** Bütün hareketlerin periyodu 30'u tam böler:
+
+| Öğe | Yöntem | Periyot |
+| --- | --- | --- |
+| Düşen su | 2–4 px'lik iplikler, her birinin dikey tonu düşük frekanslı periyodik gürültü; silindir gibi soldan aydınlatılmış gövde; aşağıda hızlanma hissi için uzayan şeritler; 4 px/kare akış | 120 px = 30 kare |
+| Tepe kenarı | En açık tonlarda kıvrılan şerit | 10 kare |
+| Nehir yüzeyi | Kenara doğru akan çizgiler | 15 kare |
+| Çarpma köpüğü | Zamanda periyodik iki boyutlu dalga alanı, üç tona eşiklenmiş | 30 kare |
+| Damlalar | 46 balistik parçacık, ömürleri 10/15/30 kare | 10–30 kare |
+| Havuz | Genişleyen kesik halkalar, şelalenin titreşen yansıması, pırıltılar | 15 / 10 / 30 kare |
+| Sis | Bayer 4×4 dither'lı, yavaşça kıpırdayan bulut (yarı saydam piksel yerine) | 30 kare |
+
+**Doğrulama:** 30. kare 0. kareyle piksel piksel aynı (hesaplanarak denetlendi). Son kareden ilk kareye geçişte değişen piksel sayısı (4159), normal kare geçişleriyle (4012–4357) aynı aralıkta. Yani döngüde atlama yok. `art_review` puanı 86. Kalan tek uyarı, sahnenin açık gökyüzü kenarını arka plan saydığı için değer aralığını düşük ölçmesi.
 

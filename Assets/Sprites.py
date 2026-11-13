@@ -2432,12 +2432,336 @@ def build_sela(out):
     print(f"Sela: {len(lines)} engine commands")
 
 
+# ═══ Waterfall: 256×256, 30-frame seamless loop ══════════════════════════════════════════════════
+
+def build_waterfall(out):
+    """A 256×256 waterfall scene, 30 frames @ 70 ms, seamless loop. Scenery with engine tools
+    (draw_path faceted rock strata and moss, shade_form, outline, antialias, fix_banding); the moving
+    water — falling strands, lip, impact foam, droplets, ripples, dithered mist — is computed per
+    frame with motion periodic in exactly 30 frames and placed with image_import."""
+    import base64
+    import struct
+    import zlib
+    W = H = 256
+    N = 30            # frames
+    MS = 70           # frame duration
+    V = 4             # fall speed px/frame → 120 px per loop
+    PERIOD = V * N    # streak pattern period (seamless)
+
+    RAMPS = {
+        "sky":   ["#16323A", "#1F4A50", "#2B6464", "#3F8279", "#62A28C", "#93C2A2"],
+        "far":   ["#10262C", "#173A3C", "#22504C", "#33685A"],
+        "rock":  ["#141210", "#262019", "#3B3227", "#544637", "#71604A", "#937E61", "#B7A27F"],
+        "moss":  ["#0E2416", "#183C1F", "#25592A", "#3B7A33", "#5E9E3E", "#8FC24E"],
+        "water": ["#0A2238", "#0F3A5C", "#165A80", "#2280A6", "#3DA7C8", "#7ACDE0", "#BDEBF2", "#F2FFFF"],
+    }
+    WR = RAMPS["water"]
+    OUT = "#0B0A0C"
+
+    rng = random.Random(7)
+    cmds = []
+
+
+    def c(op, **a):
+        cmds.append({"op": op, **a})
+
+
+    def hexrgb(h):
+        h = h.lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+    def png(rows):
+        """rows: list of H lists of (r,g,b,a) or None."""
+        raw = bytearray()
+        for row in rows:
+            raw.append(0)
+            for p in row:
+                raw.extend(p if p else (0, 0, 0, 0))
+        def chunk(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+        return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+
+
+    # ---- geometry of the scene ---------------------------------------------------------------------
+    LIP_Y = 46                    # where the river tips over
+    POOL_Y = 198                  # pool surface where the fall hits
+    def fall_edges(y):
+        """Left/right x of the falling sheet at height y (spreads a little as it falls)."""
+        t = max(0.0, (y - LIP_Y) / (POOL_Y - LIP_Y))
+        return 96 - 9 * t ** 1.4, 162 + 9 * t ** 1.4
+
+
+    # ---- static scenery (engine commands) ------------------------------------------------------------
+    LAYERS = ["Sky", "Far", "Pool", "Water", "Rocks", "Moss", "Spray", "Mist"]
+    c("project_new", width=W, height=H, name="Waterfall")
+    c("layer_set", layer=0, name="Sky")
+    for i, n in enumerate(LAYERS[1:], start=1):
+        c("layer_create", name=n, index=i)
+    for n, r in RAMPS.items():
+        c("ramp_set", name=n, colors=r)
+
+    # Sky: hard pixel-art bands with dithered seams (no smooth gradient).
+    SKY = RAMPS["sky"]
+    bands = [(0, 10, 5), (10, 22, 4), (22, 34, 3), (34, 60, 2)]
+    for y0, y1, k in bands:
+        c("draw_rectangle", layer="Sky", x=0, y=y0, width=W, height=y1 - y0, color=SKY[k], filled=True)
+    for y0, _, k in bands[1:]:
+        c("set_pixels", layer="Sky", color=SKY[k + 1], pixels=[[x, y0 + (x // 2) % 2] for x in range(0, W, 2)])
+    c("draw_rectangle", layer="Sky", x=0, y=60, width=W, height=H - 60, color=SKY[1], filled=True)
+
+    # Far forest: two tree-line silhouettes (lighter = farther).
+    def treeline(y_base, amp, seed, step):
+        r = random.Random(seed)
+        pts = [[-4, H]]
+        x = -4
+        while x < W + 8:
+            h = y_base - r.uniform(0.3, 1.0) * amp
+            pts.append([x, y_base - r.uniform(0, amp * 0.3)])
+            pts.append([x + step * 0.5, h])
+            x += step
+        pts.append([W + 8, H])
+        return pts
+    c("draw_path", layer="Far", points=treeline(44, 18, 3, 9), curve="polyline", closed=True, filled=True, color=RAMPS["sky"][1])
+    c("draw_path", layer="Far", points=treeline(56, 16, 5, 7), curve="polyline", closed=True, filled=True, color=RAMPS["far"][1])
+
+    # River surface above the lip and the pool body (static base, animated detail goes on Water).
+    c("draw_path", layer="Pool", points=[[88, 32], [168, 32], [170, 48], [86, 48]], curve="polyline", closed=True, filled=True, color=WR[2])
+    c("draw_rectangle", layer="Pool", x=0, y=POOL_Y - 4, width=W, height=H - POOL_Y + 4, color=WR[1], filled=True)
+    c("draw_rectangle", layer="Pool", x=0, y=POOL_Y + 26, width=W, height=H - POOL_Y - 26, color=WR[0], filled=True)
+
+    # Rocks: a solid cliff mass per side (no gaps), then angular blocks in strata. Each block has a
+    # lit top face, a mid front face and a dark side away from the top-left light — the classic
+    # faceted pixel-art rock — and a dark crevice edge.
+    ROCK = RAMPS["rock"]
+    MOSS = RAMPS["moss"]
+    LEFT_MASS = [[-4, 34], [40, 38], [70, 42], [96, 46], [100, 70], [94, 96], [99, 124], [93, 150], [96, 176], [84, 194], [60, 202], [-4, 206]]
+    RIGHT_MASS = [[W + 4, 34], [214, 38], [186, 42], [160, 46], [157, 72], [163, 100], [158, 126], [164, 152], [160, 176], [172, 194], [196, 202], [W + 4, 206]]
+    for m in (LEFT_MASS, RIGHT_MASS):
+        c("draw_path", layer="Rocks", points=m, curve="polyline", closed=True, filled=True, color=ROCK[1])
+
+    def block(x0, y0, w, h, seed, mossy, dk=0):
+        """Angular block with top / front / side faces; dk darkens (wet, shadowed or low blocks)."""
+        r = random.Random(seed)
+        T = lambda i: ROCK[max(0, min(len(ROCK) - 1, i + dk))]
+        j = lambda v: v + r.uniform(-2, 2)
+        top_h = h * r.uniform(0.22, 0.32)
+        side_w = w * r.uniform(0.18, 0.28)
+        tl, tr = [j(x0 + w * 0.12), y0], [j(x0 + w * 0.9), j(y0 + 1)]
+        fl, fr = [x0, j(y0 + top_h)], [x0 + w - side_w, j(y0 + top_h + 1)]
+        br, bl = [x0 + w - side_w, y0 + h], [j(x0 + w * 0.05), y0 + h]
+        rside = [x0 + w, j(y0 + top_h * 0.6)]
+        rbot = [x0 + w - 1, y0 + h - r.uniform(2, 5)]
+        outline = [tl, tr, rside, rbot, br, bl, fl]
+        c("draw_path", layer="Rocks", points=outline, curve="polyline", closed=True, filled=True, color=T(3))
+        c("draw_path", layer="Rocks", points=[tl, tr, rside, fr, fl], curve="polyline", closed=True, filled=True, color=T(6))
+        c("draw_path", layer="Rocks", points=[fr, rside, rbot, br], curve="polyline", closed=True, filled=True, color=T(1))
+        # front face darkens toward the bottom (occlusion)
+        c("draw_path", layer="Rocks", points=[bl, [x0 + 1, y0 + h * 0.72], [x0 + w - side_w, y0 + h * 0.78], br], curve="polyline", closed=True, filled=True, color=T(2))
+        # texture: a crack and a few chips on the front face
+        cx = x0 + w * r.uniform(0.3, 0.6)
+        c("draw_path", layer="Rocks", points=[[cx, y0 + top_h + 2], [cx + r.uniform(-3, 3), y0 + top_h + h * 0.35], [cx + r.uniform(-4, 4), y0 + h * 0.7]], curve="polyline", color=T(1))
+        c("draw_path", layer="Rocks", points=[[x0 + 2, y0 + top_h + 1], [x0 + w - side_w - 2, y0 + top_h + 1.5]], curve="polyline", color=T(4))
+        c("draw_path", layer="Rocks", points=outline + [outline[0]], curve="polyline", color=ROCK[0])
+        if mossy:
+            mw = w * r.uniform(0.35, 0.7)
+            mx = x0 + r.uniform(0, w - mw - side_w * 0.5)
+            c("draw_path", layer="Moss", closed=True, filled=True, curve="polyline", color=MOSS[4 + min(0, dk)],
+              points=[[mx, y0 + 1], [mx + mw * 0.3, y0 - 1], [mx + mw * 0.75, y0 - 0.5], [mx + mw, y0 + 1.5], [mx + mw * 0.7, y0 + top_h * 0.8], [mx + mw * 0.2, y0 + top_h * 0.7]])
+            for k in range(int(mw // 7)):                                            # hanging moss drips
+                hx = mx + 3 + k * 7 + r.uniform(-1, 1)
+                c("draw_path", layer="Moss", points=[[hx, y0 + top_h * 0.6], [hx + r.uniform(-0.5, 0.5), y0 + top_h + r.uniform(1, 5)]], color=MOSS[r.choice([2, 3])])
+            for k in range(r.randint(1, 3)):                                          # grass tufts
+                gx = mx + r.uniform(2, mw - 2)
+                lean = r.uniform(-3, 3)
+                c("draw_path", layer="Moss", points=[[gx, y0], [gx + lean * 0.5, y0 - 4], [gx + lean, y0 - r.uniform(6, 9)]], color=MOSS[r.choice([4, 5])])
+
+    # Strata, generated irregularly: random heights and widths, staggered joints, occasional big
+    # boulders; blocks near the falling water (wet, in its shadow) and low blocks are darker.
+    lay = random.Random(77)
+    k = 0
+    for side in (0, 1):
+        y = 34
+        while y < 178:
+            h = lay.randint(18, 34)
+            x = -lay.randint(4, 20) if side == 0 else 156 + lay.randint(-4, 4)
+            end = 100 if side == 0 else W + 6
+            while x < end:
+                w = lay.randint(22, 52)
+                if side == 0 and x + w > 100:
+                    w = max(10, 100 + lay.randint(0, 5) - x)      # stop at the sheet's edge
+                k += 1
+                inner = (side == 0 and x + w > 84) or (side == 1 and x < 172)
+                dk = (-1 if inner else 0) + (-1 if y > 150 else 0)
+                hh = h + lay.randint(-4, 6) + (lay.randint(6, 14) if lay.random() < 0.18 else 0)
+                block(x, y + lay.uniform(-4, 4), w, hh, 100 + k, lay.random() < (0.55 if not inner else 0.25), dk)
+                x += w - lay.randint(2, 6)
+            y += h - lay.randint(2, 5)
+    # foreground rocks standing in the pool
+    for i, (bx, by, bw, bh) in enumerate([(-8, 222, 52, 40), (38, 236, 34, 24), (206, 220, 56, 42), (172, 238, 30, 20), (140, 232, 18, 10)]):
+        block(bx, by, bw, bh, 400 + i, i != 4, -1 if i == 4 else 0)
+    c("shade_form", layer="Moss", ramp="moss", light="top-left", shadow_steps=2, light_steps=2)
+    c("fix_banding", layer="Rocks")
+
+    # Frames: all scenery exists on frame 0; duplicate, then add the moving water per frame.
+    c("frame_set_duration", frame=0, duration=MS)
+    for i in range(1, N):
+        c("frame_duplicate", frame=i - 1)
+
+
+    # ---- moving water (periodic in N frames) ---------------------------------------------------------
+    def periodic_noise(seed, length, terms=5, maxk=9):
+        """Smooth 1D noise with an exact period `length` (sum of integer-frequency sines)."""
+        r = random.Random(seed)
+        comps = [(r.randint(1, maxk), r.uniform(0, 2 * math.pi), r.uniform(0.4, 1.0)) for _ in range(terms)]
+        tot = sum(a for _, _, a in comps)
+        return [sum(a * math.sin(2 * math.pi * k * i / length + p) for k, p, a in comps) / tot for i in range(length)]
+
+    # Strands: columns grouped into 2-4 px wide strands, each with its own streak profile.
+    STRANDS = []
+    x = 80
+    while x < 180:
+        w = rng.choice([2, 2, 3, 3, 4])
+        STRANDS.append((x, w, periodic_noise(rng.random() * 1e6, PERIOD, 4, 4), rng.uniform(-0.8, 0.8)))
+        x += w
+    STRAND_AT = {}
+    for sx, w, prof, off in STRANDS:
+        for k in range(w):
+            STRAND_AT[sx + k] = (prof, off)
+
+    def stretch(y):
+        """Monotone remap: streaks lengthen as the water accelerates."""
+        t = y - LIP_Y
+        return t + 0.0022 * t * t
+
+    FOAM = periodic_noise(4242, N, 4)
+    def foam_field(x, y, t):
+        a = math.sin(x * 0.21 + 2 * math.pi * t / N) + math.sin(x * 0.083 - y * 0.37 + 4 * math.pi * t / N)
+        b = math.sin(y * 0.5 + x * 0.13 - 2 * math.pi * t / N * 2) * 0.7
+        return (a + b) / 2.7
+
+    PARTICLES = []
+    for i in range(46):
+        life = rng.choice([10, 15, 15, 30])
+        side = rng.choice([-1, 1])
+        PARTICLES.append(dict(life=life, off=rng.randrange(life), x0=128 + side * rng.uniform(4, 46), vx=side * rng.uniform(0.5, 2.4),
+                              vy=rng.uniform(1.6, 3.8), size=rng.choice([1, 1, 1, 2])))
+
+    BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]
+
+    def water_frame(t):
+        rows = [[None] * W for _ in range(H)]
+        spray = [[None] * W for _ in range(H)]
+        mist = [[None] * W for _ in range(H)]
+        col = [hexrgb(h) + (255,) for h in WR]
+        # River surface above the lip: lines drifting toward the lip (1 px/frame, period 30).
+        for y in range(32, LIP_Y + 2):
+            for x in range(88, 170):
+                band = (y - t) % 15
+                wob = FOAM[(x // 3 + y) % N]
+                k = 3 if band in (0, 1) and wob > -0.2 else 2
+                if y >= LIP_Y - 3:
+                    k = 6 if (x + t // 2) % 5 else 5          # bright curl of the lip (period 10 frames)
+                rows[y][x] = col[k]
+        # The falling sheet.
+        for y in range(LIP_Y, POOL_Y + 2):
+            l, r = fall_edges(y)
+            s = stretch(y)
+            for x in range(int(l), int(r) + 1):
+                if x not in STRAND_AT:
+                    continue
+                prof, off = STRAND_AT[x]
+                u = (x - (l + r) / 2) / ((r - l) / 2)               # -1..1 across the sheet
+                body = 4.0 - 1.2 * abs(u) ** 1.5 - 0.6 * u          # cylinder-ish, lit from the left
+                n = prof[math.floor(s - V * t) % PERIOD] + off * 0.5
+                k = body + n * 2.2
+                if y < LIP_Y + 10:
+                    k += 1.2 * (1 - (y - LIP_Y) / 10)               # the lip is brightest
+                k = int(round(max(1, min(7, k))))
+                if abs(u) > 0.93:
+                    k = min(k, 3)                                    # sheet edges thinner / darker
+                rows[y][x] = col[k]
+        # Impact foam churn.
+        for y in range(POOL_Y - 16, POOL_Y + 16):
+            for x in range(60, 196):
+                d = ((x - 128) / 70) ** 2 + ((y - POOL_Y) / 13) ** 2
+                if d > 1:
+                    continue
+                f = foam_field(x, y, t) + (1 - d) * 0.9
+                if f > 0.95:
+                    rows[y][x] = col[7]
+                elif f > 0.6:
+                    rows[y][x] = col[6]
+                elif f > 0.35 and rows[y][x] is None:
+                    rows[y][x] = col[5]
+        # Pool: expanding ripple rings (period 15 → two per loop) and drifting glints.
+        for ring in range(2):
+            ph = ((t + ring * 7.5) % 15) / 15
+            rx, ry = 70 + ph * 110, 9 + ph * 22
+            for i in range(260):
+                a = 2 * math.pi * i / 260
+                x, y = int(128 + math.cos(a) * rx), int(POOL_Y + 6 + math.sin(a) * ry)
+                if 0 <= x < W and POOL_Y + 2 <= y < H and (i // 5 + ring) % 3 != 0:
+                    if rows[y][x] is None:
+                        rows[y][x] = col[4] if ph < 0.6 else col[3]
+        for y in range(POOL_Y + 12, POOL_Y + 46):
+            for x in range(84, 172):
+                if rows[y][x] is None and (x % 3 == 0) and ((y + x // 3 * 5 - t) % 10) < 3 - (y - POOL_Y - 12) // 14:
+                    rows[y][x] = col[3] if (x // 3) % 2 else col[4]
+        for y in range(POOL_Y + 2, H):
+            for x in range(0, W, 1):
+                if rows[y][x] is None and (x * 7 + y * 13 + (t * 3 if y % 2 else -t * 3)) % 90 == 0:
+                    rows[y][x] = col[4]
+        # Splash droplets (ballistic, each period divides 30).
+        for p in PARTICLES:
+            a = (t + p["off"]) % p["life"]
+            x = p["x0"] + p["vx"] * a
+            y = POOL_Y - 4 - p["vy"] * a + 0.28 * a * a
+            if y > POOL_Y + 2:
+                continue
+            k = 7 if a < p["life"] * 0.5 else 6
+            for dy in range(p["size"]):
+                for dx in range(p["size"]):
+                    xi, yi = int(x) + dx, int(y) + dy
+                    if 0 <= xi < W and 0 <= yi < H:
+                        spray[yi][xi] = col[k]
+        # Mist: Bayer-dithered cloud rising slowly around the impact (pixel-art transparency).
+        for y in range(POOL_Y - 46, POOL_Y + 10):
+            for x in range(40, 216):
+                d = ((x - 128) / 92) ** 2 + ((y - (POOL_Y - 12)) / 34) ** 2
+                if d > 1:
+                    continue
+                dens = (1 - d) * 0.55 + 0.25 * math.sin(x * 0.09 + y * 0.12 + 2 * math.pi * t / N) + 0.12 * math.sin(x * 0.21 - 4 * math.pi * t / N)
+                if dens * 16 > BAYER[y % 4][x % 4] + 8:
+                    mist[y][x] = col[7] if dens > 0.62 else col[6]
+        return rows, spray, mist
+    os.makedirs(os.path.join(out, "waterfall", "frames"), exist_ok=True)
+    lines = [json.dumps(x) for x in cmds]
+    for t in range(N):
+        r_, s_, m_ = water_frame(t)
+        for layer, img in (("Water", r_), ("Spray", s_), ("Mist", m_)):
+            lines.append(json.dumps({"op": "image_import", "data_base64": base64.b64encode(png(img)).decode(), "grid": "none",
+                                     "transparent": "none", "layer": layer, "frame": t}))
+    with open(os.path.join(out, "waterfall.jsonl"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    show = lines + [
+        json.dumps({"op": "art_review", "frame": 0, "scale": 2, "_save": "waterfall/waterfall_review.png", "_json": True}),
+        json.dumps({"op": "export", "format": "gif", "scale": 1, "_save": "waterfall/waterfall.gif"}),
+        json.dumps({"op": "export", "format": "gif", "scale": 2, "_save": "waterfall/waterfall_x2.gif"}),
+        json.dumps({"op": "export", "format": "spritesheet", "columns": 6, "_save": "waterfall/waterfall_sheet.png", "_json": True}),
+        json.dumps({"op": "project_save", "_save": "waterfall/waterfall.pxs"}),
+    ] + [json.dumps({"op": "export", "format": "png", "frame": t, "scale": 1, "_save": f"waterfall/frames/waterfall_{t:02d}.png"}) for t in range(N)]
+    with open(os.path.join(out, "waterfall_showcase.jsonl"), "w") as fh:
+        fh.write("\n".join(show) + "\n")
+    print(f"Waterfall: {len(cmds)} scenery commands + {N} frames of moving water")
+
+
 def main(argv):
-    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|all]   → command scripts in Assets/Build/."""
+    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|waterfall|all]   → command scripts in Assets/Build/."""
     import os
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Build")
     os.makedirs(out, exist_ok=True)
-    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela}
+    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela, "waterfall": build_waterfall}
     wanted = argv[1:] or ["all"]
     for name, fn in targets.items():
         if "all" in wanted or name in wanted:
