@@ -34,6 +34,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 14. [Savaşçı karakter: 9 animasyon](#14-savaşçı-karakter-9-animasyon)
 15. [Piksel piksel karşılaştırma: Kade ve Bram](#15-piksel-piksel-karşılaştırma-kade-ve-bram)
 16. [128×128 özgün karakter: Sela](#16-128128-özgün-karakter-sela)
+17. [Editör arayüzü (Windows 10/11 ve Android)](#17-editör-arayüzü-windows-1011-ve-android)
 
 ---
 
@@ -57,8 +58,8 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
 | MCP (eski + 2026-07-28), REST, function calling: **93 araç** | ✅ | 15 uçtan uca gateway testi |
-| Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
-| Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
+| Masaüstü editör (Windows 10/11 tarzı): **Pixel + Voxel 3D** sekmeleri, 11 araç, rampa paneli, katman yoğunluğu | ✅ | derleniyor; Xvfb altında çalıştırıldı, ekran görüntüleri [bölüm 17](#17-editör-arayüzü-windows-1011-ve-android) |
+| Android: 2D editör (9 araç, rampa/HSV sayfası, katman paneli) + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint hatası yok; **cihazda ve emülatörde henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
 
 Ayrıntılar: [2D piksel art](#7-2d-piksel-art), [3D voxel](#8-3d-voxel) ve [oyun üretimi](#9-oyun-üretimi).
@@ -971,4 +972,37 @@ Hedef, referans görsellerdeki kaliteye motorun kendi araçlarıyla ulaşmaktı:
 | Tek piksel oranı | %5,0 | %4,4 |
 
 Sela, Bram'daki (bölüm 15) 134 renklik bulanıklığa düşmeden, referansın palet disiplini ve küme yapısıyla aynı bantta kalıyor. Bu sonucu belirleyen, otomatik gölge yerine rampa üzerinde **elle yerleştirilen** tonlar ve tek renkli kontur oldu.
+
+## 17. Editör arayüzü (Windows 10/11 ve Android)
+
+Arayüz, hazır şablon görünümünden çıkarılıp piksel sanatçısının iş akışına göre yeniden kuruldu. İki platform aynı tasarım dilini kullanıyor: nötr gri koyu tema (renkler tuvalde doğru okunsun diye), tek mavi vurgu rengi, 6 px yuvarlatılmış düz kontroller, vektörle çizilen ikonlar (görsel dosya yok, her ölçekte keskin).
+
+![Masaüstü editör](Assets/Gallery/desktop_editor.png)
+
+### Masaüstü (Swing, Windows 10/11 · Linux · macOS)
+
+| Alan | İçerik |
+| --- | --- |
+| Araç rafı (sol) | Kalem `B`, Silgi `E`, **Gölge fırçası** `D`, Doldur `G`, Damlalık `I`, Çizgi `L`, Dikdörtgen `R`, Elips `O`, Seçim `M`, Taşı `V`, El `H`; altında ana/ikincil renk çipleri (`X` takas) |
+| Seçenek çubuğu (üst) | Etkin araca göre değişir: fırça boyutu 1–4 (`[` `]`), pixel-perfect, gölge adımı, dolu şekil, bitişik doldurma, X/Y ayna simetrisi; sağda ızgara, onion skin, yakınlaştırma |
+| Tuval | Fareyle aynı noktaya kilitli yakınlaştırma (1–96×, piksel dostu adımlar), Boşluk / orta / sağ tuşla kaydırma, şeffaflık damalı zemini, fırça önizleme imleci, simetri kılavuzları, seçimde yürüyen karıncalar. 2×/4× yoğunluklu katmanda ince ızgara görünür ve fırça yarım/çeyrek piksellerle çizer |
+| Sağ panel | **Renk** (HSV kare + ton şeridi + HEX), **Rampalar ve renk örnekleri** (malzeme rampaları satır satır; `+ Ramp` ana renkten 5 tonluk rampa üretir), **Katmanlar** (göz, kilit, küçük önizleme, yoğunluk/karışım/opaklık rozetleri; opaklık, karışım modu ve piksel boyutu 1×/2×/4× seçimi), **Ajan etkinliği** |
+| Zaman çizelgesi | Kare küçük resimleri, oynat/durdur, kare ekle/çoğalt/sil/taşı, süre (ms), toplam süre ve FPS |
+| Menüler | File (yeni sprite boyut ön ayarları, aç, **görsel içe aktar** ve **referans içe aktar**: ızgara kurtarma + rampa çıkarma, kaydet, PNG/GIF/sprite sheet/normal map dışa aktarma), Edit (geri al/yinele, seçim, çevir, döndür), Image (tuval boyutu, kontur türleri, rampa gölgeleme, pixel-perfect temizlik, renk azaltma, palet kütüphanesi), Game, View, Agent |
+| Durum çubuğu | Tuval boyutu, etkin katman ve piksel yoğunluğu, kare, rampa sayısı, imleç konumu ve altındaki renk; sağda revizyon ve Agent Mode adresi |
+
+3D sekmesi aynı temayı kullanır; stok Swing bileşenleri (`JComboBox`, `JSlider`, `JCheckBox`, düğmeler) `Theme.styleTree` ile düz stile çevrilir.
+
+![3D sekmesi](Assets/Gallery/desktop_3d_tab.png)
+
+### Android (yalnızca platform View'ları)
+
+- **Üst çubuk:** proje adı, geri al / yinele, Katmanlar, 3D, Ajan ve menü (yeni 32/64/128, aç, kaydet, görsel/referans içe aktar, PNG/GIF dışa aktar, kontur, rampa gölgeleme, pixel-perfect temizlik).
+- **Seçenek şeridi:** etkin aracın ayarları (boyut 1–4, pixel-perfect, Koyu/Açık gölge adımı, dolu şekil, bitişik doldurma, X/Y ayna) ve görünüm (ızgara, onion, sığdır).
+- **Tuval:** tek parmak çizer, iki parmak yakınlaştırır ve kaydırır. Fırça yoğunluklu katmanlarda yarım/çeyrek pikselle çalışır.
+- **Alt araç rafı:** 9 vektör ikonlu araç (uzun basış açıklama gösterir) ve renk çipi. Renk çipi; HSV seçici, malzeme rampaları ve renk örneklerinden oluşan alt sayfayı açar.
+- **Katman paneli:** sağdan açılır. Satırlarda göz, kilit, önizleme, ad ve rozetler bulunur. Uzun basış özellik penceresini açar (ad, opaklık, karışım modu, piksel boyutu 1×/2×/4×, silme).
+- **Kare şeridi:** oynat, kare seçimi, uzun basışla süre ayarı ve silme, ekle ve çoğalt.
+
+Doğrulama: APK `assembleDebug` ile derleniyor, `lintDebug` hata vermiyor (kalan uyarılar eski kodla aynı türden: metin birleştirme, özel View yapıcıları, başlatıcı simge şekli). Bu ortamda Android emülatörü ve KVM bulunmadığından Android arayüzünün ekran görüntüsü alınamadı. Cihazda deneme bekliyor.
 

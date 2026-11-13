@@ -674,6 +674,12 @@ mod engine {
         assert_eq!(px(&img, 64, 1, 2), [255, 0, 0, 255]);
         let small = e.execute(br#"{"op":"render_frame","density":1}"#, &[]).binary;
         assert_eq!(small.len(), 16 * 16 * 4);
+        // Reads: a layer read uses its fine grid, a composite read uses canvas pixels.
+        let fine = ok(&mut e, r#"{"op":"get_pixel","layer":"Eyes","x":1,"y":2}"#);
+        assert_eq!(fine.get("result").unwrap().get("color").unwrap().as_str(), Some("#FF0000"));
+        let comp = ok(&mut e, r#"{"op":"get_pixel","composite":true,"x":15,"y":15}"#);
+        assert_eq!(comp.get("result").unwrap().get("color").unwrap().as_str(), Some("#FFFFFF"), "the 4x4 white block wins the vote");
+        assert_eq!(err_code(&mut e, r#"{"op":"get_pixel","composite":true,"x":40,"y":2}"#), "invalid_argument");
         // Density survives save/load; lowering it resamples the cel.
         let saved = e.execute(br#"{"op":"project_save"}"#, &[]);
         let mut other = Engine::new(4, 4);

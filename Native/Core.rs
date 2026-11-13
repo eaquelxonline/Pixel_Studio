@@ -4851,7 +4851,8 @@ pub mod commands {
                         .with("visible", l.visible)
                         .with("locked", l.locked)
                         .with("opacity", l.opacity)
-                        .with("blend", l.blend.as_str());
+                        .with("blend", l.blend.as_str())
+                        .with("density", l.density.max(1));
                     if detailed {
                         let (n, _) = doc.cel_stats(l.id, doc.active_frame);
                         j.set("pixelsInActiveFrame", n);
@@ -4879,6 +4880,7 @@ pub mod commands {
                 .with("frames", Json::Arr(frames))
                 .with("tags", Json::Arr(doc.tags.iter().map(|t| tag_json(doc, t)).collect()))
                 .with("paletteSize", doc.palette.len())
+                .with("ramps", doc.ramps.len())
                 .with("totalDurationMs", t.total_ms)
                 .with("averageFps", (t.average_fps * 100.0).round() / 100.0)
                 .with("undoAvailable", history.can_undo())
@@ -4907,7 +4909,8 @@ pub mod commands {
         fn read_colors(doc: &Document, a: &Json, x: i64, y: i64, w: i64, h: i64) -> CmdResult<Vec<Option<Rgba>>> {
             let fi = frame_index(doc, a, "frame")?;
             if opt_bool(a, "composite")?.unwrap_or(false) {
-                let img = render(doc, fi, &RenderOptions::default());
+                // Composite reads are in canvas pixels, whatever the layers' densities.
+                let img = render(doc, fi, &RenderOptions { density: Some(1), ..Default::default() });
                 let mut out = Vec::with_capacity((w * h) as usize);
                 for yy in y..y + h {
                     for xx in x..x + w {
@@ -4931,8 +4934,14 @@ pub mod commands {
 
         fn get_pixel(doc: &Document, a: &Json) -> CmdResult<Query> {
             let (x, y) = (coord(a, "x")?, coord(a, "y")?);
-            if x < 0 || y < 0 || x >= doc.width as i64 || y >= doc.height as i64 {
-                return Err(CmdError::invalid(format!("pixel ({x},{y}) is outside the {}x{} canvas", doc.width, doc.height)));
+            // A layer read uses that layer's grid (finer on density 2/4 layers); composite uses canvas pixels.
+            let (w, h) = if opt_bool(a, "composite")?.unwrap_or(false) {
+                (doc.width, doc.height)
+            } else {
+                doc.layer_dims(doc.layers[layer_index(doc, a, "layer")?].id)
+            };
+            if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+                return Err(CmdError::invalid(format!("pixel ({x},{y}) is outside the {w}x{h} grid")));
             }
             let colors = read_colors(doc, a, x, y, 1, 1)?;
             q(Json::obj().with("x", x).with("y", y).with("color", colors[0].map(|c| c.to_hex())).with("transparent", colors[0].is_none()))
