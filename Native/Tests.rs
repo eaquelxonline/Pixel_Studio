@@ -608,6 +608,151 @@ mod engine {
         ok(&mut e, r#"{"op":"pixel_cleanup","layer":"Bangs"}"#);
         ok(&mut e, r#"{"op":"history_undo","steps":3}"#);
     }
+
+    fn px(b: &[u8], w: usize, x: usize, y: usize) -> [u8; 4] {
+        let o = (y * w + x) * 4;
+        [b[o], b[o + 1], b[o + 2], b[o + 3]]
+    }
+
+    #[test]
+    fn material_ramps_shade_brush_and_palette_lock() {
+        let mut e = Engine::new(32, 32);
+        ok(&mut e, r##"{"op":"ramp_set","name":"skin","colors":["#583C2F","#89563E","#BF814F","#F5C6A2"]}"##);
+        ok(&mut e, r##"{"op":"color_ramp","base":"#579E83","steps":4,"name":"cloak"}"##);
+        assert_eq!(err_code(&mut e, r##"{"op":"ramp_set","name":"x","colors":["#000000"]}"##), "invalid_argument");
+        ok(&mut e, r##"{"op":"draw_rectangle","x":4,"y":4,"width":20,"height":20,"color":"#BF814F","filled":true}"##);
+        // Shade brush: one step darker inside the ramp, clamped at its ends.
+        let r = ok(&mut e, r#"{"op":"shade","x":4,"y":4,"width":3,"height":1,"steps":-1}"#);
+        assert_eq!(r.get("result").unwrap().get("changed").unwrap().as_i64(), Some(3));
+        ok(&mut e, r#"{"op":"shade","pixels":[[4,4]],"steps":-9}"#);
+        let img = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+        assert_eq!(px(&img, 32, 5, 4), [0x89, 0x56, 0x3E, 255]);
+        assert_eq!(px(&img, 32, 4, 4), [0x58, 0x3C, 0x2F, 255]);
+        // Palette-locked auto shading only uses ramp colors.
+        ok(&mut e, r##"{"op":"draw_rectangle","x":26,"y":26,"width":5,"height":5,"color":"#123456","filled":true}"##);
+        ok(&mut e, r#"{"op":"auto_shade","light":"top-left","tones":4,"cast_shadow":0}"#);
+        let img = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+        let allowed = [[0x58, 0x3C, 0x2F], [0x89, 0x56, 0x3E], [0xBF, 0x81, 0x4F], [0xF5, 0xC6, 0xA2], [0x12, 0x34, 0x56]];
+        let mut seen = std::collections::HashSet::new();
+        for y in 0..32 {
+            for x in 0..32 {
+                let p = px(&img, 32, x, y);
+                if p[3] > 0 {
+                    assert!(allowed.contains(&[p[0], p[1], p[2]]), "invented color {p:?}");
+                    seen.insert(p);
+                }
+            }
+        }
+        assert!(seen.len() >= 4, "the ramp is actually used");
+        // Ramps survive save/load.
+        let saved = e.execute(br#"{"op":"project_save"}"#, &[]);
+        let mut other = Engine::new(4, 4);
+        assert!(other.execute(br#"{"op":"project_load"}"#, &saved.binary).json.contains("\"ok\":true"));
+        let r = ok(&mut other, r#"{"op":"shade","x":5,"y":4,"steps":1}"#);
+        assert_eq!(r.get("result").unwrap().get("changed").unwrap().as_i64(), Some(1));
+        ok(&mut e, r#"{"op":"ramp_delete","name":"cloak"}"#);
+        assert_eq!(err_code(&mut e, r#"{"op":"ramp_delete","name":"cloak"}"#), "not_found");
+    }
+
+    #[test]
+    fn mixed_pixel_density_layers() {
+        let mut e = Engine::new(16, 16);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":0,"y":0,"width":16,"height":16,"color":"#202040","filled":true}"##);
+        ok(&mut e, r#"{"op":"layer_create","name":"Eyes"}"#);
+        let r = ok(&mut e, r#"{"op":"layer_set","layer":"Eyes","density":4,"opacity":255}"#);
+        assert_eq!(r.get("result").unwrap().get("density").unwrap().as_i64(), Some(4));
+        // In a 4× layer, coordinates address quarter pixels: 64×64 grid.
+        ok(&mut e, r##"{"op":"set_pixel","layer":"Eyes","x":63,"y":63,"color":"#FFFFFF"}"##);
+        ok(&mut e, r##"{"op":"draw_rectangle","layer":"Eyes","x":60,"y":60,"width":4,"height":3,"color":"#FFFFFF","filled":true}"##);
+        ok(&mut e, r##"{"op":"set_pixel","layer":"Eyes","x":1,"y":2,"color":"#FF0000"}"##);
+        let img = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+        assert_eq!(img.len(), 64 * 64 * 4, "render follows the finest layer");
+        assert_eq!(px(&img, 64, 63, 63), [255, 255, 255, 255]);
+        assert_eq!(px(&img, 64, 62, 63), [0x20, 0x20, 0x40, 255]);
+        assert_eq!(px(&img, 64, 59, 60), [0x20, 0x20, 0x40, 255]);
+        assert_eq!(px(&img, 64, 1, 2), [255, 0, 0, 255]);
+        let small = e.execute(br#"{"op":"render_frame","density":1}"#, &[]).binary;
+        assert_eq!(small.len(), 16 * 16 * 4);
+        // Density survives save/load; lowering it resamples the cel.
+        let saved = e.execute(br#"{"op":"project_save"}"#, &[]);
+        let mut other = Engine::new(4, 4);
+        assert!(other.execute(br#"{"op":"project_load"}"#, &saved.binary).json.contains("\"ok\":true"));
+        assert_eq!(other.execute(br#"{"op":"render_frame"}"#, &[]).binary, img);
+        ok(&mut other, r#"{"op":"layer_set","layer":"Eyes","density":1,"name":"Detail","locked":true}"#);
+        let img = other.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+        assert_eq!(img.len(), 16 * 16 * 4);
+        assert_eq!(px(&img, 16, 15, 15), [255, 255, 255, 255]);
+        assert_eq!(err_code(&mut other, r#"{"op":"layer_set","layer":"Detail","density":3}"#), "invalid_argument");
+    }
+
+    #[test]
+    fn pixel_perfect_strokes() {
+        let mut e = Engine::new(16, 16);
+        let r = ok(&mut e, r##"{"op":"draw_stroke","points":[[0,0],[1,0],[1,1],[2,1],[2,2],[3,2]],"color":"#000000"}"##);
+        // The staircase loses its L-corner doubles: 4 pixels instead of 6.
+        assert_eq!(r.get("result").unwrap().get("changed").unwrap().as_i64(), Some(4));
+        let raw = ok(&mut e, r##"{"op":"draw_stroke","points":[[0,8],[1,8],[1,9],[2,9]],"color":"#000000","pixel_perfect":false}"##);
+        assert_eq!(raw.get("result").unwrap().get("changed").unwrap().as_i64(), Some(4));
+        let thick = ok(&mut e, r##"{"op":"draw_stroke","points":[[4,12],[12,12]],"color":"#FF0000","size":2}"##);
+        assert_eq!(thick.get("result").unwrap().get("changed").unwrap().as_i64(), Some(20));
+    }
+
+    #[test]
+    fn reference_import_recovers_non_integer_grid() {
+        // A 20×14 native image with a frame color, upscaled 3.35× by nearest neighbour.
+        let (nw, nh) = (20u32, 14u32);
+        let mut native = crate::renderer::Image::new(nw, nh);
+        let mut rng = 7u32;
+        for y in 0..nh {
+            for x in 0..nw {
+                rng = rng.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let edge = x == 0 || y == 0 || x == nw - 1 || y == nh - 1;
+                let c: [u8; 4] = if edge {
+                    [255, 255, 255, 255]
+                } else {
+                    [
+                        [0x58, 0x3C, 0x2F, 255],
+                        [0x89, 0x56, 0x3E, 255],
+                        [0xBF, 0x81, 0x4F, 255],
+                        [0x2A, 0x5B, 0x49, 255],
+                        [0x57, 0x9E, 0x83, 255],
+                    ][(rng >> 16) as usize % 5]
+                };
+                let o = ((y * nw + x) * 4) as usize;
+                native.pixels[o..o + 4].copy_from_slice(&c);
+            }
+        }
+        let (bw, bh) = (67u32, 47u32);
+        let mut big = crate::renderer::Image::new(bw, bh);
+        for y in 0..bh {
+            for x in 0..bw {
+                let c = native.get(x * nw / bw, y * nh / bh);
+                let o = ((y * bw + x) * 4) as usize;
+                big.pixels[o..o + 4].copy_from_slice(&[c.r, c.g, c.b, c.a]);
+            }
+        }
+        let png = crate::export::png::encode(&big);
+        let mut e = Engine::new(32, 32);
+        let r = e.execute(br#"{"op":"reference_import","x":2,"y":3}"#, &png);
+        let j = Json::parse(&r.json).unwrap();
+        assert_eq!(j.get("ok"), Some(&Json::Bool(true)), "{}", r.json);
+        let res = j.get("result").unwrap();
+        assert_eq!(res.get("native").unwrap().get("width").unwrap().as_i64(), Some(20));
+        assert_eq!(res.get("native").unwrap().get("height").unwrap().as_i64(), Some(14));
+        assert!(!res.get("ramps").unwrap().as_array().unwrap().is_empty());
+        let img = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+        assert_eq!(px(&img, 32, 2, 3)[3], 0, "the white frame became transparent");
+        for (x, y) in [(5u32, 5u32), (10, 7), (18, 12)] {
+            let c = native.get(x, y);
+            assert_eq!(px(&img, 32, (x + 2) as usize, (y + 3) as usize), [c.r, c.g, c.b, c.a], "pixel {x},{y}");
+        }
+        // The extracted ramps drive the shade brush right away.
+        let r = ok(&mut e, r#"{"op":"shade","x":3,"y":4,"width":18,"height":12,"steps":1}"#);
+        assert!(r.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 20);
+        // As a reference it lands on a locked, faded layer.
+        let r = e.execute(br#"{"op":"reference_import","reference":true}"#, &png);
+        assert!(r.json.contains("\"layer\":\"Reference\""), "{}", r.json);
+    }
 }
 
 mod export_deflate {

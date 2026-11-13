@@ -714,6 +714,470 @@ pub mod commands {
             Ok((layer.id, doc.frames[fi].id))
         }
     }
+    mod artist {
+        //! Hand-pixeling commands for detailed (64-256 px) characters: material ramps and a
+        //! ramp-stepping shade brush, pixel-perfect freehand strokes, per-layer pixel density and a
+        //! reference importer that recovers the true pixel grid of upscaled art.
+
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        use super::args::{color, color_value, layer_index, opt_bool, opt_i64, opt_str, req_str, target};
+        use super::json::Json;
+        use super::{CmdError, CmdResult, Outcome};
+        use crate::pixel::{PixelGrid, Rgba, TRANSPARENT};
+        use crate::project::{Document, Ramp};
+        use crate::renderer::Image;
+
+        fn colors_arg(doc: &Document, a: &Json, key: &str) -> CmdResult<Vec<u32>> {
+            match a.get(key) {
+                Some(Json::Arr(list)) => list.iter().map(|c| color_value(doc, c, key)).collect(),
+                _ => Err(CmdError::invalid(format!("'{key}' must be an array of colors"))),
+            }
+        }
+
+        /// Creates or replaces a material ramp (dark → light), e.g. skin, hair, cloth, metal.
+        pub fn ramp_set(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let name = req_str(a, "name")?.trim().to_string();
+            if name.is_empty() || name.len() > 64 {
+                return Err(CmdError::invalid("ramp 'name' must be 1-64 characters"));
+            }
+            let colors = colors_arg(doc, a, "colors")?;
+            if !(2..=16).contains(&colors.len()) || colors.contains(&TRANSPARENT) {
+                return Err(CmdError::invalid("a ramp holds 2-16 opaque colors, dark to light"));
+            }
+            for c in &colors {
+                let _ = doc.palette.intern(Rgba::from_u32(*c));
+            }
+            match doc.ramps.iter_mut().find(|r| r.name == name) {
+                Some(r) => r.colors = colors,
+                None => doc.ramps.push(Ramp { name: name.clone(), colors }),
+            }
+            Ok(Outcome::new(Json::obj().with("ramp", name).with("ramps", doc.ramps.len()), 0))
+        }
+
+        pub fn ramp_delete(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let name = req_str(a, "name")?;
+            let before = doc.ramps.len();
+            doc.ramps.retain(|r| r.name != name);
+            if doc.ramps.len() == before {
+                return Err(CmdError::not_found(format!("no ramp '{name}'")));
+            }
+            Ok(Outcome::new(Json::obj().with("deleted", name), 0))
+        }
+
+        /// Where a color sits in the ramps: (ramp index, position).
+        pub fn ramp_index(doc: &Document) -> HashMap<u32, (usize, usize)> {
+            let mut m = HashMap::new();
+            for (ri, r) in doc.ramps.iter().enumerate() {
+                for (i, &c) in r.colors.iter().enumerate() {
+                    m.entry(c).or_insert((ri, i));
+                }
+            }
+            m
+        }
+
+        /// The shade brush: moves each targeted pixel `steps` along its own material ramp
+        /// (+1 lighter, -1 darker). Never invents a color — it is how pixel artists shade by hand.
+        pub fn shade(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let steps = opt_i64(a, "steps")?.unwrap_or(-1).clamp(-15, 15);
+            if doc.ramps.is_empty() {
+                return Err(CmdError::invalid("define material ramps first (ramp_set, color_ramp with name, or reference_import)"));
+            }
+            let mut targets: Vec<(i64, i64)> = Vec::new();
+            match a.get("pixels") {
+                Some(Json::Arr(list)) => {
+                    for p in list {
+                        match p.as_array() {
+                            Some([x, y, ..]) => targets.push((x.as_i64().unwrap_or(-1), y.as_i64().unwrap_or(-1))),
+                            _ => return Err(CmdError::invalid("pixels must be [[x, y], …]")),
+                        }
+                    }
+                }
+                _ => {
+                    let (x, y) = (super::args::req_i64(a, "x")?, super::args::req_i64(a, "y")?);
+                    let (w, h) = (opt_i64(a, "width")?.unwrap_or(1).clamp(1, 4096), opt_i64(a, "height")?.unwrap_or(1).clamp(1, 4096));
+                    for yy in y..y + h {
+                        for xx in x..x + w {
+                            targets.push((xx, yy));
+                        }
+                    }
+                }
+            }
+            let only = match a.get("only_color") {
+                Some(v) if !v.is_null() => Some(color_value(doc, v, "only_color")?),
+                _ => None,
+            };
+            let index = ramp_index(doc);
+            let ramps: Vec<Vec<u32>> = doc.ramps.iter().map(|r| r.colors.clone()).collect();
+            let (l, f) = target(doc, a)?;
+            let grid = doc.cel_mut(l, f);
+            let (mut changed, mut skipped) = (0u64, 0u64);
+            for (x, y) in targets {
+                let v = grid.get(x, y);
+                if v == TRANSPARENT || only.is_some_and(|o| o != v) {
+                    continue;
+                }
+                let Some(&(ri, i)) = index.get(&(v | 0xFF)) else {
+                    skipped += 1;
+                    continue;
+                };
+                let r = &ramps[ri];
+                let ni = (i as i64 + steps).clamp(0, r.len() as i64 - 1) as usize;
+                let nv = (r[ni] & !0xFF) | (v & 0xFF);
+                changed += grid.set(x, y, nv) as u64;
+            }
+            Ok(Outcome::new(Json::obj().with("changed", changed).with("notInARamp", skipped), changed))
+        }
+
+        /// Freehand polyline with "pixel perfect" corners (no L-shaped doubles), 1-4 px wide.
+        pub fn draw_stroke(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let pts: Vec<(i64, i64)> = match a.get("points").and_then(Json::as_array) {
+                Some(list) if !list.is_empty() && list.len() <= 8192 => list
+                    .iter()
+                    .map(|p| match p.as_array() {
+                        Some([x, y]) => Ok((x.as_f64().unwrap_or(0.0).round() as i64, y.as_f64().unwrap_or(0.0).round() as i64)),
+                        _ => Err(CmdError::invalid("points must be [[x, y], …]")),
+                    })
+                    .collect::<CmdResult<_>>()?,
+                _ => return Err(CmdError::invalid("'points' must list 1-8192 [x, y] points")),
+            };
+            let size = opt_i64(a, "size")?.unwrap_or(1).clamp(1, 4);
+            let perfect = opt_bool(a, "pixel_perfect")?.unwrap_or(true);
+            let v = color(doc, a, "color")?;
+            // Rasterize the polyline into an ordered pixel path.
+            let mut path: Vec<(i64, i64)> = vec![pts[0]];
+            for w in pts.windows(2) {
+                let ((mut x0, mut y0), (x1, y1)) = (w[0], w[1]);
+                let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
+                let (sx, sy) = (if x0 < x1 { 1 } else { -1 }, if y0 < y1 { 1 } else { -1 });
+                let mut err = dx + dy;
+                while (x0, y0) != (x1, y1) {
+                    let e2 = 2 * err;
+                    if e2 >= dy {
+                        err += dy;
+                        x0 += sx;
+                    }
+                    if e2 <= dx {
+                        err += dx;
+                        y0 += sy;
+                    }
+                    if path.last() != Some(&(x0, y0)) {
+                        path.push((x0, y0));
+                    }
+                }
+            }
+            if perfect && size == 1 {
+                // Drop the middle pixel of every L: (a, b, c) where a and c touch diagonally.
+                let mut out: Vec<(i64, i64)> = Vec::with_capacity(path.len());
+                for &p in &path {
+                    if out.len() >= 2 {
+                        let (a0, b0) = (out[out.len() - 2], out[out.len() - 1]);
+                        if (a0.0 - p.0).abs() == 1 && (a0.1 - p.1).abs() == 1 && (b0.0 == a0.0 || b0.1 == a0.1) {
+                            out.pop();
+                        }
+                    }
+                    out.push(p);
+                }
+                path = out;
+            }
+            let (l, f) = target(doc, a)?;
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            for (x, y) in path {
+                for oy in 0..size {
+                    for ox in 0..size {
+                        changed += grid.set(x + ox - (size - 1) / 2, y + oy - (size - 1) / 2, v) as u64;
+                    }
+                }
+            }
+            Ok(Outcome::new(Json::obj().with("changed", changed), changed))
+        }
+
+        /// Changes a layer's density (1, 2 or 4 pixels per canvas pixel), resampling its cels.
+        fn set_density(doc: &mut Document, li: usize, d: u8) {
+            let old = doc.layers[li].density.max(1) as u32;
+            if old == d as u32 {
+                return;
+            }
+            let id = doc.layers[li].id;
+            doc.layers[li].density = d;
+            let (w, h) = doc.layer_dims(id);
+            let keys: Vec<(u32, u32)> = doc.cels.keys().filter(|(l, _)| *l == id).copied().collect();
+            for key in keys {
+                let src = doc.cels[&key].clone();
+                let mut out = PixelGrid::new(w, h);
+                let (new, block) = (d as u32, (old / d as u32).max(1));
+                for y in 0..h {
+                    for x in 0..w {
+                        let v = if new > old {
+                            src.get((x * old / new) as i64, (y * old / new) as i64)
+                        } else {
+                            // Downsampling: the block's most common color, if it covers half the block.
+                            let mut votes: HashMap<u32, u32> = HashMap::new();
+                            for by in 0..block {
+                                for bx in 0..block {
+                                    let p = src.get((x * block + bx) as i64, (y * block + by) as i64);
+                                    if p != TRANSPARENT {
+                                        *votes.entry(p).or_default() += 1;
+                                    }
+                                }
+                            }
+                            let total: u32 = votes.values().sum();
+                            match votes.into_iter().max_by_key(|(c, n)| (*n, *c)) {
+                                Some((c, _)) if total * 2 >= block * block => c,
+                                _ => TRANSPARENT,
+                            }
+                        };
+                        if v != TRANSPARENT {
+                            out.set(x as i64, y as i64, v);
+                        }
+                    }
+                }
+                doc.cels.insert(key, Arc::new(out));
+            }
+        }
+
+        /// One tool for every layer property: name, visible, locked, opacity, blend, density.
+        pub fn layer_set(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let li = layer_index(doc, a, "layer")?;
+            if let Some(n) = opt_str(a, "name")? {
+                let n = n.trim();
+                if n.is_empty() || n.chars().count() > 128 {
+                    return Err(CmdError::invalid("layer name must be 1-128 characters"));
+                }
+                doc.layers[li].name = n.to_string();
+            }
+            if let Some(v) = opt_bool(a, "visible")? {
+                doc.layers[li].visible = v;
+            }
+            if let Some(v) = opt_bool(a, "locked")? {
+                doc.layers[li].locked = v;
+            }
+            if let Some(o) = opt_i64(a, "opacity")? {
+                doc.layers[li].opacity = o.clamp(0, 255) as u8;
+            }
+            if let Some(b) = opt_str(a, "blend")? {
+                doc.layers[li].blend =
+                    crate::layers::Blend::parse(b).ok_or_else(|| CmdError::invalid(format!("unknown blend mode '{b}'")))?;
+            }
+            if let Some(d) = opt_i64(a, "density")? {
+                if !matches!(d, 1 | 2 | 4) {
+                    return Err(CmdError::invalid("'density' must be 1, 2 or 4"));
+                }
+                set_density(doc, li, d as u8);
+            }
+            let l = &doc.layers[li];
+            Ok(Outcome::new(
+                Json::obj()
+                    .with("layer", li)
+                    .with("name", l.name.as_str())
+                    .with("visible", l.visible)
+                    .with("locked", l.locked)
+                    .with("opacity", l.opacity)
+                    .with("blend", l.blend.as_str())
+                    .with("density", l.density),
+                0,
+            ))
+        }
+
+        /// Finds the smallest pixel grid that reproduces an upscaled image (nearest-neighbour,
+        /// integer or non-integer scale such as 3.35×). Returns the native (w, h).
+        pub fn detect_grid(img: &Image) -> (u32, u32) {
+            let (w, h) = (img.width, img.height);
+            let step = ((w as u64 * h as u64 / 40_000) as f64).sqrt().ceil().max(1.0) as u32;
+            let samples: Vec<(u32, u32)> =
+                (0..h).step_by(step as usize).flat_map(|y| (0..w).step_by(step as usize).map(move |x| (x, y))).collect();
+            let err = |nw: u32, nh: u32| -> usize {
+                samples
+                    .iter()
+                    .filter(|&&(x, y)| {
+                        let (i, j) = ((x as u64 * nw as u64 / w as u64) as u32, (y as u64 * nh as u64 / h as u64) as u32);
+                        let (sx, sy) = (
+                            (((i as f64 + 0.5) * w as f64 / nw as f64) as u32).min(w - 1),
+                            (((j as f64 + 0.5) * h as f64 / nh as f64) as u32).min(h - 1),
+                        );
+                        img.get(x, y) != img.get(sx, sy)
+                    })
+                    .count()
+            };
+            let mut results: Vec<(u32, u32, usize)> = Vec::new();
+            for nw in (w / 16).max(4)..=w {
+                let base = (nw as f64 * h as f64 / w as f64).round() as u32;
+                let best = [base.saturating_sub(1).max(1), base, (base + 1).min(h)]
+                    .into_iter()
+                    .map(|nh| (nh, err(nw, nh)))
+                    .min_by_key(|p| p.1)
+                    .unwrap();
+                results.push((nw, best.0, best.1));
+            }
+            let min = results.iter().map(|r| r.2).min().unwrap_or(0);
+            let tolerance = min + min / 8 + samples.len() / 200;
+            results.iter().find(|r| r.2 <= tolerance).map(|r| (r.0, r.1)).unwrap_or((w, h))
+        }
+
+        /// Imports a PNG as pixel art: recovers its true grid (`grid: auto`), optionally makes the
+        /// background transparent, limits colors, and turns the palette into material ramps
+        /// (grouped by hue, sorted dark → light). As a reference it lands on a locked, faded layer
+        /// to trace over; otherwise it becomes editable pixels.
+        pub fn reference_import(doc: &mut Document, a: &Json, payload: &[u8]) -> CmdResult<Outcome> {
+            let png = if !payload.is_empty() { payload.to_vec() } else { super::voxel::base64_decode(req_str(a, "data_base64")?)? };
+            let src = crate::export::png::decode(&png).map_err(|e| CmdError::new("invalid_file", e))?;
+            let (nw, nh) = match a.get("grid") {
+                None | Some(Json::Null) => detect_grid(&src),
+                Some(Json::Str(s)) if s == "auto" => detect_grid(&src),
+                Some(Json::Str(s)) if s == "none" => (src.width, src.height),
+                Some(v) => {
+                    let k =
+                        v.as_f64().filter(|k| *k >= 1.0).ok_or_else(|| CmdError::invalid("'grid' must be auto, none or a scale ≥ 1"))?;
+                    (((src.width as f64 / k).round() as u32).max(1), ((src.height as f64 / k).round() as u32).max(1))
+                }
+            };
+            let mut img = Image::new(nw, nh);
+            for j in 0..nh {
+                for i in 0..nw {
+                    let c = src.get(
+                        (((i as f64 + 0.5) * src.width as f64 / nw as f64) as u32).min(src.width - 1),
+                        (((j as f64 + 0.5) * src.height as f64 / nh as f64) as u32).min(src.height - 1),
+                    );
+                    let o = ((j * nw + i) * 4) as usize;
+                    img.pixels[o..o + 4].copy_from_slice(&[c.r, c.g, c.b, c.a]);
+                }
+            }
+            if opt_str(a, "transparent")?.unwrap_or("auto") == "auto" {
+                // A solid frame color (all four corners equal) is background.
+                let k = img.get(0, 0);
+                if k.a == 255 && [img.get(nw - 1, 0), img.get(0, nh - 1), img.get(nw - 1, nh - 1)].iter().all(|c| *c == k) {
+                    for p in img.pixels.as_chunks_mut::<4>().0 {
+                        if *p == [k.r, k.g, k.b, 255] {
+                            *p = [0, 0, 0, 0];
+                        }
+                    }
+                }
+            }
+            if let Some(n) = opt_i64(a, "max_colors")? {
+                let samples = crate::pixelart::image_samples(&img);
+                let pal = crate::pixelart::median_cut(&samples, n.clamp(2, 256) as usize);
+                crate::pixelart::quantize_image(&mut img, &pal, crate::pixelart::Dither::None, 0.0);
+            }
+            // Palette → material ramps. Near-blacks are the outline ramp, greys get their own,
+            // chromatic colors are grouped by hue (split at gaps > 18°, groups capped at 8 tones)
+            // and every group is sorted dark → light.
+            let mut counts: HashMap<u32, u32> = HashMap::new();
+            for p in img.pixels.as_chunks::<4>().0 {
+                if p[3] > 0 {
+                    *counts.entry(Rgba::new(p[0], p[1], p[2], 255).to_pixel()).or_default() += 1;
+                }
+            }
+            let mut made = Vec::new();
+            if opt_bool(a, "ramps")?.unwrap_or(true) {
+                let (mut dark, mut grey, mut hued) = (Vec::new(), Vec::new(), Vec::new());
+                for (&c, &n) in &counts {
+                    if n < 2 {
+                        continue;
+                    }
+                    let [l, ch, hue] = crate::pixelart::lch(Rgba::from_u32(c));
+                    if l < 0.22 {
+                        dark.push((l, c, hue));
+                    } else if ch < 0.03 {
+                        grey.push((l, c, hue));
+                    } else {
+                        hued.push((l, c, hue));
+                    }
+                }
+                hued.sort_by(|a, b| a.2.total_cmp(&b.2));
+                let mut groups: Vec<Vec<(f32, u32, f32)>> = Vec::new();
+                if !hued.is_empty() {
+                    // Start after the widest circular gap so a red group is not cut at 0°/360°.
+                    let n = hued.len();
+                    let gap = |i: usize| (hued[(i + 1) % n].2 - hued[i].2).rem_euclid(360.0);
+                    let widest = (0..n).max_by(|&i, &j| gap(i).total_cmp(&gap(j))).unwrap_or(0);
+                    let order: Vec<usize> = (1..=n).map(|k| (widest + k) % n).collect();
+                    let mut cur = vec![hued[order[0]]];
+                    for w in order.windows(2) {
+                        if (hued[w[1]].2 - hued[w[0]].2).rem_euclid(360.0) > 18.0 {
+                            groups.push(std::mem::take(&mut cur));
+                        }
+                        cur.push(hued[w[1]]);
+                    }
+                    groups.push(cur);
+                }
+                let mut k = 0;
+                while k < groups.len() {
+                    if groups[k].len() > 8 {
+                        let g = &groups[k];
+                        let cut = (1..g.len()).max_by(|&i, &j| (g[i].2 - g[i - 1].2).total_cmp(&(g[j].2 - g[j - 1].2))).unwrap();
+                        let tail = groups[k].split_off(cut);
+                        groups.insert(k + 1, tail);
+                    } else {
+                        k += 1;
+                    }
+                }
+                type Tone = (f32, u32, f32);
+                let mut named: Vec<(String, Vec<Tone>)> = vec![("outline".into(), dark), ("grey".into(), grey)];
+                for g in groups {
+                    let mean = g.iter().map(|t| t.2).sum::<f32>() / g.len() as f32;
+                    named.push((format!("hue{:03}", mean.round() as u32), g));
+                }
+                for (base, mut tones) in named {
+                    if tones.len() < 2 {
+                        continue;
+                    }
+                    tones.sort_by(|x, y| x.0.total_cmp(&y.0));
+                    tones.truncate(16);
+                    let mut name = format!("ref_{base}");
+                    if made.iter().any(|m: &Json| m.as_str() == Some(name.as_str())) {
+                        name = format!("{name}_{}", made.len());
+                    }
+                    let colors: Vec<u32> = tones.iter().map(|t| t.1).collect();
+                    match doc.ramps.iter_mut().find(|r| r.name == name) {
+                        Some(r) => r.colors = colors,
+                        None => doc.ramps.push(Ramp { name: name.clone(), colors }),
+                    }
+                    made.push(Json::from(name));
+                }
+            }
+            let reference = opt_bool(a, "reference")?.unwrap_or(false);
+            let layer_name = opt_str(a, "layer")?.unwrap_or(if reference { "Reference" } else { "Imported" }).to_string();
+            let lid = match doc.layers.iter().find(|l| l.name == layer_name) {
+                Some(l) => l.id,
+                None => doc.insert_layer(&layer_name, if reference { 0 } else { doc.layers.len() }),
+            };
+            let (ox, oy) = (opt_i64(a, "x")?.unwrap_or(0), opt_i64(a, "y")?.unwrap_or(0));
+            let fi = super::args::frame_index(doc, a, "frame")?;
+            let fid = doc.frames[fi].id;
+            let grid = doc.cel_mut(lid, fid);
+            let mut changed = 0u64;
+            for y in 0..nh {
+                for x in 0..nw {
+                    let c = img.get(x, y);
+                    if c.a > 0 {
+                        changed += grid.set(ox + x as i64, oy + y as i64, c.to_pixel()) as u64;
+                    }
+                }
+            }
+            if reference && let Some(l) = doc.layers.iter_mut().find(|l| l.id == lid) {
+                l.locked = true;
+                l.opacity = 96;
+            }
+            if !reference {
+                doc.active_layer = lid;
+            }
+            let colors: std::collections::HashSet<[u8; 4]> = img.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).copied().collect();
+            Ok(Outcome::new(
+                Json::obj()
+                    .with("source", Json::obj().with("width", src.width).with("height", src.height))
+                    .with("native", Json::obj().with("width", nw).with("height", nh))
+                    .with("scale", (src.width as f64 / nw as f64 * 100.0).round() / 100.0)
+                    .with("colors", colors.len())
+                    .with("ramps", Json::Arr(made))
+                    .with("layer", layer_name)
+                    .with("changed", changed),
+                changed,
+            ))
+        }
+    }
+
     mod charart {
         //! Character-art commands: auto_shade, gradient_map, draw_sparkle, pixel_cleanup (and the
         //! sel-out options of `outline`, which live in pixel2d).
@@ -721,7 +1185,7 @@ pub mod commands {
         use std::collections::HashMap;
         use std::sync::Arc;
 
-        use super::args::{color_value, frame_index, layer_index, opt_f64, opt_i64, opt_str, target};
+        use super::args::{color_value, frame_index, layer_index, opt_bool, opt_f64, opt_i64, opt_str, target};
         use super::json::Json;
         use super::{CmdError, CmdResult, Outcome};
         use crate::pixel::{PixelGrid, Rgba};
@@ -827,25 +1291,48 @@ pub mod commands {
                 }
                 s.ramps = ramps;
             }
+            // Palette lock: every color of a document ramp shades with its ramp neighbours, and
+            // colors outside the ramps stay untouched — the result uses only the artist's palette.
+            s.palette_lock = opt_bool(a, "palette_lock")?.unwrap_or(!doc.ramps.is_empty());
+            if s.palette_lock {
+                for r in &doc.ramps {
+                    let c: Vec<Rgba> = r.colors.iter().map(|v| Rgba::from_u32(*v)).collect();
+                    let at = |i: isize| c[i.clamp(0, c.len() as isize - 1) as usize];
+                    for i in 0..c.len() as isize {
+                        s.ramps.entry(c[i as usize].to_u32() | 0xFF).or_insert([at(i - 2), at(i - 1), at(i), at(i + 1)]);
+                    }
+                }
+            }
             if let Some(v) = a.get("rim").filter(|v| !v.is_null()) {
                 let c = Rgba::from_u32(color_value(doc, v, "rim")?);
                 s.rim = Some((c, opt_f64(a, "rim_strength")?.unwrap_or(0.55).clamp(0.0, 1.0) as f32));
             }
             let cast = opt_i64(a, "cast_shadow")?.unwrap_or(2).clamp(0, 64) as u32;
-            let (w, h) = (doc.width as usize, doc.height as usize);
             let mut changed = 0u64;
             for (l, f) in cels(doc, a)? {
-                // Pixels of visible layers above this one cast shadows onto it.
+                // Pixels of visible layers above this one cast shadows onto it (mapped between
+                // layer densities, so a 2× detail layer and a 1× body layer still interact).
+                let (w, h) = doc.layer_dims(doc.layers[l].id);
+                let (w, h) = (w as usize, h as usize);
+                let dl = doc.layers[l].density.max(1) as usize;
                 let mut occ = vec![false; if cast > 0 { w * h } else { 0 }];
                 if cast > 0 {
                     for upper in &doc.layers[l + 1..] {
                         if !upper.visible {
                             continue;
                         }
+                        let du = upper.density.max(1) as usize;
                         if let Some(g) = doc.cel(upper.id, doc.frames[f].id) {
                             g.for_each_opaque(|x, y, v| {
-                                if v & 0xFF >= 128 {
-                                    occ[y as usize * w + x as usize] = true;
+                                if v & 0xFF < 128 {
+                                    return;
+                                }
+                                let (x0, y0) = (x as usize * dl / du, y as usize * dl / du);
+                                let span = (dl / du).max(1);
+                                for yy in y0..(y0 + span).min(h) {
+                                    for xx in x0..(x0 + span).min(w) {
+                                        occ[yy * w + xx] = true;
+                                    }
                                 }
                             });
                         }
@@ -944,8 +1431,9 @@ pub mod commands {
             let (x, y) = (coord(a, "x")?, coord(a, "y")?);
             let (l, f) = target(doc, a)?;
             let v = color(doc, a, "color")?;
-            if x < 0 || y < 0 || x >= doc.width as i64 || y >= doc.height as i64 {
-                return Err(CmdError::invalid(format!("pixel ({x},{y}) is outside the {}x{} canvas", doc.width, doc.height)));
+            let (w, h) = doc.layer_dims(l);
+            if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+                return Err(CmdError::invalid(format!("pixel ({x},{y}) is outside the {w}x{h} layer grid")));
             }
             let changed = doc.cel_mut(l, f).set(x, y, v) as u64;
             Ok(Outcome::new(Json::obj().with("x", x).with("y", y).with("color", hex_of(v)).with("changed", changed), changed))
@@ -2885,7 +3373,6 @@ pub mod commands {
             }
             let (pivot, cx, height) = (y1 as f32 + 0.5, (x0 + x1) as f32 / 2.0 + 0.5, (y1 - y0 + 1).max(1) as f32);
             ensure_frames(doc, start, n, ms, u32::MAX)?;
-            let (w, h) = (doc.width as i64, doc.height as i64);
             let mut changed = 0u64;
             for k in 0..n {
                 let phi = TAU * k as f32 / n as f32;
@@ -2907,10 +3394,13 @@ pub mod commands {
                         doc.cels.insert((id, target), src);
                         continue;
                     }
-                    let mut out = crate::pixel::PixelGrid::new(w as u32, h as u32);
-                    for y in 0..h {
-                        for x in 0..w {
-                            let (xf, yf) = (x as f32 + 0.5, y as f32 + 0.5);
+                    let (lw, lh) = doc.layer_dims(id);
+                    let ld = (lw / doc.width.max(1)) as f32;
+                    let mut out = crate::pixel::PixelGrid::new(lw, lh);
+                    for y in 0..lh as i64 {
+                        for x in 0..lw as i64 {
+                            // Work in canvas units so every layer moves by the same amount.
+                            let (xf, yf) = ((x as f32 + 0.5) / ld, (y as f32 + 0.5) / ld);
                             let (sx, sy) = match kind {
                                 "bob" => (xf, yf + (amount * phi.sin().abs()).round()),
                                 "float" => (xf, yf + (amount * phi.sin()).round()),
@@ -2930,7 +3420,7 @@ pub mod commands {
                                 "hurt" if k >= 3 => (xf - if k % 2 == 0 { amount } else { -amount } * decay * 2.0, yf),
                                 _ => (xf, yf),
                             };
-                            let v = src.get(sx.floor() as i64, sy.floor() as i64);
+                            let v = src.get((sx * ld).floor() as i64, (sy * ld).floor() as i64);
                             if v == TRANSPARENT {
                                 continue;
                             }
@@ -4086,6 +4576,13 @@ pub mod commands {
             let hue = opt_f64(a, "hue_shift")?.unwrap_or(18.0).clamp(0.0, 90.0) as f32;
             let contrast = opt_f64(a, "contrast")?.unwrap_or(0.75).clamp(0.05, 1.0) as f32;
             let colors = pixelart::ramp(base, steps, hue, contrast);
+            if let Some(name) = opt_str(a, "name")? {
+                let px: Vec<u32> = colors.iter().map(|c| c.to_pixel()).collect();
+                match doc.ramps.iter_mut().find(|r| r.name == name) {
+                    Some(r) => r.colors = px,
+                    None => doc.ramps.push(crate::project::Ramp { name: name.to_string(), colors: px }),
+                }
+            }
             if opt_bool(a, "add_to_palette")?.unwrap_or(true) {
                 for c in &colors {
                     doc.palette.intern(*c).map_err(|e| CmdError::new("limit", e))?;
@@ -4571,6 +5068,12 @@ pub mod commands {
             if let Some(bg) = opt_str(a, "background")? {
                 opts.background = Some(Rgba::parse_hex(bg).ok_or_else(|| CmdError::invalid("'background' must be a hex color"))?);
             }
+            if let Some(d) = opt_i64(a, "density")? {
+                if !matches!(d, 1 | 2 | 4) {
+                    return Err(CmdError::invalid("'density' must be 1, 2 or 4"));
+                }
+                opts.density = Some(d as u32);
+            }
             if let Some(o) = a.get("onion").filter(|o| !o.is_null()) {
                 let n = |k: &str, d: i64| opt_i64(o, k).map(|v| v.unwrap_or(d));
                 let (before, after, opacity) = (n("before", 1)?, n("after", 0)?, n("opacity", 96)?);
@@ -4588,6 +5091,7 @@ pub mod commands {
         }
 
         fn check_output(doc: &Document, s: u32) -> CmdResult<()> {
+            let s = s * doc.max_density();
             if doc.width * s > MAX_OUTPUT_SIDE || doc.height * s > MAX_OUTPUT_SIDE {
                 return Err(CmdError::new("limit", format!("scaled output would exceed {MAX_OUTPUT_SIDE}px; lower 'scale'")));
             }
@@ -6173,7 +6677,8 @@ pub mod commands {
                 } else {
                     doc.insert_frame(index, b.frame_ms)
                 };
-                let mut grid = PixelGrid::new(doc.width, doc.height);
+                let (lw, lh) = doc.layer_dims(layer_id);
+                let mut grid = PixelGrid::new(lw, lh);
                 for y in 0..img.height {
                     for x in 0..img.width {
                         let c = img.get(x, y);
@@ -6527,6 +7032,12 @@ pub mod commands {
         ("gradient_map", Kind::Mutate),
         ("draw_sparkle", Kind::Mutate),
         ("pixel_cleanup", Kind::Mutate),
+        ("ramp_set", Kind::Mutate),
+        ("ramp_delete", Kind::Mutate),
+        ("shade", Kind::Mutate),
+        ("draw_stroke", Kind::Mutate),
+        ("layer_set", Kind::Mutate),
+        ("reference_import", Kind::Mutate),
         // game production
         ("layer_blend", Kind::Mutate),
         ("slice_set", Kind::Mutate),
@@ -6587,6 +7098,12 @@ pub mod commands {
             "gradient_map" => charart::gradient_map(doc, a),
             "draw_sparkle" => charart::draw_sparkle(doc, a),
             "pixel_cleanup" => charart::pixel_cleanup(doc, a),
+            "ramp_set" => artist::ramp_set(doc, a),
+            "ramp_delete" => artist::ramp_delete(doc, a),
+            "shade" => artist::shade(doc, a),
+            "draw_stroke" => artist::draw_stroke(doc, a),
+            "layer_set" => artist::layer_set(doc, a),
+            "reference_import" => artist::reference_import(doc, a, payload),
             "layer_blend" => gamedev::layer_blend(doc, a),
             "slice_set" => gamedev::slice_set(doc, a),
             "slice_delete" => gamedev::slice_delete(doc, a),
@@ -8850,11 +9367,14 @@ pub mod layers {
         /// 0 = invisible, 255 = fully opaque.
         pub opacity: u8,
         pub blend: Blend,
+        /// Pixel density relative to the canvas: 1, 2 or 4. A density-2 layer has half-size
+        /// pixels (its grid is 2× the canvas), for faces, eyes and fine highlights.
+        pub density: u8,
     }
 
     impl Layer {
         pub fn new(id: u32, name: impl Into<String>) -> Layer {
-            Layer { id, name: name.into(), visible: true, locked: false, opacity: 255, blend: Blend::Normal }
+            Layer { id, name: name.into(), visible: true, locked: false, opacity: 255, blend: Blend::Normal, density: 1 }
         }
     }
 
@@ -9310,6 +9830,8 @@ pub mod pixelart {
             pub preserve: Vec<u32>,
             /// Rim light on the silhouette edges facing away from the light: (color, strength 0-1).
             pub rim: Option<(Rgba, f32)>,
+            /// Only shade colors that have a ramp; never invent new colors.
+            pub palette_lock: bool,
         }
 
         impl Default for ShadeSettings {
@@ -9326,6 +9848,7 @@ pub mod pixelart {
                     ramps: HashMap::new(),
                     preserve: Vec::new(),
                     rim: None,
+                    palette_lock: false,
                 }
             }
         }
@@ -9426,7 +9949,11 @@ pub mod pixelart {
                 if members.len() < s.min_region || s.preserve.contains(&k) {
                     continue;
                 }
-                let tones = s.ramps.get(&k).copied().unwrap_or_else(|| auto_ramp(*base, s.hue_shift, s.contrast));
+                let tones = match s.ramps.get(&k) {
+                    Some(t) => *t,
+                    None if s.palette_lock => continue,
+                    None => auto_ramp(*base, s.hue_shift, s.contrast),
+                };
                 // Shape centroid and extent for the whole-form gradient.
                 let (mut cx, mut cy) = (0f32, 0f32);
                 for &i in members {
@@ -10264,6 +10791,13 @@ pub mod project {
 
     pub type CelKey = (u32, u32); // (layer id, frame id)
 
+    /// A named material ramp, dark → light (`Rgba::to_pixel` values).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Ramp {
+        pub name: String,
+        pub colors: Vec<u32>,
+    }
+
     #[derive(Debug, Clone)]
     pub struct Document {
         pub name: String,
@@ -10289,6 +10823,8 @@ pub mod project {
         pub slices: Vec<Slice>,
         pub tilesets: Vec<Arc<Tileset>>,
         pub tilemaps: Vec<Arc<Tilemap>>,
+        /// Material ramps (dark → light): the shade brush and palette-locked shading use them.
+        pub ramps: Vec<Ramp>,
     }
 
     /// Small neutral starter palette so humans have something to pick from immediately.
@@ -10330,6 +10866,7 @@ pub mod project {
                 slices: Vec::new(),
                 tilesets: Vec::new(),
                 tilemaps: Vec::new(),
+                ramps: Vec::new(),
             };
             let l = doc.insert_layer("Layer 1", 0);
             let f = doc.insert_frame(0, DEFAULT_FRAME_MS);
@@ -10351,8 +10888,19 @@ pub mod project {
         }
 
         /// Mutable cel, created on first write. Copy-on-write if the cel is shared.
+        /// Grid size of a layer (canvas size × its density).
+        pub fn layer_dims(&self, layer_id: u32) -> (u32, u32) {
+            let d = self.layers.iter().find(|l| l.id == layer_id).map(|l| l.density.max(1) as u32).unwrap_or(1);
+            (self.width * d, self.height * d)
+        }
+
+        /// Highest density among the given layers (the resolution needed to show all detail).
+        pub fn max_density(&self) -> u32 {
+            self.layers.iter().map(|l| l.density.max(1) as u32).max().unwrap_or(1)
+        }
+
         pub fn cel_mut(&mut self, layer_id: u32, frame_id: u32) -> &mut PixelGrid {
-            let (w, h) = (self.width, self.height);
+            let (w, h) = self.layer_dims(layer_id);
             let arc = self.cels.entry((layer_id, frame_id)).or_insert_with(|| Arc::new(PixelGrid::new(w, h)));
             Arc::make_mut(arc)
         }
@@ -10469,8 +11017,10 @@ pub mod project {
         /// Crops/extends the canvas. Pixels keep their position relative to the top-left
         /// corner shifted by the given offset.
         pub fn resize(&mut self, width: u32, height: u32, offset_x: i64, offset_y: i64) {
-            for cel in self.cels.values_mut() {
-                *cel = Arc::new(cel.resized(width, height, offset_x, offset_y));
+            let density: HashMap<u32, u32> = self.layers.iter().map(|l| (l.id, l.density.max(1) as u32)).collect();
+            for ((layer, _), cel) in self.cels.iter_mut() {
+                let d = density.get(layer).copied().unwrap_or(1);
+                *cel = Arc::new(cel.resized(width * d, height * d, offset_x * d as i64, offset_y * d as i64));
             }
             self.width = width;
             self.height = height;
@@ -10794,6 +11344,9 @@ pub mod renderer {
         pub only_layer: Option<u32>,
         pub onion: Option<OnionSkin>,
         pub background: Option<Rgba>,
+        /// Output pixels per canvas pixel. `None` = the highest layer density, so half- and
+        /// quarter-size detail pixels are never lost.
+        pub density: Option<u32>,
     }
 
     /// An RGBA8 image, row-major, 4 bytes per pixel.
@@ -10910,6 +11463,11 @@ pub mod renderer {
             }
             let Some(grid) = doc.cel(layer.id, frame.id) else { continue };
             let opacity = div255(layer.opacity as u32 * opacity_scale as u32) as u8;
+            // Output density D vs layer density d: each layer pixel covers (D/d)² output pixels
+            // (or every (d/D)-th layer pixel is shown when rendering below the layer's density).
+            let out_d = (img.width / doc.width.max(1)).max(1);
+            let ld = layer.density.max(1) as u32;
+            let (up, down) = if out_d >= ld { (out_d / ld, 1) } else { (1, ld / out_d) };
             for ty in 0..grid.tiles_y() {
                 for tx in 0..grid.tiles_x() {
                     let Some(tile) = grid.tile(tx, ty) else { continue };
@@ -10917,32 +11475,39 @@ pub mod renderer {
                         if v == 0 {
                             continue;
                         }
-                        let x = tx * TILE_SIZE + i as u32 % TILE_SIZE;
-                        let y = ty * TILE_SIZE + i as u32 / TILE_SIZE;
-                        if x >= img.width || y >= img.height {
+                        let gx = tx * TILE_SIZE + i as u32 % TILE_SIZE;
+                        let gy = ty * TILE_SIZE + i as u32 / TILE_SIZE;
+                        if down > 1 && (!gx.is_multiple_of(down) || !gy.is_multiple_of(down)) {
                             continue;
                         }
-                        let mut c = Rgba::from_u32(v);
-                        if let Some(t) = tint {
-                            c = Rgba::new(
-                                ((c.r as u16 + t.r as u16) / 2) as u8,
-                                ((c.g as u16 + t.g as u16) / 2) as u8,
-                                ((c.b as u16 + t.b as u16) / 2) as u8,
-                                c.a,
-                            );
-                        }
-                        let o = (y as usize * img.width as usize + x as usize) * 4;
-                        if layer.blend == crate::layers::Blend::Normal || img.pixels[o + 3] == 0 {
-                            blend_over(&mut img.pixels[o..o + 4], c, opacity);
-                        } else {
-                            let px = &img.pixels[o..o + 4];
-                            let mixed = Rgba::new(
-                                layer.blend.channel(px[0] as u32, c.r as u32) as u8,
-                                layer.blend.channel(px[1] as u32, c.g as u32) as u8,
-                                layer.blend.channel(px[2] as u32, c.b as u32) as u8,
-                                c.a,
-                            );
-                            blend_over(&mut img.pixels[o..o + 4], mixed, opacity);
+                        for sub in 0..up * up {
+                            let x = gx / down * up + sub % up;
+                            let y = gy / down * up + sub / up;
+                            if x >= img.width || y >= img.height {
+                                continue;
+                            }
+                            let mut c = Rgba::from_u32(v);
+                            if let Some(t) = tint {
+                                c = Rgba::new(
+                                    ((c.r as u16 + t.r as u16) / 2) as u8,
+                                    ((c.g as u16 + t.g as u16) / 2) as u8,
+                                    ((c.b as u16 + t.b as u16) / 2) as u8,
+                                    c.a,
+                                );
+                            }
+                            let o = (y as usize * img.width as usize + x as usize) * 4;
+                            if layer.blend == crate::layers::Blend::Normal || img.pixels[o + 3] == 0 {
+                                blend_over(&mut img.pixels[o..o + 4], c, opacity);
+                            } else {
+                                let px = &img.pixels[o..o + 4];
+                                let mixed = Rgba::new(
+                                    layer.blend.channel(px[0] as u32, c.r as u32) as u8,
+                                    layer.blend.channel(px[1] as u32, c.g as u32) as u8,
+                                    layer.blend.channel(px[2] as u32, c.b as u32) as u8,
+                                    c.a,
+                                );
+                                blend_over(&mut img.pixels[o..o + 4], mixed, opacity);
+                            }
                         }
                     }
                 }
@@ -10952,7 +11517,12 @@ pub mod renderer {
 
     /// Renders one frame. Onion frames are drawn underneath the current frame.
     pub fn render(doc: &Document, frame_index: usize, opts: &RenderOptions) -> Image {
-        let mut img = Image::new(doc.width, doc.height);
+        let d = opts.density.unwrap_or_else(|| match opts.only_layer {
+            Some(id) => doc.layers.iter().find(|l| l.id == id).map(|l| l.density.max(1) as u32).unwrap_or(1),
+            None => doc.layers.iter().filter(|l| l.visible).map(|l| l.density.max(1) as u32).max().unwrap_or(1),
+        });
+        let d = d.clamp(1, 4);
+        let mut img = Image::new(doc.width * d, doc.height * d);
         if let Some(bg) = opts.background {
             for px in img.pixels.as_chunks_mut::<4>().0 {
                 px.copy_from_slice(&[bg.r, bg.g, bg.b, bg.a]);
@@ -11018,7 +11588,7 @@ pub mod storage {
     use crate::voxel::{Material, Texture, Vec3};
 
     pub const MAGIC: &[u8; 4] = b"PXS\0";
-    pub const VERSION: u16 = 3;
+    pub const VERSION: u16 = 4;
 
     struct W(Vec<u8>);
 
@@ -11108,6 +11678,7 @@ pub mod storage {
             l.u8(layer.locked as u8);
             l.u8(layer.opacity);
             l.u8(layer.blend.code());
+            l.u8(layer.density);
         }
         chunk(&mut out, b"LAYR", l);
 
@@ -11296,10 +11867,14 @@ pub mod storage {
             let locked = l.u8()? != 0;
             let opacity = l.u8()?;
             let blend = if version >= 3 { crate::layers::Blend::from_code(l.u8()?) } else { crate::layers::Blend::Normal };
+            let density = if version >= 4 { l.u8()? } else { 1 };
+            if !matches!(density, 1 | 2 | 4) {
+                return Err("invalid layer density".into());
+            }
             if id == 0 || id >= next_layer_id || layers.iter().any(|x: &Layer| x.id == id) {
                 return Err("invalid layer id".into());
             }
-            layers.push(Layer { id, name, visible, locked, opacity, blend });
+            layers.push(Layer { id, name, visible, locked, opacity, blend, density });
         }
 
         let mut f = R { d: get(b"FRAM")?, pos: 0 };
@@ -11371,9 +11946,8 @@ pub mod storage {
             slices: Vec::new(),
             tilesets: Vec::new(),
             tilemaps: Vec::new(),
+            ramps: Vec::new(),
         };
-        let tiles_x = width.div_ceil(TILE_SIZE);
-        let tiles_y = height.div_ceil(TILE_SIZE);
         let mut c = R { d: get(b"CELS")?, pos: 0 };
         let n = c.count(8)?;
         for _ in 0..n {
@@ -11381,9 +11955,10 @@ pub mod storage {
             if doc.layer_index(layer_id).is_none() || doc.frame_index(frame_id).is_none() {
                 return Err("cel references unknown layer/frame".into());
             }
-            let mut grid = PixelGrid::new(width, height);
-            for ty in 0..tiles_y {
-                for tx in 0..tiles_x {
+            let (lw, lh) = doc.layer_dims(layer_id);
+            let mut grid = PixelGrid::new(lw, lh);
+            for ty in 0..lh.div_ceil(TILE_SIZE) {
+                for tx in 0..lw.div_ceil(TILE_SIZE) {
                     let reference = c.u32()? as usize;
                     if reference > tiles.len() {
                         return Err("cel references missing tile".into());
@@ -11423,6 +11998,15 @@ pub mod storage {
     }
 
     fn save_gamedev(doc: &Document, out: &mut Vec<u8>) {
+        let mut rm = W(Vec::new());
+        rm.u32(doc.ramps.len() as u32);
+        for r in &doc.ramps {
+            rm.str(&r.name);
+            rm.u32(r.colors.len() as u32);
+            r.colors.iter().for_each(|c| rm.u32(*c));
+        }
+        chunk(out, b"RAMP", rm);
+
         let mut s = W(Vec::new());
         s.u32(doc.slices.len() as u32);
         for sl in &doc.slices {
@@ -11475,6 +12059,18 @@ pub mod storage {
     const MAX_MAP_SIDE: u32 = 4096;
 
     fn load_gamedev(doc: &mut Document, chunks: &HashMap<[u8; 4], &[u8]>) -> Result<(), String> {
+        if let Some(data) = chunks.get(b"RAMP") {
+            let mut r = R { d: data, pos: 0 };
+            for _ in 0..r.count(8)? {
+                let name = r.str()?;
+                let n = r.count(4)?;
+                if n > 64 {
+                    return Err("ramp too long".into());
+                }
+                let colors = (0..n).map(|_| r.u32()).collect::<Result<Vec<_>, _>>()?;
+                doc.ramps.push(crate::project::Ramp { name, colors });
+            }
+        }
         if let Some(data) = chunks.get(b"SLCE") {
             let mut r = R { d: data, pos: 0 };
             for _ in 0..r.count(12)? {
