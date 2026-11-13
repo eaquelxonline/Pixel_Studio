@@ -1,5 +1,5 @@
 # Rust
-core-rust/target/
+Native/target/
 # Gradle / Kotlin
 .gradle/
 build/
@@ -12,8 +12,6 @@ local.properties
 # OS
 .DS_Store
 Thumbs.db
-
-# Python caches and generated showcase scripts (rebuild with assets/*/build_*.py)
+# Python caches and generated command scripts (rebuild with Assets/*.py)
 __pycache__/
-assets/*/*_showcase.jsonl
-assets/sprites2d/preview_*.png
+Assets/Build/

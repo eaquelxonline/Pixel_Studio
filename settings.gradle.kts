@@ -1,3 +1,4 @@
+// Pixel Studio — Gradle settings.
 pluginManagement {
     repositories {
         gradlePluginPortal()
@@ -13,12 +14,9 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "pixel-studio"
+rootProject.name = "PixelStudio"
 
-include(":app-kotlin:shared")
-include(":agent-gateway")
-include(":agent-gateway:stdio-adapter")
-include(":app-kotlin:windows")
+include(":Gateway", ":Windows")
 
 // The Android module needs the Android SDK. It is included only when an SDK is configured
 // (ANDROID_HOME / ANDROID_SDK_ROOT or sdk.dir in local.properties) so desktop-only machines
@@ -29,5 +27,5 @@ val sdkFromProps = if (localProps.exists()) {
 } else null
 val androidSdk = sdkFromProps ?: System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
 if (androidSdk != null && file(androidSdk).isDirectory) {
-    include(":app-kotlin:android")
+    include(":Android")
 }
