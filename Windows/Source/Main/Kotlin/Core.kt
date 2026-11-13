@@ -192,8 +192,8 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             add(item("Redo", ctrl(KeyEvent.VK_Y)) { c.run("history_redo") })
             addSeparator()
             add(item("Clear cel") { c.run("clear") })
-            add(item("Flip horizontal") { c.run("flip_horizontal") })
-            add(item("Flip vertical") { c.run("flip_vertical") })
+            add(item("Flip horizontal") { c.run("flip", mapOf("axis" to "horizontal")) })
+            add(item("Flip vertical") { c.run("flip", mapOf("axis" to "vertical")) })
             add(item("Resize canvas…") { resize() })
         })
         add(JMenu("Pixel Art").apply {
@@ -204,15 +204,15 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             })
             add(item("Hue-shifted ramp from current color") { c.run("color_ramp", mapOf("base" to c.color, "steps" to 5)) })
             addSeparator()
-            val names = c.engine.execute("palette_list").result.list("palettes").orEmpty().map { (it as Map<*, *>)["name"] as String }
-            add(JMenu("Load palette").apply { names.forEach { n -> add(item(n) { c.run("palette_load", mapOf("name" to n)) }) } })
+            val names = c.engine.execute("canvas_inspect", mapOf("detail" to "palette")).result.list("presets").orEmpty().map { (it as Map<*, *>)["name"] as String }
+            add(JMenu("Load palette").apply { names.forEach { n -> add(item(n) { c.run("palette_set", mapOf("preset" to n)) }) } })
             add(item("Quantize to swatches (bayer4 dither)") { c.run("quantize", mapOf("scope" to "frame", "palette" to "swatches", "dither" to "bayer4")) })
             addSeparator()
             add(item("Export normal map…") {
                 val ch = chooser("png", "PNG")
                 ch.selectedFile = File(DirectoryWorkspace.sanitize(c.doc.name) + "_normal.png")
                 if (ch.showSaveDialog(this@PixelStudioWindow) == JFileChooser.APPROVE_OPTION) {
-                    ch.selectedFile.writeBytes(c.run("export_normal_map", mapOf("frame" to c.doc.activeFrame)).binary)
+                    ch.selectedFile.writeBytes(c.run("export", mapOf("format" to "normal_map", "frame" to c.doc.activeFrame)).binary)
                 }
             })
         })
@@ -283,16 +283,12 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
     }
 
     private fun export(format: String) {
-        val (op, ext) = when (format) {
-            "gif" -> "export_gif" to "gif"
-            "spritesheet" -> "export_spritesheet" to "png"
-            else -> "export_png" to "png"
-        }
+        val ext = if (format == "gif") "gif" else "png"
         val scale = JOptionPane.showInputDialog(this, "Scale (1-64)", "1")?.toIntOrNull()?.coerceIn(1, 64) ?: return
         val ch = chooser(ext, ext.uppercase())
         ch.selectedFile = File(DirectoryWorkspace.sanitize(c.doc.name) + (if (format == "spritesheet") "_sheet." else ".") + ext)
         if (ch.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return
-        val r = c.run(op, mapOf("scale" to scale, "frame" to c.doc.activeFrame))
+        val r = c.run("export", mapOf("format" to format, "scale" to scale, "frame" to c.doc.activeFrame))
         if (!r.ok) return
         ch.selectedFile.writeBytes(r.binary)
         if (format == "spritesheet") File(ch.selectedFile.path.removeSuffix(".png") + ".json").writeText(com.pixel.studio.gateway.Json.write(r.result))
@@ -434,7 +430,7 @@ class EditorController(val engine: PixelEngine) {
 
     fun reload() {
         val i = engine.execute("canvas_inspect").result
-        val palette = engine.execute("palette_get").result.list("colors")?.map { (it as Map<*, *>)["color"] as String } ?: emptyList()
+        val palette = engine.execute("canvas_inspect", mapOf("detail" to "palette")).result.list("colors")?.map { (it as Map<*, *>)["color"] as String } ?: emptyList()
         doc = DocInfo(
             name = i.str("name") ?: "Untitled",
             width = i.long("width")!!.toInt(),
@@ -726,7 +722,7 @@ class PalettePanel(private val c: EditorController) : JPanel(BorderLayout()) {
             override fun mouseClicked(e: MouseEvent) {
                 JColorChooser.showDialog(this@PalettePanel, "Color", Theme.parse(c.color))?.let {
                     c.color = Theme.hex(it)
-                    c.run("palette_add", mapOf("colors" to listOf(c.color)))
+                    c.run("palette_set", mapOf("mode" to "add", "colors" to listOf(c.color)))
                     rebuild()
                 }
             }
@@ -802,7 +798,7 @@ class LayersPanel(private val c: EditorController) : JPanel(BorderLayout()) {
             override fun mouseClicked(e: MouseEvent) {
                 val idx = list.locationToIndex(e.point).takeIf { it >= 0 } ?: return
                 val l = model[idx]
-                if (e.x < 22) c.run("layer_visibility", mapOf("layer" to l.index, "visible" to !l.visible))
+                if (e.x < 22) c.run("layer_set", mapOf("layer" to l.index, "visible" to !l.visible))
                 else if (e.clickCount == 2) rename(l)
             }
         })
@@ -819,7 +815,7 @@ class LayersPanel(private val c: EditorController) : JPanel(BorderLayout()) {
             })
             add(Theme.button("▲", "Move up") { selected()?.let { if (it.index < c.doc.layers.size - 1) c.run("layer_move", mapOf("layer" to it.index, "index" to it.index + 1)) } })
             add(Theme.button("▼", "Move down") { selected()?.let { if (it.index > 0) c.run("layer_move", mapOf("layer" to it.index, "index" to it.index - 1)) } })
-            add(Theme.button("Lock", "Lock / unlock") { selected()?.let { c.run("layer_lock", mapOf("layer" to it.index, "locked" to !it.locked)) } })
+            add(Theme.button("Lock", "Lock / unlock") { selected()?.let { c.run("layer_set", mapOf("layer" to it.index, "locked" to !it.locked)) } })
         }
         add(buttons, BorderLayout.SOUTH)
         c.onChange { rebuild() }
@@ -830,7 +826,7 @@ class LayersPanel(private val c: EditorController) : JPanel(BorderLayout()) {
 
     private fun rename(l: LayerInfo) {
         val name = JOptionPane.showInputDialog(this, "Layer name", l.name) ?: return
-        if (name.isNotBlank()) c.run("layer_rename", mapOf("layer" to l.index, "name" to name))
+        if (name.isNotBlank()) c.run("layer_set", mapOf("layer" to l.index, "name" to name))
     }
 
     private fun rebuild() {
@@ -1366,8 +1362,8 @@ class GameMenu(private val owner: JFrame, private val c: EditorController, priva
         item("Autotile level from ASCII…") { autotileLevel() }
         item("Preview 2D lighting…") { lightPreview() }
         addSeparator()
-        item("Export atlas + Aseprite JSON…") { exportPair("export_atlas", "json") { r, base -> Json.write(r.result["data"]) } }
-        item("Export Godot SpriteFrames…") { exportPair("export_godot_spriteframes", "tres") { r, _ -> r.result.str("tres") ?: "" } }
+        item("Export atlas + Aseprite JSON…") { exportPair("atlas", "json") { r, base -> Json.write(r.result["data"]) } }
+        item("Export Godot SpriteFrames…") { exportPair("godot", "tres") { r, _ -> r.result.str("tres") ?: "" } }
         item("Export Tiled map…") { exportTiled() }
     }
 
@@ -1389,7 +1385,7 @@ class GameMenu(private val owner: JFrame, private val c: EditorController, priva
         val modes = arrayOf("normal", "multiply", "screen", "add", "overlay", "darken", "lighten", "soft_light")
         val current = c.doc.layers.getOrNull(c.doc.activeLayer)?.blend ?: "normal"
         val box = JComboBox(modes).apply { selectedItem = current }
-        if (form("Blend mode of the active layer", "Mode" to box)) report(c.run("layer_blend", mapOf("mode" to box.selectedItem)))
+        if (form("Blend mode of the active layer", "Mode" to box)) report(c.run("layer_set", mapOf("blend" to box.selectedItem)))
     }
 
     private fun slice() {
@@ -1413,7 +1409,7 @@ class GameMenu(private val owner: JFrame, private val c: EditorController, priva
 
     private fun rotate() {
         val deg = spinner(45, -360, 360)
-        if (form("RotSprite (clean pixel-art rotation)", "Degrees (clockwise)" to deg)) report(c.run("rotsprite", mapOf("degrees" to deg.value)))
+        if (form("RotSprite (clean pixel-art rotation)", "Degrees (clockwise)" to deg)) report(c.run("rotate", mapOf("method" to "rotsprite", "degrees" to deg.value)))
     }
 
     private fun autotileLevel() {
@@ -1463,10 +1459,10 @@ class GameMenu(private val owner: JFrame, private val c: EditorController, priva
         return if (ch.showSaveDialog(owner) == JFileChooser.APPROVE_OPTION) ch.selectedFile.let { if (it.name.endsWith(".png")) it else File(it.path + ".png") } else null
     }
 
-    private fun exportPair(op: String, ext: String, doc: (com.pixel.studio.gateway.EngineResponse, String) -> String) {
+    private fun exportPair(format: String, ext: String, doc: (com.pixel.studio.gateway.EngineResponse, String) -> String) {
         val png = chooser(c.doc.name) ?: return
         val base = png.name.removeSuffix(".png")
-        val r = c.run(op, mapOf("image" to png.name, "texture_path" to "res://${png.name}"))
+        val r = c.run("export", mapOf("format" to format, "image" to png.name, "texture_path" to "res://${png.name}"))
         if (!r.ok) return report(r)
         png.writeBytes(r.binary)
         File(png.parentFile, "$base.$ext").writeText(doc(r, base))
@@ -1474,7 +1470,7 @@ class GameMenu(private val owner: JFrame, private val c: EditorController, priva
 
     private fun exportTiled() {
         val png = chooser(c.doc.name + "_tileset") ?: return
-        val r = c.run("export_tiled", mapOf("image" to png.name))
+        val r = c.run("export", mapOf("format" to "tiled", "image" to png.name))
         if (!r.ok) return report(r)
         png.writeBytes(r.binary)
         File(png.parentFile, png.name.removeSuffix("_tileset.png").removeSuffix(".png") + ".tmj").writeText(Json.write(r.result["tmj"]))

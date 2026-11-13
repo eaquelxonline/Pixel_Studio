@@ -409,8 +409,8 @@ def build_hero(out):
     # Bake the 8-direction walk into editable 2D frames, then export per-direction GIFs.
     show.append({"op": "voxel_render_to_frames", "animation": "walk", "directions": 8, "width": 256, "height": 256, **look})
     for dname in ("S", "SE", "E", "NE", "N", "NW", "W", "SW"):
-        out("export_gif", f"gifs/walk_{dname}.gif", tag=f"walk_{dname}", scale=2)
-    out("export_spritesheet", "sprites/walk_8dir_2d_project.png", columns=8, _json=True)
+        out("export", f"gifs/walk_{dname}.gif", format="gif", tag=f"walk_{dname}", scale=2)
+    out("export", "sprites/walk_8dir_2d_project.png", format="spritesheet", columns=8, _json=True)
     out("project_save", "Aurelion.pxs")
 
     for c in show:
@@ -776,7 +776,7 @@ def build_knight(out):
     out("voxel_render_sheet", "sprites/knight_run_8dir_256.png", animation="run", directions=8, width=256, **sprite)
     show.append({"op": "voxel_render_to_frames", "animation": "walk", "directions": 8, "width": 256, "height": 256, **sprite})
     for dname in ("S", "SE", "E", "NE", "N", "NW", "W", "SW"):
-        out("export_gif", f"gifs/knight_walk_{dname}.gif", tag=f"walk_{dname}", scale=2)
+        out("export", f"gifs/knight_walk_{dname}.gif", format="gif", tag=f"walk_{dname}", scale=2)
     out("project_save", "SirValen.pxs")
     write_jsonl(os.path.join(here, "knight_showcase.jsonl"), show)
     print(f"knight voxels: {len(k.v)}, diorama voxels: {len(D.v)}, commands: {len(cmds)}")
@@ -1063,7 +1063,7 @@ def build_vfx(out):
         out("voxel_render", f"vfx/{fx.lower()}_hero_512.png", model=f"{fx}_05", width=512, pitch=30, yaw=35, smoothness=0.0, supersample=2,
             bloom=0.7, bloom_radius=7, shadows=0.6, lights=lights, background_gradient=["#2A2430", "#0B0A10"], **extra)
         show.append({"op": "voxel_render_to_frames", **{**seq, "layer": fx}})
-        out("export_gif", f"vfx/{fx.lower()}_16f.gif", tag=f"{fx.lower()}_S", scale=2)
+        out("export", f"vfx/{fx.lower()}_16f.gif", format="gif", tag=f"{fx.lower()}_S", scale=2)
     out("project_save", "vfx/PixelStudio_VFX.pxs")
     write_jsonl(os.path.join(here, "vfx_showcase.jsonl"), show)
     print(f"{len(cmds)} commands")

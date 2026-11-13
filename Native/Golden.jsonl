@@ -1,5 +1,5 @@
 {"op":"project_rename","name":"Golden Knight"}
-{"op":"layer_rename","layer":0,"name":"Body"}
+{"op":"layer_set","layer":0,"name":"Body"}
 {"op":"layer_create","name":"Armor"}
 {"op":"layer_create","name":"Weapon"}
 {"op":"draw_ellipse","layer":"Body","x":11,"y":3,"width":10,"height":10,"color":"#F6D7B0","filled":true}
@@ -8,11 +8,11 @@
 {"op":"set_pixels","layer":"Body","pixels":[[14,7,"#000000"],[17,7,"#000000"],{"x":15,"y":10,"color":"#C0283C"},{"x":16,"y":10,"color":"#C0283C"}]}
 {"op":"draw_line","layer":"Weapon","x0":24,"y0":6,"x1":24,"y1":24,"color":"#BEBEC8"}
 {"op":"draw_line","layer":"Weapon","x0":22,"y0":20,"x1":26,"y1":20,"color":"#A0522D"}
-{"op":"layer_opacity","layer":"Armor","opacity":200}
+{"op":"layer_set","layer":"Armor","opacity":200}
 {"op":"draw_rectangle","layer":"Body","x":12,"y":23,"width":3,"height":6,"color":"#5B2C1E","filled":true}
 {"op":"draw_rectangle","layer":"Body","x":17,"y":23,"width":3,"height":6,"color":"#5B2C1E","filled":true}
 {"op":"frame_duplicate","frame":0}
 {"op":"move_region","frame":1,"layer":"Weapon","x":20,"y":4,"width":8,"height":22,"dx":-1,"dy":1}
-{"op":"flip_horizontal","frame":1,"layer":"Body","x":12,"y":23,"width":8,"height":6}
+{"op":"flip","frame":1,"layer":"Body","x":12,"y":23,"width":8,"height":6,"axis":"horizontal"}
 {"op":"fill_region","frame":1,"layer":"Body","x":0,"y":0,"color":"#1E3A8A80"}
 {"op":"frame_set_duration","frame":1,"duration":150}

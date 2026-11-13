@@ -116,11 +116,11 @@ class BridgeTest {
     fun pngExportDecodesWithPlatformImageIo() {
         PixelEngine(8, 8).use { e ->
             e.execute("draw_rectangle", mapOf("x" to 0, "y" to 0, "width" to 8, "height" to 8, "color" to "#3366FF", "filled" to true))
-            val png = e.execute("export_png", mapOf("scale" to 3)).binary
+            val png = e.execute("export", mapOf("format" to "png", "scale" to 3)).binary
             val img = javax.imageio.ImageIO.read(png.inputStream())
             assertEquals(24, img.width)
             assertEquals(0xFF3366FF.toInt(), img.getRGB(5, 5))
-            val gif = e.execute("export_gif").binary
+            val gif = e.execute("export", mapOf("format" to "gif")).binary
             assertEquals(8, javax.imageio.ImageIO.read(gif.inputStream()).width)
             val digest = MessageDigest.getInstance("SHA-256").digest(png)
             assertEquals(32, digest.size)
@@ -455,11 +455,20 @@ class GatewayTest {
         assertEquals("#", engine.execute("get_pixel", mapOf("x" to 1, "y" to 3)).result.str("color")!!.take(1), "selective outline added")
         val ramp = callLegacy("color_ramp", mapOf("base" to "#3FA34D", "steps" to 5)).obj("structuredContent")!!.obj("result")!!.list("ramp")!!
         assertEquals(5, ramp.size)
-        assertTrue(callLegacy("palette_list", emptyMap()).obj("structuredContent")!!.obj("result")!!.list("palettes")!!.size >= 10)
-        assertEquals(false, callLegacy("palette_load", mapOf("name" to "endesga-32"))["isError"])
+        assertTrue(callLegacy("canvas_inspect", mapOf("detail" to "palette")).obj("structuredContent")!!.obj("result")!!.list("presets")!!.size >= 10)
+        assertEquals(false, callLegacy("palette_set", mapOf("preset" to "endesga-32"))["isError"])
         assertEquals(false, callLegacy("quantize", mapOf("palette" to "swatches", "dither" to "bayer4"))["isError"])
-        val normal = callLegacy("export_normal_map", mapOf("scale" to 2))
+        val normal = callLegacy("project_export", mapOf("format" to "normal_map", "scale" to 2))
         assertEquals("image", (normal.list("content")!!.first() as Map<*, *>)["type"])
+        // Hand-pixeling tools: material ramps, the shade brush, strokes and fine-pixel layers.
+        assertEquals(false, callLegacy("ramp_set", mapOf("name" to "moss", "colors" to listOf("#1E3A22", "#2E6B35", "#3FA34D", "#8FD47A")))["isError"])
+        engine.execute("draw_rectangle", mapOf("x" to 0, "y" to 0, "width" to 3, "height" to 1, "color" to "#3FA34D", "filled" to true))
+        val shaded = callLegacy("shade", mapOf("x" to 0, "y" to 0, "width" to 3, "height" to 1, "steps" to -1)).obj("structuredContent")!!.obj("result")!!
+        assertEquals(3L, (shaded["changed"] as Number).toLong())
+        assertEquals("#2E6B35", engine.execute("get_pixel", mapOf("x" to 1, "y" to 0)).result.str("color"))
+        assertEquals(false, callLegacy("draw_stroke", mapOf("points" to listOf(listOf(0, 7), listOf(7, 7)), "color" to "#000000"))["isError"])
+        val fine = callLegacy("layer_set", mapOf("layer" to 0, "density" to 2)).obj("structuredContent")!!.obj("result")!!
+        assertEquals(2L, (fine["density"] as Number).toLong())
     }
 
     @Test
@@ -475,7 +484,7 @@ class GatewayTest {
         call("layer_create", mapOf("name" to "Ground"))
         call("tilemap_bake", mapOf("tilemap" to "cave", "layer" to "Ground"))
         call("slice_set", mapOf("name" to "hurtbox", "x" to 2, "y" to 2, "width" to 6, "height" to 8, "pivot" to listOf(3, 8)))
-        call("layer_blend", mapOf("layer" to "Ground", "mode" to "multiply"))
+        call("layer_set", mapOf("layer" to "Ground", "blend" to "multiply"))
         val lit = call("render_lit", mapOf("lights" to listOf(mapOf("x" to 10, "y" to 10, "color" to "#FFAA55")), "bands" to 4))
         assertEquals("image", (lit.list("content")!!.first() as Map<*, *>)["type"])
         val tiled = call("project_export", mapOf("format" to "tiled", "name" to "cave", "tilemap" to "cave"))
@@ -490,7 +499,7 @@ class GatewayTest {
         assertEquals("hurtbox", (aseprite.obj("meta")!!.list("slices")!!.first() as Map<*, *>)["name"])
         assertTrue(File(workspace, "Exports/hero_frames.tres").readText().contains("res://hero_frames.png"))
         assertTrue(Json.write(tiled).length < 4000 && Json.write(atlas).length < 200_000, "replies stay small")
-        val gd = call("gamedev_inspect", emptyMap()).obj("structuredContent")!!.obj("result")!!
+        val gd = call("canvas_inspect", mapOf("detail" to "gamedev")).obj("structuredContent")!!.obj("result")!!
         assertEquals(listOf("......", ".####.", "######", "######"), (gd.list("tilemaps")!!.first() as Map<*, *>)["terrain"])
         assertEquals(true, callLegacy("tilemap_delete", mapOf("tilemap" to "cave"))["isError"], "deleting needs approval")
     }

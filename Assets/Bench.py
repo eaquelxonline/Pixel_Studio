@@ -6,7 +6,7 @@ public engine commands (exactly the tools an AI agent calls over MCP):
 
   A  raw     — flat primitives only (what a naive agent does: shapes, no finishing)
   B  craft   — primitives + finishing tools (pattern_fill, auto_shade, outline selout,
-               draw_sparkle, dither_fill, layer_blend …)
+               draw_sparkle, dither_fill, layer_set …)
   C  voxel   — a 3D voxel model rendered and baked to pixels (voxel_render_to_frames)
   G  generator — one fx_generate call (animated effects)
 
@@ -55,7 +55,7 @@ class Script:
 
     def layers(self, *names):
         self.layer_names = names
-        self.raw("layer_rename", layer=0, name=names[0])
+        self.raw("layer_set", layer=0, name=names[0])
         for n in names[1:]:
             self.raw("layer_create", name=n)
 
@@ -96,7 +96,7 @@ def cottage_craft():
     s = Script("cottage_B", 64, 64)
     s.layers("Shadow", "Back", "Walls", "Roof", "Details", "Glow")
     s("draw_ellipse", layer="Shadow", x=6, y=52, width=54, height=9, color="#6A6E9A", filled=True)
-    s("layer_blend", layer="Shadow", mode="multiply")
+    s("layer_set", layer="Shadow", blend="multiply")
     cottage_blockout(s, c, ("Back", "Walls", "Roof", "Details"))
     # Surfaces: shingles, stone base, plank door, brick chimney, timber frame.
     s("pattern_fill", layer="Roof", pattern="shingle", size=4, color=c["roof_seam"], accent="#C96A4E", seed=3)
@@ -121,7 +121,7 @@ def cottage_craft():
     s("set_pixel", layer="Details", x=34, y=49, color="#F2C95A")
     s("draw_ellipse", layer="Glow", x=13, y=33, width=13, height=13, color="#3A2408", filled=True)
     s("draw_ellipse", layer="Glow", x=38, y=33, width=13, height=13, color="#3A2408", filled=True)
-    s("layer_blend", layer="Glow", mode="add")
+    s("layer_set", layer="Glow", blend="add")
     s("outline", layer="Details", mode="selout", darkness=0.5)
     # Palette lock: one shared 32-color palette for every layer keeps the house game-ready.
     s("quantize", scope="all", colors=32)
@@ -217,7 +217,7 @@ def slime(path):
     s("draw_polygon", layer="Body", points=[[5, 27], [6, 18], [10, 11], [16, 8], [22, 11], [26, 18], [27, 27]], color="#7FD07A")
     s("draw_ascii", layer="Details", x=11, y=15, rows=["W...W", "D...D", "..m.."], legend={"W": "#FFFFFF", "D": "#1E3B2A", "m": "#1E3B2A"})
     if path == "B":
-        s("layer_blend", layer="Shadow", mode="multiply")
+        s("layer_set", layer="Shadow", blend="multiply")
         s("auto_shade", layer="Body", tones=4, bevel=4, contrast=0.6, rim="#D8FFF0", rim_strength=0.4, cast_shadow=0)
         s("outline", layer="Body", mode="selout", darkness=0.55)
         s("draw_sparkle", layer="Details", points=[[11, 12, 1], [13, 11, 1]], style="dot", color="#FFFFFF")
@@ -238,7 +238,7 @@ def chest(path):
     s("draw_rectangle", layer="Metal", x=14, y=13, width=4, height=5, color="#E8B84A", filled=True)
     s("set_pixels", layer="Metal", pixels=[[15, 15, "#3A2A20"], [16, 15, "#3A2A20"], [15, 16, "#3A2A20"]])
     if path == "B":
-        s("layer_blend", layer="Shadow", mode="multiply")
+        s("layer_set", layer="Shadow", blend="multiply")
         s("pattern_fill", layer="Box", pattern="plank", size=3, color="#6A3E22", seed=4)
         s("draw_line", layer="Box", x0=5, y0=15, x1=26, y1=15, color="#5A3420")
         s("auto_shade", layer="Box", tones=3, cast_shadow=2, min_region=4)
@@ -288,7 +288,7 @@ def tree(path):
     for i, (x, y, w, h) in enumerate([(6, 14, 22, 20), (20, 10, 22, 22), (12, 4, 24, 18), (4, 26, 18, 14), (24, 24, 20, 16), (14, 22, 20, 16)]):
         s("draw_ellipse", layer="Leaves", x=x, y=y, width=w, height=h, color="#5BAA4E" if i % 2 == 0 or path == "A" else "#4E9A45", filled=True)
     if path == "B":
-        s("layer_blend", layer="Shadow", mode="multiply")
+        s("layer_set", layer="Shadow", blend="multiply")
         s("pattern_fill", layer="Trunk", pattern="plank", size=2, color="#5A3A26", seed=9)
         s("auto_shade", layer="Trunk", tones=3, cast_shadow=4, min_region=3)
         s("auto_shade", layer="Leaves", tones=4, bevel=4, contrast=0.6, cast_shadow=0)
@@ -343,7 +343,7 @@ def explosion(path):
     if path == "B":
         s("auto_shade", layer="Smoke", scope="layer", tones=3, contrast=0.5, cast_shadow=0, min_region=4)
         s("outline", layer="Smoke", mode="selout", darkness=0.45)
-        s("layer_blend", layer="Sparks", mode="add")
+        s("layer_set", layer="Sparks", blend="add")
     return s
 
 
@@ -365,8 +365,8 @@ def magic(path):
         s("draw_polygon", layer="Runes", frame=f, points=star, color="#E6DBFF", filled=False)
         s("draw_sparkle", layer="Sparks", frame=f, points=[[round(24 + math.cos(t * math.tau + i * 1.257) * 19), round(24 + math.sin(t * math.tau + i * 1.257) * 19), 2 + (i + f) % 3] for i in range(5)], color="#D8C8FF", core="#FFFFFF")
     if path == "B":
-        s("layer_blend", layer="Glow", mode="screen")
-        s("layer_blend", layer="Sparks", mode="add")
+        s("layer_set", layer="Glow", blend="screen")
+        s("layer_set", layer="Sparks", blend="add")
     return s
 
 
@@ -546,13 +546,13 @@ def run(s):
 
     lines = list(s.lines)
     if "Shadow" in getattr(s, "layer_names", ()):
-        lines.append(json.dumps({"op": "layer_visibility", "layer": "Shadow", "visible": False}))
-    lines.append(json.dumps({"op": "export_png", "frame": s.frames // 2, "scale": 1, "_save": f"{s.name}_measure.png"}))
+        lines.append(json.dumps({"op": "layer_set", "layer": "Shadow", "visible": False}))
+    lines.append(json.dumps({"op": "export", "format": "png", "frame": s.frames // 2, "scale": 1, "_save": f"{s.name}_measure.png"}))
     if "Shadow" in getattr(s, "layer_names", ()):
-        lines.append(json.dumps({"op": "layer_visibility", "layer": "Shadow", "visible": True}))
+        lines.append(json.dumps({"op": "layer_set", "layer": "Shadow", "visible": True}))
     for k in range(s.frames):
-        lines.append(json.dumps({"op": "export_png", "frame": k, "scale": 1, "_save": f"frames/{s.name}_{k:02d}.png"}))
-    lines.append(json.dumps({"op": "export_gif", "scale": 3, "_save": f"{s.name}.gif"}))
+        lines.append(json.dumps({"op": "export", "format": "png", "frame": k, "scale": 1, "_save": f"frames/{s.name}_{k:02d}.png"}))
+    lines.append(json.dumps({"op": "export", "format": "gif", "scale": 3, "_save": f"{s.name}.gif"}))
     script = os.path.join(OUT, f"{s.name}.jsonl")
     with open(script, "w") as fh:
         fh.write("\n".join(lines) + "\n")

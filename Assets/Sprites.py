@@ -427,7 +427,7 @@ def build_chibi(out):
     here = out
     LAYERS = ["Back", "HairBack", "Body", "Face", "HairFront", "Arms", "Details", "FX"]
     cmd("project_new", width=W, height=H, name="Pastel Chibi Collection")
-    cmd("layer_rename", layer=0, name="Back")
+    cmd("layer_set", layer=0, name="Back")
     for name in LAYERS[1:]:
         cmd("layer_create", name=name)
 
@@ -469,12 +469,12 @@ def build_chibi(out):
 
     show = list(lines)
     for i in range(frame):
-        show.append(json.dumps({"op": "export_png", "frame": i, "scale": 1, "_save": f"frames/f{i:03d}.png"}))
+        show.append(json.dumps({"op": "export", "format": "png", "frame": i, "scale": 1, "_save": f"frames/f{i:03d}.png"}))
     for ch in CAST:
         second = ch["pose"] if ch["pose"] in ("cheer", "wave") else "idle2"
         for tag in ("idle", second):
-            show.append(json.dumps({"op": "export_gif", "tag": f"{ch['name']}_{tag}", "scale": 4, "_save": f"gif/{ch['name'].lower()}_{tag}.gif"}))
-    show.append(json.dumps({"op": "export_atlas", "padding": 1, "image": "chibi_atlas.png", "_save": "chibi_atlas.png", "_json": True}))
+            show.append(json.dumps({"op": "export", "format": "gif", "tag": f"{ch['name']}_{tag}", "scale": 4, "_save": f"gif/{ch['name'].lower()}_{tag}.gif"}))
+    show.append(json.dumps({"op": "export", "format": "atlas", "padding": 1, "image": "chibi_atlas.png", "_save": "chibi_atlas.png", "_json": True}))
     show.append(json.dumps({"op": "project_save", "_save": "pastel_chibi.pxs"}))
     with open(os.path.join(here, "chibi_showcase.jsonl"), "w") as fh:
         fh.write("\n".join(show) + "\n")
@@ -961,7 +961,7 @@ def build_cast(out):
 
 
     cmd("project_new", width=W, height=H, name="Pixel Studio Cast")
-    cmd("layer_rename", layer=0, name="Character")
+    cmd("layer_set", layer=0, name="Character")
     frame = 0
     poses = []
     for c in CAST:
@@ -991,10 +991,10 @@ def build_cast(out):
     show = list(cmds)
     for c in CAST:
         for anim in ("idle", "walk"):
-            show.append({"op": "export_gif", "_save": f"gifs/{c['name'].lower()}_{anim}.gif", "tag": f"{c['name']}_{anim}", "scale": 6})
-    show.append({"op": "export_spritesheet", "_save": "cast_sheet_1x.png", "columns": 8, "_json": True})
-    show.append({"op": "export_spritesheet", "_save": "cast_sheet_4x.png", "columns": 8, "scale": 4})
-    show.append({"op": "export_normal_map", "_save": "aoi_normal_8x.png", "frame": 0, "scale": 8})
+            show.append({"op": "export", "format": "gif", "_save": f"gifs/{c['name'].lower()}_{anim}.gif", "tag": f"{c['name']}_{anim}", "scale": 6})
+    show.append({"op": "export", "format": "spritesheet", "_save": "cast_sheet_1x.png", "columns": 8, "_json": True})
+    show.append({"op": "export", "format": "spritesheet", "_save": "cast_sheet_4x.png", "columns": 8, "scale": 4})
+    show.append({"op": "export", "format": "normal_map", "_save": "aoi_normal_8x.png", "frame": 0, "scale": 8})
     show.append({"op": "project_save", "_save": "PixelStudio_Cast.pxs"})
     with open(os.path.join(here, "cast_showcase.jsonl"), "w") as f:
         for c in show:
@@ -1381,7 +1381,7 @@ def build_vfx2d(out):
         return rows, legend
 
 
-    cmds = [{"op": "project_new", "width": S, "height": S, "name": "Pixel Studio VFX 2D"}, {"op": "layer_rename", "layer": 0, "name": "FX"}]
+    cmds = [{"op": "project_new", "width": S, "height": S, "name": "Pixel Studio VFX 2D"}, {"op": "layer_set", "layer": 0, "name": "FX"}]
     frame = 0
     previews = []
     for name, fn, n, ms, _ in EFFECTS:
@@ -1404,8 +1404,8 @@ def build_vfx2d(out):
             f.write(json.dumps(c, separators=(",", ":")) + "\n")
     show = list(cmds)
     for name, *_ in EFFECTS:
-        show.append({"op": "export_gif", "_save": f"vfx2d/{name}.gif", "tag": name, "scale": 4})
-        show.append({"op": "export_spritesheet", "_save": f"vfx2d/{name}_sheet.png", "tag": name, "_json": True})
+        show.append({"op": "export", "format": "gif", "_save": f"vfx2d/{name}.gif", "tag": name, "scale": 4})
+        show.append({"op": "export", "format": "spritesheet", "_save": f"vfx2d/{name}_sheet.png", "tag": name, "_json": True})
     show.append({"op": "project_save", "_save": "vfx2d/PixelStudio_VFX2D.pxs"})
     with open(os.path.join(here, "vfx2d_showcase.jsonl"), "w") as f:
         for c in show:
@@ -1657,7 +1657,7 @@ def build_portraits(out):
 
         order = ["BG", "HairBack", "Body", "Face", "HairFront", "Hat", "Details", "FX"]
         cmd("project_new", width=W, height=H, name=name)
-        cmd("layer_rename", layer=0, name="BG")
+        cmd("layer_set", layer=0, name="BG")
         for n in order[1:]:
             cmd("layer_create", name=n)
         cmd("frame_add", count=FR - 1)
@@ -1708,8 +1708,8 @@ def build_portraits(out):
         with open(os.path.join(here, f"portrait_{kind}.jsonl"), "w") as fh:
             fh.write("\n".join(ls) + "\n")
         show = list(ls)
-        show.append(json.dumps({"op": "export_png", "frame": 0, "scale": 4, "_save": f"portrait_{kind}_x4.png"}))
-        show.append(json.dumps({"op": "export_gif", "scale": 3, "_save": f"portrait_{kind}_x3.gif"}))
+        show.append(json.dumps({"op": "export", "format": "png", "frame": 0, "scale": 4, "_save": f"portrait_{kind}_x4.png"}))
+        show.append(json.dumps({"op": "export", "format": "gif", "scale": 3, "_save": f"portrait_{kind}_x3.gif"}))
         show.append(json.dumps({"op": "project_save", "_save": f"portrait_{kind}.pxs"}))
         with open(os.path.join(here, f"portrait_{kind}_showcase.jsonl"), "w") as fh:
             fh.write("\n".join(show) + "\n")
@@ -1997,7 +1997,7 @@ def build_warrior(out):
     # ---------------------------------------------------------------- document
     total = sum(len(a[1]) for a in ANIMS)
     cmd("project_new", width=W, height=H, name="Bram - the Bronze Warden")
-    cmd("layer_rename", layer=0, name=LAYERS[0])
+    cmd("layer_set", layer=0, name=LAYERS[0])
     for name in LAYERS[1:]:
         cmd("layer_create", name=name)
     cmd("frame_add", count=total - 1)
@@ -2080,8 +2080,8 @@ def build_warrior(out):
         frame += len(poses)
 
     # ---------------------------------------------------------------- engine finishing passes
-    cmd("layer_blend", layer="Shadow", mode="multiply")
-    cmd("layer_opacity", layer="Shadow", opacity=170)
+    cmd("layer_set", layer="Shadow", blend="multiply")
+    cmd("layer_set", layer="Shadow", opacity=170)
     shade = dict(Scarf=dict(tones=3, bevel=1.5, contrast=0.5), ShieldBack=dict(tones=3, bevel=2, contrast=0.5), BackArm=dict(tones=3, bevel=1.5),
                  BackLeg=dict(tones=3, bevel=1.5), Body=dict(tones=4, bevel=2.5, contrast=0.6), FrontLeg=dict(tones=3, bevel=1.5),
                  Head=dict(tones=3, bevel=2, contrast=0.5), Weapon=dict(tones=3, bevel=1, contrast=0.7), FrontArm=dict(tones=4, bevel=1.5, contrast=0.6),
@@ -2127,12 +2127,12 @@ def build_warrior(out):
         fh.write("\n".join(lines) + "\n")
     show = list(lines)
     for name, a, b, loop in tags:
-        show.append(json.dumps({"op": "export_gif", "tag": name, "scale": 3, "_save": f"warrior/{name}.gif"}))
-        show.append(json.dumps({"op": "export_spritesheet", "tag": name, "scale": 1, "padding": 0, "_save": f"warrior/{name}_sheet.png"}))
+        show.append(json.dumps({"op": "export", "format": "gif", "tag": name, "scale": 3, "_save": f"warrior/{name}.gif"}))
+        show.append(json.dumps({"op": "export", "format": "spritesheet", "tag": name, "scale": 1, "padding": 0, "_save": f"warrior/{name}_sheet.png"}))
     for f in range(total):
-        show.append(json.dumps({"op": "export_png", "frame": f, "scale": 1, "_save": f"warrior/frames/f{f:03d}.png"}))
-    show.append(json.dumps({"op": "export_atlas", "padding": 1, "extrude": 1, "image": "warrior_atlas.png", "_save": "warrior/warrior_atlas.png", "_json": True}))
-    show.append(json.dumps({"op": "export_godot_spriteframes", "texture_path": "res://warrior.png", "_save": "warrior/warrior.png", "_json": True}))
+        show.append(json.dumps({"op": "export", "format": "png", "frame": f, "scale": 1, "_save": f"warrior/frames/f{f:03d}.png"}))
+    show.append(json.dumps({"op": "export", "format": "atlas", "padding": 1, "extrude": 1, "image": "warrior_atlas.png", "_save": "warrior/warrior_atlas.png", "_json": True}))
+    show.append(json.dumps({"op": "export", "format": "godot", "texture_path": "res://warrior.png", "_save": "warrior/warrior.png", "_json": True}))
     show.append(json.dumps({"op": "project_save", "_save": "warrior/warrior.pxs"}))
     with open(os.path.join(out, "warrior_showcase.jsonl"), "w") as fh:
         fh.write("\n".join(show) + "\n")
@@ -2270,7 +2270,7 @@ KADE_DURATIONS = [160, 140, 160, 200, 140, 100, 120, 120]
 def build_kade(out):
     """Writes kade.jsonl (+ showcase): the hand-pixeled idle as draw_ascii frames."""
     lines = [json.dumps({"op": "project_new", "width": 32, "height": 32, "name": "Kade - hand-pixeled warrior"}),
-             json.dumps({"op": "layer_rename", "layer": 0, "name": "Kade"}),
+             json.dumps({"op": "layer_set", "layer": 0, "name": "Kade"}),
              json.dumps({"op": "frame_add", "count": len(KADE_FRAMES) - 1})]
     for f, g in enumerate(KADE_FRAMES):
         used = sorted({c for r in g for c in r if c != "."})
@@ -2279,8 +2279,8 @@ def build_kade(out):
     lines.append(json.dumps({"op": "animation_tag_create", "name": "idle", "from": 0, "to": len(KADE_FRAMES) - 1}))
     with open(os.path.join(out, "kade.jsonl"), "w") as fh:
         fh.write("\n".join(lines) + "\n")
-    show = lines + [json.dumps({"op": "export_gif", "tag": "idle", "scale": 8, "_save": "kade/kade_idle_x8.gif"}),
-                    json.dumps({"op": "export_spritesheet", "scale": 1, "_save": "kade/kade_idle_sheet.png", "_json": True})]
+    show = lines + [json.dumps({"op": "export", "format": "gif", "tag": "idle", "scale": 8, "_save": "kade/kade_idle_x8.gif"}),
+                    json.dumps({"op": "export", "format": "spritesheet", "scale": 1, "_save": "kade/kade_idle_sheet.png", "_json": True})]
     with open(os.path.join(out, "kade_showcase.jsonl"), "w") as fh:
         fh.write("\n".join(show) + "\n")
     print(f"Kade: {len(KADE_FRAMES)} hand-edited frames")

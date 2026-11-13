@@ -1011,8 +1011,10 @@ pub mod commands {
                     .unwrap();
                 results.push((nw, best.0, best.1));
             }
-            let min = results.iter().map(|r| r.2).min().unwrap_or(0);
-            let tolerance = min + min / 8 + samples.len() / 200;
+            // Tolerance scales with the amount of detail: a sparse image (a few dots on an empty
+            // canvas) must reproduce exactly, a busy one may differ on a few anti-aliased edges.
+            let edges = samples.iter().filter(|&&(x, y)| x + 1 < w && img.get(x, y) != img.get(x + 1, y)).count();
+            let tolerance = results.iter().map(|r| r.2).min().unwrap_or(0) + edges / 50;
             results.iter().find(|r| r.2 <= tolerance).map(|r| (r.0, r.1)).unwrap_or((w, h))
         }
 
@@ -1021,7 +1023,14 @@ pub mod commands {
         /// (grouped by hue, sorted dark → light). As a reference it lands on a locked, faded layer
         /// to trace over; otherwise it becomes editable pixels.
         pub fn reference_import(doc: &mut Document, a: &Json, payload: &[u8]) -> CmdResult<Outcome> {
-            let png = if !payload.is_empty() { payload.to_vec() } else { super::voxel::base64_decode(req_str(a, "data_base64")?)? };
+            let png = if !payload.is_empty() {
+                payload.to_vec()
+            } else {
+                super::voxel::base64_decode(
+                    req_str(a, "data_base64")
+                        .map_err(|_| CmdError::invalid("provide the PNG as 'data_base64' (or as the binary payload)"))?,
+                )?
+            };
             let src = crate::export::png::decode(&png).map_err(|e| CmdError::new("invalid_file", e))?;
             let (nw, nh) = match a.get("grid") {
                 None | Some(Json::Null) => detect_grid(&src),
@@ -1070,7 +1079,7 @@ pub mod commands {
                 }
             }
             let mut made = Vec::new();
-            if opt_bool(a, "ramps")?.unwrap_or(true) {
+            if opt_bool(a, "ramps")?.unwrap_or(false) {
                 let (mut dark, mut grey, mut hued) = (Vec::new(), Vec::new(), Vec::new());
                 for (&c, &n) in &counts {
                     if n < 2 {
@@ -1138,11 +1147,22 @@ pub mod commands {
                 }
             }
             let reference = opt_bool(a, "reference")?.unwrap_or(false);
-            let layer_name = opt_str(a, "layer")?.unwrap_or(if reference { "Reference" } else { "Imported" }).to_string();
-            let lid = match doc.layers.iter().find(|l| l.name == layer_name) {
-                Some(l) => l.id,
-                None => doc.insert_layer(&layer_name, if reference { 0 } else { doc.layers.len() }),
+            // Target: an existing layer (index or name), a new named layer, or the active layer.
+            let lid = match a.get("layer") {
+                Some(Json::Str(n)) if !doc.layers.iter().any(|l| &l.name == n) => {
+                    doc.insert_layer(n, if reference { 0 } else { doc.layers.len() })
+                }
+                Some(v) if !v.is_null() => doc.layers[layer_index(doc, a, "layer")?].id,
+                _ if reference => match doc.layers.iter().find(|l| l.name == "Reference") {
+                    Some(l) => l.id,
+                    None => doc.insert_layer("Reference", 0),
+                },
+                _ => doc.active_layer,
             };
+            if !reference && doc.layers.iter().any(|l| l.id == lid && l.locked) {
+                return Err(CmdError::new("locked", "layer is locked"));
+            }
+            let layer_name = doc.layers.iter().find(|l| l.id == lid).map(|l| l.name.clone()).unwrap_or_default();
             let (ox, oy) = (opt_i64(a, "x")?.unwrap_or(0), opt_i64(a, "y")?.unwrap_or(0));
             let fi = super::args::frame_index(doc, a, "frame")?;
             let fid = doc.frames[fi].id;
@@ -1439,13 +1459,6 @@ pub mod commands {
             Ok(Outcome::new(Json::obj().with("x", x).with("y", y).with("color", hex_of(v)).with("changed", changed), changed))
         }
 
-        pub fn erase_pixel(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let (x, y) = (coord(a, "x")?, coord(a, "y")?);
-            let (l, f) = target(doc, a)?;
-            let changed = doc.cel_mut(l, f).set(x, y, TRANSPARENT) as u64;
-            Ok(Outcome::new(Json::obj().with("x", x).with("y", y).with("changed", changed), changed))
-        }
-
         /// Batch of explicit pixels: `[{"x":1,"y":2,"color":"#fff"}, [3,4,"#000"], ...]`.
         /// Every pixel is still an individual coordinate+color, so the operation stays auditable.
         pub fn set_pixels(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -1709,33 +1722,6 @@ pub mod commands {
             let v = color(doc, a, "color")?;
             let changed = raster::fill(doc.cel_mut(l, f), x, y, v, contiguous) as u64;
             Ok(Outcome::new(Json::obj().with("changed", changed), changed))
-        }
-
-        /// Replaces one color with another in a cel, a whole layer, a whole frame or everywhere.
-        pub fn replace_color(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let from = color(doc, a, "from")?;
-            let to = color(doc, a, "to")?;
-            let scope = opt_str(a, "scope")?.unwrap_or("cel");
-            let li = layer_index(doc, a, "layer")?;
-            let fi = frame_index(doc, a, "frame")?;
-            let cels: Vec<(u32, u32)> = match scope {
-                "cel" => vec![(doc.layers[li].id, doc.frames[fi].id)],
-                "layer" => doc.frames.iter().map(|f| (doc.layers[li].id, f.id)).collect(),
-                "frame" => doc.layers.iter().map(|l| (l.id, doc.frames[fi].id)).collect(),
-                "all" => doc.layers.iter().flat_map(|l| doc.frames.iter().map(move |f| (l.id, f.id))).collect(),
-                other => return Err(CmdError::invalid(format!("unknown scope '{other}' (cel, layer, frame, all)"))),
-            };
-            let mut changed = 0u64;
-            for (l, f) in cels {
-                let locked = doc.layers.iter().any(|x| x.id == l && x.locked);
-                if locked || doc.cel(l, f).is_none() {
-                    continue;
-                }
-                let grid = doc.cel_mut(l, f);
-                let full = Region::full(grid);
-                changed += raster::replace(grid, full, from, to) as u64;
-            }
-            Ok(Outcome::new(Json::obj().with("changed", changed).with("scope", scope), changed))
         }
 
         pub fn flip(doc: &mut Document, a: &Json, horizontal: bool) -> CmdResult<Outcome> {
@@ -3495,16 +3481,6 @@ pub mod commands {
 
         // ---- layers & slices ---------------------------------------------------------------------------
 
-        pub fn layer_blend(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let li = layer_index(doc, a, "layer")?;
-            let mode = req_str(a, "mode")?;
-            let names: Vec<&str> = Blend::ALL.iter().map(|(n, _)| *n).collect();
-            let blend =
-                Blend::parse(mode).ok_or_else(|| CmdError::invalid(format!("unknown blend mode '{mode}' ({})", names.join(", "))))?;
-            doc.layers[li].blend = blend;
-            Ok(Outcome::new(Json::obj().with("layer", li).with("mode", blend.as_str()), 0))
-        }
-
         /// Creates or updates a slice key. Without `frame` the key starts at the first frame, so it
         /// applies to the whole animation until a later key overrides it.
         pub fn slice_set(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -3619,6 +3595,10 @@ pub mod commands {
                         let from = Rgba::parse_hex(k).ok_or_else(|| CmdError::invalid(format!("map key '{k}' is not a hex color")))?;
                         pairs.push((from.to_u32() | 0xFF, Rgba::from_u32(color_value(doc, v, "map")?)));
                     }
+                }
+                (_, Some(from @ Json::Str(_)), Some(to)) if !to.is_null() => {
+                    let f = Rgba::from_u32(color_value(doc, from, "from")?);
+                    pairs.push((f.to_u32() | 0xFF, Rgba::from_u32(color_value(doc, to, "to")?)));
                 }
                 (_, Some(Json::Arr(from)), Some(Json::Arr(to))) if from.len() == to.len() => {
                     for (f, t) in from.iter().zip(to) {
@@ -4601,16 +4581,24 @@ pub mod commands {
 
         /// Loads a library palette (or explicit colors) into the swatches.
         pub fn palette_load(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let colors: Vec<Rgba> = match (opt_str(a, "name")?, a.get("colors")) {
-                (Some(n), _) => {
-                    pixelart::palette_by_name(n).ok_or_else(|| CmdError::not_found(format!("unknown palette '{n}' (see palette_list)")))?
-                }
+            let preset = match opt_str(a, "preset")? {
+                Some(p) => Some(p),
+                None => opt_str(a, "name")?,
+            };
+            let colors: Vec<Rgba> = match (preset, a.get("colors")) {
+                (Some(n), _) => pixelart::palette_by_name(n)
+                    .ok_or_else(|| CmdError::not_found(format!("unknown palette '{n}' (see canvas_inspect detail palette)")))?,
                 (None, Some(Json::Arr(list))) => {
                     list.iter().map(|c| color_value(doc, c, "colors").map(Rgba::from_u32)).collect::<CmdResult<_>>()?
                 }
-                _ => return Err(CmdError::invalid("give 'name' (library palette) or 'colors'")),
+                _ => return Err(CmdError::invalid("give 'index'+'color' (edit a swatch), 'preset' (library palette) or 'colors'")),
             };
-            if opt_bool(a, "replace")?.unwrap_or(true) {
+            let replace = match opt_str(a, "mode")? {
+                Some("add") => false,
+                Some("replace") | None => opt_bool(a, "replace")?.unwrap_or(true),
+                Some(other) => return Err(CmdError::invalid(format!("unknown mode '{other}' (replace, add)"))),
+            };
+            if replace {
                 let mut all = vec![Rgba::TRANSPARENT];
                 all.extend(colors.iter().copied());
                 doc.palette = Palette::from_colors(all).map_err(CmdError::invalid)?;
@@ -4761,19 +4749,11 @@ pub mod commands {
             cache: &mut super::voxel::RenderCache,
         ) -> CmdResult<Query> {
             match op {
-                "palette_list" => Ok(super::pixel2d::palette_list()),
-                "export_normal_map" => super::pixel2d::export_normal_map(doc, a),
                 "voxel_inspect" => super::voxel::voxel_inspect(doc, a),
-                "voxel_get" => super::voxel::voxel_get(doc, a),
                 "voxel_render" => super::voxel::voxel_render(doc, cache, a),
                 "voxel_render_sheet" => super::voxel::voxel_render_sheet(doc, cache, a),
                 "voxel_pick" => super::voxel::voxel_pick(doc, cache, a),
-                "gamedev_inspect" => super::gamedev::gamedev_inspect(doc),
                 "render_lit" => super::gamedev::render_lit(doc, a),
-                "export_atlas" => super::gamedev::export_atlas(doc, a),
-                "export_godot_spriteframes" => super::gamedev::export_godot(doc, a),
-                "export_tileset" => super::gamedev::export_tileset(doc, a),
-                "export_tiled" => super::gamedev::export_tiled(doc, a),
                 "tilemap_render" => super::gamedev::tilemap_render(doc, a),
                 "status" => q(Json::obj()
                     .with("engine", "pixcore")
@@ -4784,11 +4764,65 @@ pub mod commands {
                     .with("redo", history.can_redo())
                     .with("abiVersion", crate::ffi::ABI_VERSION)
                     .with("operations", Json::Arr(super::OPERATIONS.iter().map(|(name, _)| Json::from(*name)).collect()))),
-                "canvas_inspect" | "project_inspect" => q(inspect(doc, history, revision, op == "project_inspect")),
+                // One inspector: summary (default), full, frame, animation, palette, gamedev.
+                "canvas_inspect" => match opt_str(a, "detail")?.unwrap_or("summary") {
+                    "summary" => q(inspect(doc, history, revision, false)),
+                    "full" => q(inspect(doc, history, revision, true)),
+                    "frame" => frame_get(doc, a),
+                    "animation" => animation_info(doc, a),
+                    "gamedev" => super::gamedev::gamedev_inspect(doc),
+                    "palette" => palette_info(doc),
+                    other => {
+                        Err(CmdError::invalid(format!("unknown detail '{other}' (summary, full, frame, animation, palette, gamedev)")))
+                    }
+                },
                 "get_pixel" => get_pixel(doc, a),
                 "read_region" => read_region(doc, a),
-                "frame_get" => frame_get(doc, a),
-                "palette_get" => q(Json::obj().with("size", doc.palette.len()).with(
+                "history_list" => history_list(history, a),
+                "render_frame" => render_frame(doc, a),
+                "canvas_snapshot" => snapshot(doc, revision, a),
+                // One exporter for every game-ready format.
+                "export" => match super::args::req_str(a, "format")? {
+                    "png" => export_png(doc, a),
+                    "gif" => export_gif(doc, a),
+                    "spritesheet" => export_sheet(doc, a),
+                    "normal_map" => super::pixel2d::export_normal_map(doc, a),
+                    "atlas" => super::gamedev::export_atlas(doc, a),
+                    "godot" => super::gamedev::export_godot(doc, a),
+                    "tileset" => super::gamedev::export_tileset(doc, a),
+                    "tiled" => super::gamedev::export_tiled(doc, a),
+                    other => Err(CmdError::invalid(format!(
+                        "unknown format '{other}' (png, gif, spritesheet, normal_map, atlas, godot, tileset, tiled)"
+                    ))),
+                },
+                "project_save" => {
+                    let log: Vec<_> = history.log_entries().cloned().collect();
+                    let bytes = storage::save(doc, &log);
+                    Ok(Query { result: Json::obj().with("format", "pxs").with("bytes", bytes.len()), binary: bytes })
+                }
+                _ => Err(CmdError::new("unknown_op", format!("unknown operation '{op}'"))),
+            }
+        }
+
+        fn palette_info(doc: &Document) -> CmdResult<Query> {
+            let presets = super::pixel2d::palette_list().result;
+            q(Json::obj()
+                .with("presets", presets.get("palettes").cloned().unwrap_or(presets.clone()))
+                .with(
+                    "ramps",
+                    Json::Arr(
+                        doc.ramps
+                            .iter()
+                            .map(|r| {
+                                Json::obj()
+                                    .with("name", r.name.as_str())
+                                    .with("colors", Json::Arr(r.colors.iter().map(|c| Json::from(Rgba::from_u32(*c).to_hex())).collect()))
+                            })
+                            .collect(),
+                    ),
+                )
+                .with("size", doc.palette.len())
+                .with(
                     "colors",
                     Json::Arr(
                         doc.palette
@@ -4799,21 +4833,7 @@ pub mod commands {
                             .map(|(i, c)| Json::obj().with("index", i).with("color", c.to_hex()))
                             .collect(),
                     ),
-                )),
-                "animation_info" => animation_info(doc, a),
-                "history_list" => history_list(history, a),
-                "render_frame" => render_frame(doc, a),
-                "canvas_snapshot" => snapshot(doc, revision, a),
-                "export_png" => export_png(doc, a),
-                "export_gif" => export_gif(doc, a),
-                "export_spritesheet" => export_sheet(doc, a),
-                "project_save" => {
-                    let log: Vec<_> = history.log_entries().cloned().collect();
-                    let bytes = storage::save(doc, &log);
-                    Ok(Query { result: Json::obj().with("format", "pxs").with("bytes", bytes.len()), binary: bytes })
-                }
-                _ => Err(CmdError::new("unknown_op", format!("unknown operation '{op}'"))),
-            }
+                ))
         }
 
         fn inspect(doc: &Document, history: &History, revision: u64, detailed: bool) -> Json {
@@ -5224,7 +5244,7 @@ pub mod commands {
     mod structure {
         //! Layers, frames, animation tags, palette and canvas structure.
 
-        use super::args::{color_value, frame_index, layer_index, opt_bool, opt_i64, opt_str, req_i64, req_str};
+        use super::args::{frame_index, layer_index, opt_i64, opt_str, req_i64, req_str};
         use super::json::Json;
         use super::{CmdError, CmdResult, Outcome};
         use crate::animation::{DEFAULT_FRAME_MS, Direction, Tag, validate_duration};
@@ -5267,37 +5287,6 @@ pub mod commands {
             }
             let removed = doc.remove_layer(i);
             ok(Json::obj().with("deleted", removed.name).with("id", removed.id))
-        }
-
-        pub fn layer_rename(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let i = layer_index(doc, a, "layer")?;
-            let name = validate_name(req_str(a, "name")?)?;
-            doc.layers[i].name = name;
-            ok(layer_json(doc, i))
-        }
-
-        pub fn layer_visibility(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let i = layer_index(doc, a, "layer")?;
-            let visible = opt_bool(a, "visible")?.ok_or_else(|| CmdError::invalid("missing required boolean 'visible'"))?;
-            doc.layers[i].visible = visible;
-            ok(layer_json(doc, i).with("visible", visible))
-        }
-
-        pub fn layer_lock(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let i = layer_index(doc, a, "layer")?;
-            let locked = opt_bool(a, "locked")?.ok_or_else(|| CmdError::invalid("missing required boolean 'locked'"))?;
-            doc.layers[i].locked = locked;
-            ok(layer_json(doc, i).with("locked", locked))
-        }
-
-        pub fn layer_opacity(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let i = layer_index(doc, a, "layer")?;
-            let o = req_i64(a, "opacity")?;
-            if !(0..=255).contains(&o) {
-                return Err(CmdError::invalid("'opacity' must be 0-255"));
-            }
-            doc.layers[i].opacity = o as u8;
-            ok(layer_json(doc, i).with("opacity", o))
         }
 
         pub fn layer_move(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
@@ -5499,21 +5488,6 @@ pub mod commands {
             ))
         }
 
-        pub fn palette_add(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
-            let colors =
-                a.get("colors").and_then(Json::as_array).ok_or_else(|| CmdError::invalid("'colors' must be an array of hex strings"))?;
-            let mut indices = Vec::new();
-            for (i, c) in colors.iter().enumerate() {
-                if !matches!(c, Json::Str(_)) {
-                    return Err(CmdError::invalid(format!("colors[{i}] must be a hex string")));
-                }
-                let px = color_value(doc, c, &format!("colors[{i}]"))?;
-                let idx = doc.palette.intern(Rgba::from_u32(px)).map_err(|e| CmdError::new("limit", e))?;
-                indices.push(Json::from(idx));
-            }
-            ok(Json::obj().with("indices", Json::Arr(indices)).with("paletteSize", doc.palette.len()))
-        }
-
         pub fn canvas_resize(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
             let (w, h) = validate_size(req_i64(a, "width")?, req_i64(a, "height")?)?;
             let ox = opt_i64(a, "offsetX")?.unwrap_or(0);
@@ -5541,9 +5515,7 @@ pub mod commands {
         use std::collections::HashMap;
         use std::sync::Arc;
 
-        use super::args::{
-            color_value, frame_index, layer_index, opt_bool, opt_f64, opt_i64, opt_str, opt_vec3, req_i64, req_str, req_vec3,
-        };
+        use super::args::{color_value, opt_bool, opt_f64, opt_i64, opt_str, opt_vec3, req_i64, req_str, req_vec3};
         use super::json::Json;
         use super::{CmdError, CmdResult, Outcome, Query};
         use crate::animation::validate_duration;
@@ -6846,47 +6818,6 @@ pub mod commands {
                 binary: Vec::new(),
             })
         }
-
-        pub fn voxel_get(doc: &Document, a: &Json) -> CmdResult<Query> {
-            let mi = model_index(doc, a)?;
-            let m = &doc.models[mi];
-            let (x, y, z) = (req_i64(a, "x")?, req_i64(a, "y")?, req_i64(a, "z")?);
-            let v = m.get(x as i32, y as i32, z as i32);
-            let result = if v.is_empty() {
-                Json::obj().with("empty", true)
-            } else {
-                Json::obj()
-                    .with("empty", false)
-                    .with("color", Rgba::from_u32(v.rgba).to_hex())
-                    .with("material", doc.materials.get(v.material as usize).map(|m| m.name.as_str()))
-                    .with("bone", m.bones.get(v.bone as usize).map(|b| b.name.as_str()))
-            };
-            Ok(Query { result, binary: Vec::new() })
-        }
-
-        /// Pastes a PNG into a 2D cel (reference images, imported art).
-        pub fn image_import(doc: &mut Document, a: &Json, payload: &[u8]) -> CmdResult<Outcome> {
-            let png = binary_input(a, payload)?;
-            let img = export::png::decode(&png).map_err(|e| CmdError::new("invalid_file", e))?;
-            let li = layer_index(doc, a, "layer")?;
-            let fi = frame_index(doc, a, "frame")?;
-            if doc.layers[li].locked {
-                return Err(CmdError::new("locked", "layer is locked"));
-            }
-            let (lid, fid) = (doc.layers[li].id, doc.frames[fi].id);
-            let (ox, oy) = (opt_i64(a, "x")?.unwrap_or(0), opt_i64(a, "y")?.unwrap_or(0));
-            let grid = doc.cel_mut(lid, fid);
-            let mut changed = 0u64;
-            for y in 0..img.height {
-                for x in 0..img.width {
-                    let c = img.get(x, y);
-                    if c.a > 0 {
-                        changed += grid.set(ox + x as i64, oy + y as i64, c.to_pixel()) as u64;
-                    }
-                }
-            }
-            Ok(Outcome::new(Json::obj().with("width", img.width).with("height", img.height).with("changed", changed), changed))
-        }
     }
 
     use json::Json;
@@ -6952,37 +6883,22 @@ pub mod commands {
         // queries
         ("status", Kind::Read),
         ("canvas_inspect", Kind::Read),
-        ("project_inspect", Kind::Read),
         ("get_pixel", Kind::Read),
         ("read_region", Kind::Read),
-        ("frame_get", Kind::Read),
-        ("palette_get", Kind::Read),
-        ("animation_info", Kind::Read),
         ("history_list", Kind::Read),
         ("render_frame", Kind::Read),
         ("canvas_snapshot", Kind::Read),
-        ("export_png", Kind::Read),
-        ("export_gif", Kind::Read),
-        ("export_spritesheet", Kind::Read),
+        ("export", Kind::Read),
         ("project_save", Kind::Read),
-        ("palette_list", Kind::Read),
-        ("export_normal_map", Kind::Read),
         ("voxel_inspect", Kind::Read),
-        ("voxel_get", Kind::Read),
         ("voxel_render", Kind::Read),
         ("voxel_render_sheet", Kind::Read),
         ("voxel_pick", Kind::Read),
-        ("gamedev_inspect", Kind::Read),
         ("render_lit", Kind::Read),
-        ("export_atlas", Kind::Read),
-        ("export_godot_spriteframes", Kind::Read),
-        ("export_tileset", Kind::Read),
-        ("export_tiled", Kind::Read),
         ("tilemap_render", Kind::Read),
         // drawing
         ("set_pixel", Kind::Mutate),
         ("set_pixels", Kind::Mutate),
-        ("erase_pixel", Kind::Mutate),
         ("draw_line", Kind::Mutate),
         ("draw_rectangle", Kind::Mutate),
         ("draw_ellipse", Kind::Mutate),
@@ -6992,9 +6908,7 @@ pub mod commands {
         ("fx_particles", Kind::Mutate),
         ("anim_generate", Kind::Mutate),
         ("fill_region", Kind::Mutate),
-        ("replace_color", Kind::Mutate),
-        ("flip_horizontal", Kind::Mutate),
-        ("flip_vertical", Kind::Mutate),
+        ("flip", Kind::Mutate),
         ("rotate", Kind::Mutate),
         ("move_region", Kind::Mutate),
         ("copy_region", Kind::Mutate),
@@ -7002,10 +6916,6 @@ pub mod commands {
         // structure
         ("layer_create", Kind::Mutate),
         ("layer_delete", Kind::Mutate),
-        ("layer_rename", Kind::Mutate),
-        ("layer_visibility", Kind::Mutate),
-        ("layer_lock", Kind::Mutate),
-        ("layer_opacity", Kind::Mutate),
         ("layer_move", Kind::Mutate),
         ("layer_select", Kind::Mutate),
         ("frame_add", Kind::Mutate),
@@ -7018,14 +6928,12 @@ pub mod commands {
         ("animation_tag_delete", Kind::Mutate),
         ("animation_set_loop", Kind::Mutate),
         ("palette_set", Kind::Mutate),
-        ("palette_add", Kind::Mutate),
         ("canvas_resize", Kind::Mutate),
         ("project_rename", Kind::Mutate),
         ("image_import", Kind::Mutate),
         ("draw_ascii", Kind::Mutate),
         ("outline", Kind::Mutate),
         ("color_ramp", Kind::Mutate),
-        ("palette_load", Kind::Mutate),
         ("quantize", Kind::Mutate),
         ("dither_fill", Kind::Mutate),
         ("auto_shade", Kind::Mutate),
@@ -7037,13 +6945,10 @@ pub mod commands {
         ("shade", Kind::Mutate),
         ("draw_stroke", Kind::Mutate),
         ("layer_set", Kind::Mutate),
-        ("reference_import", Kind::Mutate),
         // game production
-        ("layer_blend", Kind::Mutate),
         ("slice_set", Kind::Mutate),
         ("slice_delete", Kind::Mutate),
         ("palette_swap", Kind::Mutate),
-        ("rotsprite", Kind::Mutate),
         ("tileset_create", Kind::Mutate),
         ("tileset_add_tiles", Kind::Mutate),
         ("tileset_generate_blob", Kind::Mutate),
@@ -7087,11 +6992,9 @@ pub mod commands {
     /// Applies one plain mutation to a document.
     pub fn apply_mutation(doc: &mut Document, op: &str, a: &Json, payload: &[u8], cache: &mut voxel::RenderCache) -> CmdResult<Outcome> {
         match op {
-            "image_import" => voxel::image_import(doc, a, payload),
             "draw_ascii" => pixel2d::draw_ascii(doc, a),
             "outline" => pixel2d::outline(doc, a),
             "color_ramp" => pixel2d::color_ramp(doc, a),
-            "palette_load" => pixel2d::palette_load(doc, a),
             "quantize" => pixel2d::quantize(doc, a),
             "dither_fill" => pixel2d::dither_fill(doc, a),
             "auto_shade" => charart::auto_shade(doc, a),
@@ -7103,12 +7006,10 @@ pub mod commands {
             "shade" => artist::shade(doc, a),
             "draw_stroke" => artist::draw_stroke(doc, a),
             "layer_set" => artist::layer_set(doc, a),
-            "reference_import" => artist::reference_import(doc, a, payload),
-            "layer_blend" => gamedev::layer_blend(doc, a),
+            "image_import" => artist::reference_import(doc, a, payload),
             "slice_set" => gamedev::slice_set(doc, a),
             "slice_delete" => gamedev::slice_delete(doc, a),
             "palette_swap" => gamedev::palette_swap(doc, a),
-            "rotsprite" => gamedev::rotsprite_cmd(doc, a),
             "tileset_create" => gamedev::tileset_create(doc, a),
             "tileset_add_tiles" => gamedev::tileset_add_tiles(doc, a),
             "tileset_generate_blob" => gamedev::tileset_generate_blob(doc, a),
@@ -7138,7 +7039,6 @@ pub mod commands {
             "voxel_render_to_frames" => voxel::voxel_render_to_frames(doc, cache, a),
             "set_pixel" => draw::set_pixel(doc, a),
             "set_pixels" => draw::set_pixels(doc, a),
-            "erase_pixel" => draw::erase_pixel(doc, a),
             "draw_line" => draw::draw_line(doc, a),
             "draw_rectangle" => draw::draw_rectangle(doc, a),
             "draw_ellipse" => draw::draw_ellipse(doc, a),
@@ -7148,19 +7048,26 @@ pub mod commands {
             "fx_particles" => fx::fx_particles(doc, a),
             "anim_generate" => fx::anim_generate(doc, a),
             "fill_region" => draw::fill_region(doc, a),
-            "replace_color" => draw::replace_color(doc, a),
-            "flip_horizontal" => draw::flip(doc, a, true),
-            "flip_vertical" => draw::flip(doc, a, false),
-            "rotate" => draw::rotate(doc, a),
+            "flip" => match args::opt_str(a, "axis")?.unwrap_or("horizontal") {
+                "horizontal" | "x" => draw::flip(doc, a, true),
+                "vertical" | "y" => draw::flip(doc, a, false),
+                other => Err(CmdError::invalid(format!("unknown axis '{other}' (horizontal, vertical)"))),
+            },
+            // Quarter turns are exact; any other angle (or method rotsprite) uses RotSprite.
+            "rotate" => {
+                let deg = args::opt_f64(a, "degrees")?.ok_or_else(|| CmdError::invalid("missing required number 'degrees'"))?;
+                let exact = deg.fract() == 0.0 && (deg as i64).rem_euclid(90) == 0;
+                match args::opt_str(a, "method")?.unwrap_or("auto") {
+                    "auto" if exact => draw::rotate(doc, a),
+                    "auto" | "rotsprite" => gamedev::rotsprite_cmd(doc, a),
+                    other => Err(CmdError::invalid(format!("unknown method '{other}' (auto, rotsprite)"))),
+                }
+            }
             "move_region" => draw::move_region(doc, a),
             "copy_region" => draw::copy_region(doc, a),
             "clear" => draw::clear(doc, a),
             "layer_create" => structure::layer_create(doc, a),
             "layer_delete" => structure::layer_delete(doc, a),
-            "layer_rename" => structure::layer_rename(doc, a),
-            "layer_visibility" => structure::layer_visibility(doc, a),
-            "layer_lock" => structure::layer_lock(doc, a),
-            "layer_opacity" => structure::layer_opacity(doc, a),
             "layer_move" => structure::layer_move(doc, a),
             "layer_select" => structure::layer_select(doc, a),
             "frame_add" => structure::frame_add(doc, a),
@@ -7172,8 +7079,9 @@ pub mod commands {
             "animation_tag_create" => structure::tag_create(doc, a),
             "animation_tag_delete" => structure::tag_delete(doc, a),
             "animation_set_loop" => structure::set_loop(doc, a),
-            "palette_set" => structure::palette_set(doc, a),
-            "palette_add" => structure::palette_add(doc, a),
+            // Swatch edit with `index`; otherwise load a preset/colors (mode replace or add).
+            "palette_set" if a.get("index").is_some_and(|v| !v.is_null()) => structure::palette_set(doc, a),
+            "palette_set" => pixel2d::palette_load(doc, a),
             "canvas_resize" => structure::canvas_resize(doc, a),
             "project_rename" => structure::project_rename(doc, a),
             _ => Err(CmdError::new("unknown_op", format!("unknown operation '{op}'"))),

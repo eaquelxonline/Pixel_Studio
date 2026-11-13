@@ -19,7 +19,7 @@ def build_level(out):
         a raised meadow plateau with a cliff lip, a dirt camp clearing and a pond;
       * tilemaps painted with ASCII terrain rows (`tilemap_terrain`) and baked onto layers;
       * hand-shaded props (pines, oaks, rocks, tent, logs) with selective outlines;
-      * a multiply shadow layer and an additive glow layer (`layer_blend`);
+      * a multiply shadow layer and an additive glow layer (`layer_set` blend);
       * the original cast from ../sprites2d (idle loops) standing around an animated campfire;
       * slices for gameplay data (hurtboxes, interact zone);
       * normal-mapped 2D lighting (`render_lit`): flickering fire, tent lantern, fireflies,
@@ -344,7 +344,7 @@ def build_level(out):
     # ------------------------------------------------------------------ build
 
     cmd("project_new", width=W, height=H, name="Campfire Clearing")
-    cmd("layer_rename", layer=0, name="Ground")
+    cmd("layer_set", layer=0, name="Ground")
     for name in ["Clearing", "Pond", "Plateau", "Shadows", "Props", "Characters", "Glow", "Fire", "Fireflies"]:
         cmd("layer_create", name=name)
 
@@ -447,8 +447,8 @@ def build_level(out):
     for cx in (126, 214):
         sh.update(ellipse_shadow(cx + 4, 146, 11, 3))
     put(sh, "Shadows")
-    cmd("layer_blend", layer="Shadows", mode="multiply")
-    cmd("layer_opacity", layer="Shadows", opacity=200)
+    cmd("layer_set", layer="Shadows", blend="multiply")
+    cmd("layer_set", layer="Shadows", opacity=200)
 
     # All static layers are done: share them across the loop (cels are reference-counted).
     for f in range(1, FRAMES):
@@ -483,7 +483,7 @@ def build_level(out):
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     ff[(x + dx, y + dy)] = "#9BD14A80"
         put(ff, "Fireflies", f)
-    cmd("layer_blend", layer="Glow", mode="add")
+    cmd("layer_set", layer="Glow", blend="add")
 
     # Gameplay data: slices exported with the atlas.
     cmd("slice_set", name="hurtbox_aoi", x=118, y=104, width=16, height=40, pivot=[8, 40])
@@ -503,9 +503,9 @@ def build_level(out):
         show.append(json.dumps({"op": op, "_save": name, **a}, separators=(",", ":")))
 
 
-    save("export_png", "day_albedo_x3.png", frame=0, scale=3)
-    save("export_gif", "day_loop_x2.gif", scale=2)
-    show.append(json.dumps({"op": "layer_visibility", "layer": "Glow", "visible": False}))
+    save("export", "day_albedo_x3.png", format="png", frame=0, scale=3)
+    save("export", "day_loop_x2.gif", format="gif", scale=2)
+    show.append(json.dumps({"op": "layer_set", "layer": "Glow", "visible": False}))
     for f in range(FRAMES):
         flick = 2.3 + 0.35 * math.sin(TAU * f / FRAMES * 2) + 0.15 * math.sin(TAU * f / FRAMES * 3 + 1)
         lights = [
@@ -517,13 +517,13 @@ def build_level(out):
             lights.append({"x": x, "y": y, "z": 6, "color": "#C8FF6A", "intensity": 0.45 if (f + i) % 4 else 0.1, "radius": 9})
         save("render_lit", f"night/night_{f}.png", frame=f, scale=3, lights=lights, ambient="#3E4A7C", bands=5,
              unlit_layers=["Fire", "Fireflies"], normal_strength=1.0, strength=2.5, bevel=2)
-    show.append(json.dumps({"op": "layer_visibility", "layer": "Glow", "visible": True}))
-    save("export_normal_map", "normal_map_x2.png", frame=0, scale=2, strength=2.5, bevel=2)
+    show.append(json.dumps({"op": "layer_set", "layer": "Glow", "visible": True}))
+    save("export", "normal_map_x2.png", format="normal_map", frame=0, scale=2, strength=2.5, bevel=2)
     for ts in ("plateau", "dirt", "pond"):
-        save("export_tileset", f"tileset_{ts}_x4.png", tileset=ts, scale=4)
-    save("export_tiled", "tiled/clearing_tileset.png", tilemap="clearing", image="clearing_tileset.png", _json=True)
-    save("export_godot_spriteframes", "godot/campfire.png", layer="Fire", texture_path="res://campfire.png", _json=True)
-    save("export_atlas", "atlas/campfire_atlas.png", layer="Fire", image="campfire_atlas.png", padding=1, extrude=1, _json=True)
+        save("export", f"tileset_{ts}_x4.png", format="tileset", tileset=ts, scale=4)
+    save("export", "tiled/clearing_tileset.png", format="tiled", tilemap="clearing", image="clearing_tileset.png", _json=True)
+    save("export", "godot/campfire.png", format="godot", layer="Fire", texture_path="res://campfire.png", _json=True)
+    save("export", "atlas/campfire_atlas.png", format="atlas", layer="Fire", image="campfire_atlas.png", padding=1, extrude=1, _json=True)
     save("project_save", "campfire_clearing.pxs")
 
     with open(os.path.join(here, "level_showcase.jsonl"), "w") as fh:

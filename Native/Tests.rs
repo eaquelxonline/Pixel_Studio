@@ -156,7 +156,7 @@ mod engine {
         ok(&mut e, r#"{"op":"frame_set_duration","frame":0,"duration":120}"#);
         ok(&mut e, r#"{"op":"frame_set_duration","frame":1,"duration":80}"#);
         ok(&mut e, r#"{"op":"animation_tag_create","name":"Walk","from":0,"to":3,"direction":"pingpong"}"#);
-        let info = ok(&mut e, r#"{"op":"animation_info","tag":"Walk"}"#);
+        let info = ok(&mut e, r#"{"op":"canvas_inspect","detail":"animation","tag":"Walk"}"#);
         let seq = info.get("result").unwrap().get("sequence").unwrap().as_array().unwrap();
         let frames: Vec<i64> = seq.iter().map(|s| s.get("frame").unwrap().as_i64().unwrap()).collect();
         assert_eq!(frames, vec![0, 1, 2, 3, 2, 1]);
@@ -168,7 +168,7 @@ mod engine {
     #[test]
     fn layers_isolate_edits() {
         let mut e = Engine::new(16, 16);
-        ok(&mut e, r#"{"op":"layer_rename","layer":0,"name":"Body"}"#);
+        ok(&mut e, r#"{"op":"layer_set","layer":0,"name":"Body"}"#);
         ok(&mut e, r#"{"op":"layer_create","name":"Weapon"}"#);
         ok(&mut e, r##"{"op":"draw_line","layer":"Weapon","x0":10,"y0":2,"x1":10,"y1":12,"color":"#CCCCCC"}"##);
         ok(&mut e, r##"{"op":"fill_region","layer":"Body","x":0,"y":0,"color":"#884422"}"##);
@@ -176,7 +176,7 @@ mod engine {
         let rows = r.get("result").unwrap().get("rows").unwrap().as_array().unwrap();
         assert_eq!(rows[0].as_str(), Some("..."));
         assert_eq!(rows[1].as_str(), Some(".0."));
-        ok(&mut e, r#"{"op":"layer_lock","layer":"Weapon","locked":true}"#);
+        ok(&mut e, r#"{"op":"layer_set","layer":"Weapon","locked":true}"#);
         assert_eq!(err_code(&mut e, r##"{"op":"set_pixel","layer":"Weapon","x":0,"y":0,"color":"#000"}"##), "locked");
         let c = ok(&mut e, r#"{"op":"get_pixel","x":10,"y":5,"composite":true}"#);
         assert_eq!(c.get("result").unwrap().get("color").unwrap().as_str(), Some("#CCCCCC"));
@@ -220,11 +220,11 @@ mod engine {
         let mut e = Engine::new(8, 8);
         ok(&mut e, r##"{"op":"set_pixel","x":0,"y":0,"color":"#FF0000"}"##);
         ok(&mut e, r#"{"op":"frame_add","count":2}"#);
-        let png = e.execute(br#"{"op":"export_png","scale":4}"#, &[]);
+        let png = e.execute(br#"{"op":"export","format":"png","scale":4}"#, &[]);
         assert!(png.binary.starts_with(&[0x89, b'P', b'N', b'G']));
-        let gif = e.execute(br#"{"op":"export_gif"}"#, &[]);
+        let gif = e.execute(br#"{"op":"export","format":"gif"}"#, &[]);
         assert!(gif.binary.starts_with(b"GIF89a"));
-        let sheet = e.execute(br#"{"op":"export_spritesheet","columns":3}"#, &[]);
+        let sheet = e.execute(br#"{"op":"export","format":"spritesheet","columns":3}"#, &[]);
         let meta = Json::parse(&sheet.json).unwrap();
         assert_eq!(meta.get("result").unwrap().get("image").unwrap().get("width").unwrap().as_i64(), Some(24));
         let raw = e.execute(br#"{"op":"render_frame","scale":2}"#, &[]);
@@ -307,8 +307,9 @@ mod engine {
         ok(&mut e, r#"{"op":"rig_bind","only_unbound":true}"#);
         let generated = ok(&mut e, r#"{"op":"anim3d_generate","kind":"walk","frames":8}"#);
         assert_eq!(generated.get("result").unwrap().get("frames").unwrap().as_i64(), Some(8));
-        let mirrored = ok(&mut e, r#"{"op":"voxel_get","x":19,"y":10,"z":24}"#);
-        assert_eq!(mirrored.get("result").unwrap().get("bone").unwrap().as_str(), Some("upper_leg_r"), "mirror swaps _l/_r bones");
+        let m = &e.document().models[0];
+        let v = m.get(19, 10, 24);
+        assert_eq!(m.bones[v.bone as usize].name, "upper_leg_r", "mirror swaps _l/_r bones");
 
         let img =
             e.execute(br#"{"op":"voxel_render","yaw":45,"width":96,"animation":"walk","frame":2,"outline":true,"supersample":2}"#, &[]);
@@ -328,7 +329,7 @@ mod engine {
         assert_eq!(r.get("tags").unwrap().as_array().unwrap().len(), 8);
         assert_eq!(e.document().frames.len(), 64, "the empty starting frame is reused");
         assert_eq!((e.document().width, e.document().height), (64, 64));
-        let info = ok(&mut e, r#"{"op":"animation_info","tag":"walk_NE"}"#);
+        let info = ok(&mut e, r#"{"op":"canvas_inspect","detail":"animation","tag":"walk_NE"}"#);
         assert_eq!(info.get("result").unwrap().get("sequence").unwrap().as_array().unwrap().len(), 8);
 
         let pick = ok(&mut e, r#"{"op":"voxel_pick","yaw":0,"pitch":0,"width":96,"px":48,"py":30}"#);
@@ -361,14 +362,14 @@ mod engine {
         let r = ok(&mut e, r#"{"op":"read_region","x":0,"y":0,"width":3,"height":1,"format":"hex"}"#);
         let row = r.get("result").unwrap().get("rows").unwrap().as_array().unwrap()[0].as_array().unwrap().to_vec();
         assert_eq!(row, vec![Json::from("#102030"), Json::from("#102031"), Json::from("#10203080")]);
-        let png = e.execute(br#"{"op":"export_png"}"#, &[]).binary;
+        let png = e.execute(br#"{"op":"export","format":"png"}"#, &[]).binary;
         ok(&mut e, r#"{"op":"layer_create","name":"Imported"}"#);
         let imp = e.execute(br#"{"op":"image_import","layer":"Imported","x":4,"y":4}"#, &png);
         assert!(imp.json.contains("\"ok\":true"), "{}", imp.json);
         let p = ok(&mut e, r#"{"op":"get_pixel","layer":"Imported","x":5,"y":4}"#);
-        assert_eq!(p.get("result").unwrap().get("color").unwrap().as_str(), Some("#102031"));
+        assert_eq!(p.get("result").unwrap().get("color").unwrap().as_str(), Some("#102031"), "a sparse native image keeps its grid");
         // Swatch edit recolors the art that uses the old color.
-        ok(&mut e, r##"{"op":"palette_add","colors":["#102030"]}"##);
+        ok(&mut e, r##"{"op":"palette_set","colors":["#102030"],"mode":"add"}"##);
         let idx = e.document().palette.find(crate::pixel::Rgba::parse_hex("#102030").unwrap()).unwrap();
         ok(&mut e, &format!(r##"{{"op":"palette_set","index":{idx},"color":"#FF0000"}}"##));
         let p = ok(&mut e, r#"{"op":"get_pixel","layer":0,"x":0,"y":0}"#);
@@ -384,16 +385,16 @@ mod engine {
         ok(&mut e, r##"{"op":"draw_rectangle","layer":"glow","x":0,"y":0,"width":8,"height":8,"color":"#404040","filled":true}"##);
         let px = |e: &mut Engine| e.execute(br#"{"op":"render_frame"}"#, &[]).binary[(2 * 32 + 2) * 4..(2 * 32 + 2) * 4 + 3].to_vec();
         assert_eq!(px(&mut e), vec![0x40, 0x40, 0x40]);
-        ok(&mut e, r#"{"op":"layer_blend","layer":"glow","mode":"add"}"#);
+        ok(&mut e, r#"{"op":"layer_set","layer":"glow","blend":"add"}"#);
         assert_eq!(px(&mut e), vec![0xC0, 0xA0, 0x80]);
-        assert_eq!(err_code(&mut e, r#"{"op":"layer_blend","mode":"sparkle"}"#), "invalid_argument");
+        assert_eq!(err_code(&mut e, r#"{"op":"layer_set","blend":"sparkle"}"#), "invalid_argument");
 
         // Slices with pivots, surviving frame deletion.
         ok(&mut e, r#"{"op":"frame_add","count":2}"#);
         ok(&mut e, r#"{"op":"slice_set","name":"hitbox","x":4,"y":6,"width":10,"height":12,"pivot":[5,12]}"#);
         ok(&mut e, r#"{"op":"slice_set","name":"hitbox","frame":2,"x":6,"y":6,"width":12,"height":12}"#);
         ok(&mut e, r#"{"op":"frame_delete","frame":2}"#);
-        let gd = ok(&mut e, r#"{"op":"gamedev_inspect"}"#).to_json_string();
+        let gd = ok(&mut e, r#"{"op":"canvas_inspect","detail":"gamedev"}"#).to_json_string();
         assert!(gd.contains("\"hitbox\"") && gd.contains("\"pivot\""), "{gd}");
 
         // Palette swap and RotSprite.
@@ -401,7 +402,7 @@ mod engine {
         assert!(run(&mut e, r#"{"op":"get_pixel","layer":0,"frame":0,"x":20,"y":20}"#).to_json_string().contains("#2050A0"));
         ok(&mut e, r#"{"op":"layer_create","name":"sword"}"#);
         ok(&mut e, r##"{"op":"draw_line","layer":"sword","x0":16,"y0":4,"x1":16,"y1":27,"color":"#E0E0F0"}"##);
-        let rot = ok(&mut e, r#"{"op":"rotsprite","layer":"sword","degrees":45}"#);
+        let rot = ok(&mut e, r#"{"op":"rotate","layer":"sword","degrees":45}"#);
         assert!(rot.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 10);
 
         // Blob tileset → terrain map → bake → Tiled export.
@@ -409,7 +410,7 @@ mod engine {
         assert_eq!(ts.get("result").unwrap().get("tileCount").unwrap().as_i64(), Some(47));
         ok(&mut e, r#"{"op":"tilemap_create","name":"level","tileset":"grass","columns":4,"rows":4}"#);
         ok(&mut e, r#"{"op":"tilemap_terrain","tilemap":"level","rows":["....",".##.",".###","...."]}"#);
-        let tiled = e.execute(br#"{"op":"export_tiled","tilemap":"level"}"#, &[]);
+        let tiled = e.execute(br#"{"op":"export","format":"tiled","tilemap":"level"}"#, &[]);
         assert!(tiled.binary.starts_with(&[0x89, b'P']));
         let tj = Json::parse(&tiled.json).unwrap();
         let tmj = tj.get("result").unwrap().get("tmj").unwrap();
@@ -437,13 +438,13 @@ mod engine {
             &[],
         );
         assert!(lit.binary.starts_with(&[0x89, b'P']), "{}", lit.json);
-        let atlas = e.execute(br#"{"op":"export_atlas","padding":1,"extrude":1}"#, &[]);
+        let atlas = e.execute(br#"{"op":"export","format":"atlas","padding":1,"extrude":1}"#, &[]);
         assert!(atlas.binary.starts_with(&[0x89, b'P']), "{}", atlas.json);
         let aj = Json::parse(&atlas.json).unwrap();
         let data = aj.get("result").unwrap().get("data").unwrap();
         assert_eq!(data.get("frames").unwrap().as_array().unwrap().len(), 2);
         assert!(data.get("meta").unwrap().get("slices").unwrap().as_array().unwrap().len() == 1);
-        let godot = e.execute(br#"{"op":"export_godot_spriteframes","texture_path":"res://hero.png"}"#, &[]);
+        let godot = e.execute(br#"{"op":"export","format":"godot","texture_path":"res://hero.png"}"#, &[]);
         assert!(godot.json.contains("SpriteFrames") && godot.json.contains("AtlasTexture_1"), "{}", godot.json);
 
         // Everything survives a save/load round trip and undo.
@@ -500,7 +501,7 @@ mod engine {
         );
         assert_eq!(custom.get("result").unwrap().get("frames").unwrap().as_i64(), Some(6));
         assert_eq!(err_code(&mut fx, r#"{"op":"fx_generate","kind":"rainbow"}"#), "invalid_argument");
-        let gif = fx.execute(br#"{"op":"export_gif","tag":"fire"}"#, &[]);
+        let gif = fx.execute(br#"{"op":"export","format":"gif","tag":"fire"}"#, &[]);
         assert!(gif.binary.starts_with(b"GIF89a"));
     }
 
@@ -587,7 +588,7 @@ mod engine {
     #[test]
     fn character_art_finishing_tools() {
         let mut e = Engine::new(48, 48);
-        ok(&mut e, r##"{"op":"layer_rename","layer":0,"name":"Face"}"##);
+        ok(&mut e, r##"{"op":"layer_set","layer":0,"name":"Face"}"##);
         ok(&mut e, r##"{"op":"draw_ellipse","layer":"Face","x":8,"y":10,"width":32,"height":30,"color":"#FCE3D2","filled":true}"##);
         ok(&mut e, r#"{"op":"layer_create","name":"Bangs"}"#);
         ok(&mut e, r##"{"op":"draw_rectangle","layer":"Bangs","x":8,"y":6,"width":32,"height":8,"color":"#F6A8C8","filled":true}"##);
@@ -733,7 +734,7 @@ mod engine {
         }
         let png = crate::export::png::encode(&big);
         let mut e = Engine::new(32, 32);
-        let r = e.execute(br#"{"op":"reference_import","x":2,"y":3}"#, &png);
+        let r = e.execute(br#"{"op":"image_import","grid":"auto","ramps":true,"x":2,"y":3}"#, &png);
         let j = Json::parse(&r.json).unwrap();
         assert_eq!(j.get("ok"), Some(&Json::Bool(true)), "{}", r.json);
         let res = j.get("result").unwrap();
@@ -750,7 +751,7 @@ mod engine {
         let r = ok(&mut e, r#"{"op":"shade","x":3,"y":4,"width":18,"height":12,"steps":1}"#);
         assert!(r.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 20);
         // As a reference it lands on a locked, faded layer.
-        let r = e.execute(br#"{"op":"reference_import","reference":true}"#, &png);
+        let r = e.execute(br#"{"op":"image_import","reference":true}"#, &png);
         assert!(r.json.contains("\"layer\":\"Reference\""), "{}", r.json);
     }
 }

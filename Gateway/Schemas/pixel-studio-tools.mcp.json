@@ -3,10 +3,40 @@
     {
       "name": "canvas_inspect",
       "title": "Inspect canvas",
-      "description": "Canvas size, current revision, layers, frames (with durations), tags and active layer/frame. Call this first and whenever you need the latest revision.",
+      "description": "Canvas size, current revision, layers (with pixel density and blend), frames, tags and active layer/frame. Call this first and whenever you need the latest revision. detail: summary (default) | full (pixel counts, storage) | frame (one frame's cels and tags) | animation (playback order, durations, FPS of a tag/range) | palette (swatches, material ramps, palette library) | gamedev (slices, tilesets, tilemaps).",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What to inspect.",
+            "enum": ["summary","full","frame","animation","palette","gamedev"]
+          },
+          "frame": {
+            "type": "integer",
+            "description": "0-based frame index. Defaults to the active frame.",
+            "minimum": 0
+          },
+          "tag": {
+            "type": "string",
+            "description": "detail=animation: tag name."
+          },
+          "from": {
+            "type": "integer",
+            "description": "detail=animation: first frame.",
+            "minimum": 0
+          },
+          "to": {
+            "type": "integer",
+            "description": "detail=animation: last frame.",
+            "minimum": 0
+          },
+          "direction": {
+            "type": "string",
+            "description": "detail=animation: direction.",
+            "enum": ["forward","reverse","pingpong"]
+          }
+        },
         "additionalProperties": false
       },
       "annotations": {
@@ -176,7 +206,7 @@
     {
       "name": "set_pixel",
       "title": "Paint pixel",
-      "description": "Paints a single pixel.",
+      "description": "Paints (or with color 'transparent' erases) a single pixel. On a density 2/4 layer, x/y address its finer grid.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -266,51 +296,6 @@
       },
       "annotations": {
         "title": "Paint pixels",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "erase_pixel",
-      "title": "Erase pixel",
-      "description": "Makes one pixel transparent.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "type": "integer",
-            "description": "X coordinate (0 = left)."
-          },
-          "y": {
-            "type": "integer",
-            "description": "Y coordinate (0 = top)."
-          },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["x","y"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Erase pixel",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
@@ -558,64 +543,17 @@
       }
     },
     {
-      "name": "replace_color",
-      "title": "Replace color",
-      "description": "Replaces every pixel of one color with another in a cel, a layer (all frames), a frame (all layers) or everywhere.",
+      "name": "flip",
+      "title": "Flip",
+      "description": "Mirrors a region (default whole layer) left↔right (axis horizontal) or top↕bottom (axis vertical).",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "from": {
+          "axis": {
             "type": "string",
-            "description": "Color to replace.",
-            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            "description": "Default horizontal.",
+            "enum": ["horizontal","vertical"]
           },
-          "to": {
-            "type": "string",
-            "description": "New color.",
-            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
-          },
-          "scope": {
-            "type": "string",
-            "description": "Where to replace (default 'cel').",
-            "enum": ["cel","layer","frame","all"]
-          },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["from","to"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Replace color",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "flip_horizontal",
-      "title": "Flip horizontally",
-      "description": "Mirrors a region (default whole layer) left↔right.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
           "x": {
             "type": "integer",
             "description": "Region left (default 0)."
@@ -656,61 +594,7 @@
         "additionalProperties": false
       },
       "annotations": {
-        "title": "Flip horizontally",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "flip_vertical",
-      "title": "Flip vertically",
-      "description": "Mirrors a region (default whole layer) top↕bottom.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "x": {
-            "type": "integer",
-            "description": "Region left (default 0)."
-          },
-          "y": {
-            "type": "integer",
-            "description": "Region top (default 0)."
-          },
-          "width": {
-            "type": "integer",
-            "description": "Region width (default: to the canvas edge).",
-            "minimum": 1
-          },
-          "height": {
-            "type": "integer",
-            "description": "Region height (default: to the canvas edge).",
-            "minimum": 1
-          },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Flip vertically",
+        "title": "Flip",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
@@ -720,14 +604,27 @@
     {
       "name": "rotate",
       "title": "Rotate",
-      "description": "Rotates a region clockwise by 90/180/270 degrees (90/270 need a square region).",
+      "description": "Rotates clockwise. 90/180/270 rotate a region exactly (90/270 need a square region); any other angle (or method rotsprite) rotates the cel with RotSprite — clean lines, no blur, no new colors (swords, swing frames).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "degrees": {
-            "type": "integer",
-            "enum": [90,180,270],
-            "description": "Clockwise rotation."
+            "type": "number",
+            "description": "Clockwise degrees."
+          },
+          "method": {
+            "type": "string",
+            "description": "auto (default) or rotsprite.",
+            "enum": ["auto","rotsprite"]
+          },
+          "center": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "RotSprite pivot [x, y] (default: content center)."
           },
           "x": {
             "type": "integer",
@@ -1176,29 +1073,6 @@
       }
     },
     {
-      "name": "frame_get",
-      "title": "Frame details",
-      "description": "Duration, tags and per-layer pixel counts/bounds of a frame.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          }
-        },
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Frame details",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "frame_set_duration",
       "title": "Set frame duration",
       "description": "Sets how long a frame is shown (ms). frame='all' sets every frame.",
@@ -1230,39 +1104,6 @@
       },
       "annotations": {
         "title": "Set frame duration",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "frame_select",
-      "title": "Select frame",
-      "description": "Makes a frame the active one (shown in the editor).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["frame"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Select frame",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
@@ -1398,43 +1239,6 @@
       }
     },
     {
-      "name": "animation_info",
-      "title": "Animation timing",
-      "description": "Playback order, durations, total length and average FPS for a tag or frame range.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "tag": {
-            "type": "string",
-            "description": "Tag name."
-          },
-          "from": {
-            "type": "integer",
-            "description": "First frame.",
-            "minimum": 0
-          },
-          "to": {
-            "type": "integer",
-            "description": "Last frame.",
-            "minimum": 0
-          },
-          "direction": {
-            "type": "string",
-            "description": "Direction.",
-            "enum": ["forward","reverse","pingpong"]
-          }
-        },
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Animation timing",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "animation_preview",
       "title": "Preview animation",
       "description": "Renders the animation (or a tag) as an animated GIF so you can review motion.",
@@ -1541,9 +1345,9 @@
       }
     },
     {
-      "name": "layer_rename",
-      "title": "Rename layer",
-      "description": "Renames a layer.",
+      "name": "layer_set",
+      "title": "Layer properties",
+      "description": "Changes any layer property in one call: name, visible, locked, opacity, blend (normal, multiply for shadows, screen/add for glow, overlay, darken, lighten, soft_light) and density — 1, 2 or 4 pixels per canvas pixel. A density 2/4 layer holds half/quarter-size pixels (eye shines, strands, fine trims) on top of normal ones; changing density resamples the art.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1555,109 +1359,13 @@
             "type": "string",
             "description": "New name."
           },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["name"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Rename layer",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "layer_visibility",
-      "title": "Show/hide layer",
-      "description": "Shows or hides a layer.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
           "visible": {
             "type": "boolean",
-            "description": "Visible?"
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["visible"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Show/hide layer",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "layer_lock",
-      "title": "Lock layer",
-      "description": "Locks/unlocks a layer against edits.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+            "description": "Show or hide."
           },
           "locked": {
             "type": "boolean",
-            "description": "Locked?"
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["locked"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Lock layer",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "layer_opacity",
-      "title": "Layer opacity",
-      "description": "Sets layer opacity 0-255.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+            "description": "Lock against edits."
           },
           "opacity": {
             "type": "integer",
@@ -1665,6 +1373,16 @@
             "minimum": 0,
             "maximum": 255
           },
+          "blend": {
+            "type": "string",
+            "description": "Blend mode.",
+            "enum": ["normal","multiply","screen","add","overlay","darken","lighten","soft_light"]
+          },
+          "density": {
+            "type": "integer",
+            "enum": [1,2,4],
+            "description": "Pixels per canvas pixel."
+          },
           "expectedRevision": {
             "type": "integer",
             "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
@@ -1675,11 +1393,10 @@
             "description": "Idempotency key: retrying with the same id never applies the change twice."
           }
         },
-        "required": ["opacity"],
         "additionalProperties": false
       },
       "annotations": {
-        "title": "Layer opacity",
+        "title": "Layer properties",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
@@ -1724,64 +1441,15 @@
       }
     },
     {
-      "name": "layer_select",
-      "title": "Select layer",
-      "description": "Makes a layer the active one.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["layer"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Select layer",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "palette_get",
-      "title": "Get swatches",
-      "description": "Lists the project's color swatches with their indices. The canvas itself is true color and not limited to them.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Get swatches",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "palette_set",
-      "title": "Change swatch",
-      "description": "Changes a swatch; every pixel that used the old color is recolored (great for color variants).",
+      "title": "Set palette",
+      "description": "With index+color: changes a swatch and recolors every pixel that used it (color variants). With preset (endesga-32/64, resurrect-64, sweetie-16, apollo, aap-64, pico-8, lospec500, vinik24 …) or colors: loads swatches, mode replace (default) or add.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "index": {
             "type": "integer",
-            "description": "Palette index (1+).",
+            "description": "Swatch index (1+).",
             "minimum": 1
           },
           "color": {
@@ -1789,34 +1457,10 @@
             "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
             "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
           },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
+          "preset": {
             "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["index","color"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Change swatch",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "palette_add",
-      "title": "Add swatches",
-      "description": "Adds colors to the swatch list (plan a palette before drawing).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
+            "description": "Library palette name (see canvas_inspect detail=palette)."
+          },
           "colors": {
             "type": "array",
             "items": {
@@ -1824,7 +1468,12 @@
               "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
               "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
             },
-            "description": "Hex colors."
+            "description": "Explicit colors."
+          },
+          "mode": {
+            "type": "string",
+            "description": "replace (default) or add.",
+            "enum": ["replace","add"]
           },
           "expectedRevision": {
             "type": "integer",
@@ -1836,31 +1485,13 @@
             "description": "Idempotency key: retrying with the same id never applies the change twice."
           }
         },
-        "required": ["colors"],
         "additionalProperties": false
       },
       "annotations": {
-        "title": "Add swatches",
+        "title": "Set palette",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "project_inspect",
-      "title": "Inspect project",
-      "description": "Like canvas_inspect, plus per-layer pixel counts and storage statistics.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Inspect project",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
         "openWorldHint": false
       }
     },
@@ -1898,14 +1529,14 @@
     {
       "name": "project_export",
       "title": "Export",
-      "description": "Exports into the workspace's Exports folder: png (one frame), gif (animation), spritesheet (PNG + JSON), atlas (trimmed packed PNG + Aseprite-compatible JSON), godot (atlas PNG + SpriteFrames .tres), tiled (tileset PNG + .tmj map), normal_map (PNG).",
+      "description": "Exports into the workspace's Exports folder: png (one frame), gif (animation), spritesheet (PNG + JSON), atlas (trimmed, de-duplicated MaxRects PNG + Aseprite-compatible JSON with tags and slices for Phaser/PixiJS/Unity/Godot), godot (atlas PNG + Godot 4 SpriteFrames .tres), tiled (tileset PNG + .tmj map with Wang terrain), tileset (tileset atlas PNG), normal_map (PNG for 2D lighting).",
       "inputSchema": {
         "type": "object",
         "properties": {
           "format": {
             "type": "string",
             "description": "Export format.",
-            "enum": ["png","gif","spritesheet","atlas","godot","tiled","normal_map"]
+            "enum": ["png","gif","spritesheet","atlas","godot","tiled","tileset","normal_map"]
           },
           "name": {
             "type": "string",
@@ -1954,6 +1585,23 @@
             "description": "Sprite sheet padding in px.",
             "minimum": 0,
             "maximum": 64
+          },
+          "tileset": {
+            "type": ["integer","string"],
+            "description": "Tileset (format tileset)."
+          },
+          "strength": {
+            "type": "number",
+            "description": "Normal map bump strength (default 3)."
+          },
+          "bevel": {
+            "type": "number",
+            "description": "Normal map edge roundness px (default 3)."
+          },
+          "density": {
+            "type": "integer",
+            "enum": [1,2,4],
+            "description": "Output pixels per canvas pixel (default: finest layer)."
           },
           "expectedRevision": {
             "type": "integer",
@@ -2343,6 +1991,10 @@
             "type": "boolean",
             "description": "Default true."
           },
+          "name": {
+            "type": "string",
+            "description": "Also store it as a named material ramp (skin, hair, cloth…) for shade / auto_shade."
+          },
           "expectedRevision": {
             "type": "integer",
             "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
@@ -2358,67 +2010,6 @@
       },
       "annotations": {
         "title": "Hue-shifted ramp",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "palette_list",
-      "title": "Palette library",
-      "description": "Lists built-in pixel-art palettes (ENDESGA 32/64, Resurrect 64, Sweetie 16, Apollo, AAP-64, PICO-8, Lospec500, Vinik24, …) with credits.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Palette library",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "palette_load",
-      "title": "Load palette",
-      "description": "Loads a library palette (or explicit colors) into the swatches.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Library palette name, e.g. endesga-32."
-          },
-          "colors": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
-              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
-            },
-            "description": "Explicit colors."
-          },
-          "replace": {
-            "type": "boolean",
-            "description": "Replace swatches (default true)."
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Load palette",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
@@ -2565,87 +2156,9 @@
       }
     },
     {
-      "name": "export_normal_map",
-      "title": "Sprite normal map",
-      "description": "Generates a normal map of a frame/layer for 2D dynamic lighting (Godot, Unity, Unreal Paper2D).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "strength": {
-            "type": "number",
-            "description": "Bump strength (default 3)."
-          },
-          "bevel": {
-            "type": "number",
-            "description": "Edge roundness in pixels (default 3)."
-          },
-          "scale": {
-            "type": "integer",
-            "description": "Upscale 1-64.",
-            "minimum": 1,
-            "maximum": 64
-          }
-        },
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Sprite normal map",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "layer_blend",
-      "title": "Layer blend mode",
-      "description": "Sets a layer's blend mode: normal, multiply (shadows, ambient occlusion), screen/add (glow, fire light, magic), overlay/soft_light (color grading), darken, lighten.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "mode": {
-            "type": "string",
-            "description": "Blend mode.",
-            "enum": ["normal","multiply","screen","add","overlay","darken","lighten","soft_light"]
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["mode"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Layer blend mode",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "slice_set",
       "title": "Set slice / hitbox",
-      "description": "Creates or updates a named per-frame rectangle (Aseprite-compatible slice): hitbox, hurtbox, pivot, weapon attach point. A key without 'frame' covers the whole animation; later keys override from their frame on. Exported in export_atlas meta.slices.",
+      "description": "Creates or updates a named per-frame rectangle (Aseprite-compatible slice): hitbox, hurtbox, pivot, weapon attach point. A key without 'frame' covers the whole animation; later keys override from their frame on. Exported in the atlas meta.slices.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2751,7 +2264,7 @@
     {
       "name": "palette_swap",
       "title": "Palette swap",
-      "description": "Remaps colors (RGB match, alpha kept) across a cel/layer/frame/everything: team colors, enemy variants, day/night palettes, damage flashes.",
+      "description": "Replaces or remaps colors (RGB match, alpha kept) across a cel/layer/frame/everything: one from/to pair, many, or a map — team colors, enemy variants, day/night palettes, damage flashes.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2760,22 +2273,22 @@
             "description": "{\"#from\": \"#to\", …}"
           },
           "from": {
-            "type": "array",
+            "type": ["string","array"],
             "items": {
               "type": "string",
               "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
               "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
             },
-            "description": "Source colors (with 'to')."
+            "description": "Source color, or colors (with 'to')."
           },
           "to": {
-            "type": "array",
+            "type": ["string","array"],
             "items": {
               "type": "string",
               "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
               "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
             },
-            "description": "Target colors, same length as 'from'."
+            "description": "Target color, or colors (same length as 'from')."
           },
           "scope": {
             "type": "string",
@@ -2805,56 +2318,6 @@
       },
       "annotations": {
         "title": "Palette swap",
-        "readOnlyHint": false,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "rotsprite",
-      "title": "RotSprite rotate",
-      "description": "Rotates a cel by any angle with the RotSprite algorithm (Scale2x ×8 + nearest): clean lines, no blur, no new colors — swords, projectiles, swing frames.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "degrees": {
-            "type": "number",
-            "description": "Clockwise degrees."
-          },
-          "center": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "minItems": 2,
-            "maxItems": 2,
-            "description": "Pivot [x, y] (default: content center)."
-          },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "frame": {
-            "type": "integer",
-            "description": "0-based frame index. Defaults to the active frame.",
-            "minimum": 0
-          },
-          "expectedRevision": {
-            "type": "integer",
-            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
-            "minimum": 0
-          },
-          "operationId": {
-            "type": "string",
-            "description": "Idempotency key: retrying with the same id never applies the change twice."
-          }
-        },
-        "required": ["degrees"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "RotSprite rotate",
         "readOnlyHint": false,
         "destructiveHint": false,
         "idempotentHint": false,
@@ -3391,23 +2854,6 @@
       }
     },
     {
-      "name": "gamedev_inspect",
-      "title": "Inspect game data",
-      "description": "Lists slices (with keys/pivots), tilesets, tilemaps (with ASCII terrain) and layer blend modes.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Inspect game data",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
       "name": "tilemap_render",
       "title": "Look at tilemap",
       "description": "Renders a tilemap to PNG.",
@@ -3429,40 +2875,6 @@
       },
       "annotations": {
         "title": "Look at tilemap",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "export_tileset",
-      "title": "Tileset image",
-      "description": "Renders a tileset atlas PNG (blob sets: 8 columns in mask order, masks listed).",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "tileset": {
-            "type": ["integer","string"],
-            "description": "Tileset name or index (optional when there is only one)."
-          },
-          "columns": {
-            "type": "integer",
-            "description": "Tiles per row.",
-            "minimum": 1,
-            "maximum": 256
-          },
-          "scale": {
-            "type": "integer",
-            "description": "Upscale 1-64.",
-            "minimum": 1,
-            "maximum": 64
-          }
-        },
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Tileset image",
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": true,
@@ -3573,136 +2985,216 @@
       }
     },
     {
-      "name": "export_atlas",
-      "title": "Pack texture atlas",
-      "description": "Packs frames into a trimmed, de-duplicated MaxRects texture atlas and returns it with Aseprite-compatible JSON (frames, frameTags, layers, slices) that Phaser, PixiJS, Unity and Godot importers read. Use project_export format=atlas to write the files.",
+      "name": "ramp_set",
+      "title": "Material ramp",
+      "description": "Defines a named material ramp, dark → light (skin, hair, cloth, metal, outline). Ramps are the palette discipline of hand-made pixel art: shade steps along them and auto_shade with palette_lock uses only them.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "tag": {
+          "name": {
             "type": "string",
-            "description": "Only this tag's frames (default: all frames)."
+            "description": "Ramp name."
           },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            },
+            "description": "2-16 opaque colors, dark → light."
           },
-          "scale": {
+          "expectedRevision": {
             "type": "integer",
-            "description": "Upscale 1-64.",
-            "minimum": 1,
-            "maximum": 64
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
           },
-          "trim": {
-            "type": "boolean",
-            "description": "Trim transparent borders (default true)."
-          },
-          "padding": {
-            "type": "integer",
-            "description": "Gap between sprites (default 1).",
-            "minimum": 0,
-            "maximum": 64
-          },
-          "extrude": {
-            "type": "integer",
-            "description": "Edge pixels repeated around each sprite against bleeding (default 0).",
-            "minimum": 0,
-            "maximum": 16
-          },
-          "power_of_two": {
-            "type": "boolean",
-            "description": "Power-of-two atlas size."
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
           }
         },
+        "required": ["name","colors"],
         "additionalProperties": false
       },
       "annotations": {
-        "title": "Pack texture atlas",
-        "readOnlyHint": true,
+        "title": "Material ramp",
+        "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": false
       }
     },
     {
-      "name": "export_godot_spriteframes",
-      "title": "Godot SpriteFrames",
-      "description": "Packs frames into an atlas and returns a Godot 4 SpriteFrames .tres (one animation per tag, trimmed frames restored with AtlasTexture margins, per-frame durations).",
+      "name": "ramp_delete",
+      "title": "Delete ramp",
+      "description": "Deletes a material ramp.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "tag": {
+          "name": {
             "type": "string",
-            "description": "Only this tag's frames (default: all frames)."
+            "description": "Ramp name."
           },
-          "layer": {
-            "type": ["integer","string"],
-            "description": "Layer index (0 = bottom) or exact layer name. Defaults to the active layer."
-          },
-          "scale": {
+          "expectedRevision": {
             "type": "integer",
-            "description": "Upscale 1-64.",
-            "minimum": 1,
-            "maximum": 64
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
           },
-          "trim": {
-            "type": "boolean",
-            "description": "Trim transparent borders (default true)."
-          },
-          "padding": {
-            "type": "integer",
-            "description": "Gap between sprites (default 1).",
-            "minimum": 0,
-            "maximum": 64
-          },
-          "extrude": {
-            "type": "integer",
-            "description": "Edge pixels repeated around each sprite against bleeding (default 0).",
-            "minimum": 0,
-            "maximum": 16
-          },
-          "power_of_two": {
-            "type": "boolean",
-            "description": "Power-of-two atlas size."
-          },
-          "texture_path": {
+          "operationId": {
             "type": "string",
-            "description": "res:// path of the atlas PNG (default res://atlas.png)."
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
           }
         },
+        "required": ["name"],
         "additionalProperties": false
       },
       "annotations": {
-        "title": "Godot SpriteFrames",
-        "readOnlyHint": true,
+        "title": "Delete ramp",
+        "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": false
       }
     },
     {
-      "name": "export_tiled",
-      "title": "Tiled map export",
-      "description": "Exports a tilemap as a Tiled TMJ map (with an embedded tileset and, for blob sets, a Wang terrain set) plus the tileset PNG.",
+      "name": "shade",
+      "title": "Shade brush",
+      "description": "Moves pixels along their own material ramp: steps -1 = one tone darker, +1 lighter (clamped at the ramp ends). Never invents colors — this is how pixel artists place shadows and highlights by hand. Target a rectangle (x, y, width, height) or explicit pixels; only_color limits it to one color.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "tilemap": {
-            "type": ["integer","string"],
-            "description": "Tilemap name or index (optional when there is only one)."
+          "steps": {
+            "type": "integer",
+            "description": "-15..15 (default -1).",
+            "minimum": -15,
+            "maximum": 15
           },
-          "image": {
+          "x": {
+            "type": "integer",
+            "description": "Left."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Top."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Width (default 1).",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Height (default 1).",
+            "minimum": 1
+          },
+          "pixels": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "[[x, y], …]"
+          },
+          "only_color": {
             "type": "string",
-            "description": "Tileset image file name referenced by the map."
+            "description": "Only pixels of this color.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
           }
         },
         "additionalProperties": false
       },
       "annotations": {
-        "title": "Tiled map export",
-        "readOnlyHint": true,
+        "title": "Shade brush",
+        "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "draw_stroke",
+      "title": "Freehand stroke",
+      "description": "Draws a freehand polyline through points with pixel-perfect corners (no L-shaped doubles) — hair strands, cloth folds, outlines, sword trails. size 1-4.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "[[x, y], …]"
+          },
+          "color": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "size": {
+            "type": "integer",
+            "description": "Brush size 1-4 (default 1).",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "pixel_perfect": {
+            "type": "boolean",
+            "description": "Default true."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame.",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["points","color"],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Freehand stroke",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
         "openWorldHint": false
       }
     },
@@ -3789,6 +3281,10 @@
           "rim_strength": {
             "type": "number",
             "description": "Rim blend 0-1 (default 0.55)."
+          },
+          "palette_lock": {
+            "type": "boolean",
+            "description": "Shade only with the document's material ramps and leave other colors untouched (default: on when ramps exist)."
           },
           "expectedRevision": {
             "type": "integer",
@@ -4420,7 +3916,7 @@
     {
       "name": "image_import",
       "title": "Import image",
-      "description": "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
+      "description": "Imports a PNG as pixel art at x,y. grid auto recovers the true pixel grid of upscaled art (also non-integer scales like 3.35×); transparent auto drops a solid background; max_colors limits the palette; ramps true turns its colors into material ramps (hue families, dark → light) for shade and auto_shade. reference true puts it on a locked, faded 'Reference' layer to study or trace. layer: index/name; an unknown name creates that layer.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4435,6 +3931,29 @@
           "y": {
             "type": "integer",
             "description": "Y coordinate (0 = top)."
+          },
+          "grid": {
+            "type": ["string","number"],
+            "description": "auto (default), none, or the upscale factor."
+          },
+          "transparent": {
+            "type": "string",
+            "description": "auto (default) or none.",
+            "enum": ["auto","none"]
+          },
+          "max_colors": {
+            "type": "integer",
+            "description": "Reduce to N colors.",
+            "minimum": 2,
+            "maximum": 256
+          },
+          "ramps": {
+            "type": "boolean",
+            "description": "Build material ramps from its colors (default false)."
+          },
+          "reference": {
+            "type": "boolean",
+            "description": "Import as a locked, faded reference layer."
           },
           "layer": {
             "type": ["integer","string"],
@@ -4657,41 +4176,6 @@
       },
       "annotations": {
         "title": "Inspect 3D project",
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "voxel_get",
-      "title": "Read voxel",
-      "description": "Color, material and bone of one voxel.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "model": {
-            "type": ["integer","string"],
-            "description": "Model index or name (default: the first model)."
-          },
-          "x": {
-            "type": "integer",
-            "description": "X coordinate (0 = left)."
-          },
-          "y": {
-            "type": "integer",
-            "description": "Y coordinate (0 = top)."
-          },
-          "z": {
-            "type": "integer",
-            "description": "Z coordinate."
-          }
-        },
-        "required": ["x","y","z"],
-        "additionalProperties": false
-      },
-      "annotations": {
-        "title": "Read voxel",
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": true,

@@ -290,7 +290,7 @@ class MainActivity : Activity() {
 
     private fun rebuildPalette() {
         paletteRow.removeAllViews()
-        val colors = engine.execute("palette_get").result.list("colors").orEmpty().map { (it as Map<*, *>)["color"] as String }
+        val colors = engine.execute("canvas_inspect", mapOf("detail" to "palette")).result.list("colors").orEmpty().map { (it as Map<*, *>)["color"] as String }
         for (hex in colors) {
             paletteRow.addView(View(this).apply {
                 background = GradientDrawable().apply {
@@ -333,7 +333,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Add color").setView(input)
             .setPositiveButton("Add") { _, _ ->
                 val hex = input.text.toString().trim().let { if (it.startsWith("#")) it else "#$it" }
-                val r = engine.execute("palette_add", mapOf("colors" to listOf(hex)))
+                val r = engine.execute("palette_set", mapOf("mode" to "add", "colors" to listOf(hex)))
                 if (r.ok) selectColor(hex.uppercase()) else toast(r.errorMessage ?: "invalid color")
             }.setNegativeButton("Cancel", null).show()
     }
@@ -354,12 +354,12 @@ class MainActivity : Activity() {
         val actions = arrayOf("Show / hide", "Lock / unlock", "Rename", "Move up", "Move down", "Delete")
         AlertDialog.Builder(this).setTitle(layer["name"].toString()).setItems(actions) { _, which ->
             when (which) {
-                0 -> engine.execute("layer_visibility", mapOf("layer" to index, "visible" to (layer["visible"] != true)))
-                1 -> engine.execute("layer_lock", mapOf("layer" to index, "locked" to (layer["locked"] != true)))
+                0 -> engine.execute("layer_set", mapOf("layer" to index, "visible" to (layer["visible"] != true)))
+                1 -> engine.execute("layer_set", mapOf("layer" to index, "locked" to (layer["locked"] != true)))
                 2 -> {
                     val input = EditText(this).apply { setText(layer["name"].toString()) }
                     AlertDialog.Builder(this).setTitle("Rename").setView(input)
-                        .setPositiveButton("OK") { _, _ -> engine.execute("layer_rename", mapOf("layer" to index, "name" to input.text.toString())) }.show()
+                        .setPositiveButton("OK") { _, _ -> engine.execute("layer_set", mapOf("layer" to index, "name" to input.text.toString())) }.show()
                 }
                 3 -> engine.execute("layer_move", mapOf("layer" to index, "index" to index + 1))
                 4 -> if (index > 0) engine.execute("layer_move", mapOf("layer" to index, "index" to index - 1))
@@ -405,8 +405,8 @@ class MainActivity : Activity() {
                     if (r.ok) canvas.post { canvas.fit() } else toast(r.errorMessage ?: "cannot open")
                 }
                 REQ_SAVE -> write(uri, engine.execute("project_save").binary)
-                REQ_EXPORT_PNG -> write(uri, engine.execute("export_png", mapOf("scale" to 8)).binary)
-                REQ_EXPORT_GIF -> write(uri, engine.execute("export_gif", mapOf("scale" to 8)).binary)
+                REQ_EXPORT_PNG -> write(uri, engine.execute("export", mapOf("format" to "png", "scale" to 8)).binary)
+                REQ_EXPORT_GIF -> write(uri, engine.execute("export", mapOf("format" to "gif", "scale" to 8)).binary)
             }
         }.onFailure { toast("File error: ${it.message}") }
     }

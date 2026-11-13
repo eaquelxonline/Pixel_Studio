@@ -1119,7 +1119,7 @@ object Guidance {
 
         Workflow:
         1. canvas_inspect → learn size, layers, frames and the current revision.
-        2. Plan a small palette (palette_add) and split the subject into layers (layer_create: Shadow, Body, Head, ...).
+        2. Plan material ramps (ramp_set / color_ramp name) and split the subject into layers (layer_create: Shadow, Body, Head, ...).
         3. Block in shapes (draw_rectangle/draw_ellipse/fill_region), then refine with set_pixels.
            Batch related edits into one set_pixels or transaction call — each call is one undo step.
         4. Check your work with canvas_snapshot (image) or read_region (ascii text) after each major step.
@@ -1133,9 +1133,9 @@ object Guidance {
         add the moving voxels (flames, sparks, smoke with alpha) and render the list with voxel_render_sheet models=[...].
 
         Game production: levels = tileset_generate_blob (47-tile autotile set) → tilemap_create → tilemap_terrain with ASCII
-        rows ('#' = ground) → tilemap_bake onto a layer → tilemap_render to look. Mood = layers with layer_blend (multiply shadows,
+        rows ('#' = ground) → tilemap_bake onto a layer → tilemap_render to look. Mood = layers with layer_set blend (multiply shadows,
         add/screen glow) and render_lit with point lights (torch/campfire), bands=3-5 for crisp pixel steps, fire on unlit_layers.
-        Combat data = slice_set hitbox/hurtbox/pivot per frame. Variants = palette_swap. Smooth weapon swings = rotsprite.
+        Combat data = slice_set hitbox/hurtbox/pivot per frame. Variants = palette_swap. Smooth weapon swings = rotate (any angle uses RotSprite).
         Ship it with project_export format=atlas (Aseprite JSON), godot (SpriteFrames .tres) or tiled (.tmj).
 
         Collaboration rules:
@@ -1233,8 +1233,8 @@ class ResourceCatalog(private val engine: PixelEngine) {
         val res = resources.firstOrNull { it.uri == uri } ?: throw RpcException(JsonRpc.INVALID_PARAMS, "resource not found: $uri", mapOf("uri" to uri))
         val content: Map<String, Any?> = when (res.name) {
             "project" -> textContent(res, Json.write(engine.execute("canvas_inspect").result))
-            "palette" -> textContent(res, Json.write(engine.execute("palette_get").result))
-            "animation" -> textContent(res, Json.write(engine.execute("animation_info").result))
+            "palette" -> textContent(res, Json.write(engine.execute("canvas_inspect", mapOf("detail" to "palette")).result))
+            "animation" -> textContent(res, Json.write(engine.execute("canvas_inspect", mapOf("detail" to "animation")).result))
             "guide" -> textContent(res, Guidance.PIXEL_ART_GUIDE)
             else -> {
                 val png = engine.execute("canvas_snapshot").binary
@@ -1265,13 +1265,13 @@ class RestApi(
         return try {
             when {
                 req.method == "GET" && path == "/status" -> ok(LinkedHashMap(engine.execute("status").result).apply { put("gateway", gatewayInfo()) })
-                req.method == "GET" && path == "/project" -> engineJson(engine.execute("project_inspect"))
+                req.method == "GET" && path == "/project" -> engineJson(engine.execute("canvas_inspect", mapOf("detail" to "full")))
                 req.method == "GET" && path == "/canvas" -> engineJson(engine.execute("canvas_inspect"))
                 req.method == "GET" && segments.size == 2 && segments[0] == "frame" ->
-                    engineJson(engine.execute("frame_get", mapOf("frame" to segments[1].toLongOrNull())))
+                    engineJson(engine.execute("canvas_inspect", mapOf("detail" to "frame", "frame" to segments[1].toLongOrNull())))
                 req.method == "GET" && segments.size == 3 && segments[0] == "frame" && segments[2] == "pixels" ->
                     engineJson(engine.execute("read_region", queryArgs(req) + ("frame" to segments[1].toLongOrNull())))
-                req.method == "GET" && path == "/snapshot" -> binary(engine.execute("export_png", queryArgs(req)), "image/png")
+                req.method == "GET" && path == "/snapshot" -> binary(engine.execute("export", queryArgs(req) + ("format" to "png")), "image/png")
                 req.method == "GET" && path == "/tools" -> {
                     val format = FunctionSchemas.parseFormat(req.query["format"]) ?: return badRequest("format must be mcp, openai, anthropic or gemini")
                     HttpResponse.json(200, Json.write(FunctionSchemas.export(format)))
@@ -1372,18 +1372,19 @@ class RestApi(
 
     private fun export(req: HttpRequest, actor: String): HttpResponse {
         val args = LinkedHashMap(body(req))
-        val (op, mime) = when (args.remove("format") ?: "png") {
-            "png" -> "export_png" to "image/png"
-            "gif" -> "export_gif" to "image/gif"
-            "spritesheet" -> "export_spritesheet" to "image/png"
+        val format = args["format"] ?: "png"
+        val (op, mime) = when (format) {
+            "png", "spritesheet" -> "export" to "image/png"
+            "gif" -> "export" to "image/gif"
             "pxs" -> "project_save" to "application/octet-stream"
             else -> return badRequest("format must be png, gif, spritesheet or pxs")
         }
+        if (op == "project_save") args.remove("format") else args["format"] = format
         val r = engine.execute(op, args, actor)
         if (!r.ok) return engineJson(r)
         val headers = LinkedHashMap<String, String>()
         headers["X-Pixel-Revision"] = r.revision.toString()
-        if (op == "export_spritesheet") headers["X-Pixel-Metadata"] = Base64.getEncoder().encodeToString(Json.write(r.result).toByteArray())
+        if (format == "spritesheet") headers["X-Pixel-Metadata"] = Base64.getEncoder().encodeToString(Json.write(r.result).toByteArray())
         return HttpResponse(200, r.binary, mime, headers)
     }
 }
@@ -1407,6 +1408,8 @@ class ToolDef(
     val access: Access,
     val output: Output = Output.JSON,
     val category: String,
+    /** Arguments always sent to the engine (e.g. a fixed export format). */
+    val fixed: Map<String, Any?> = emptyMap(),
 ) {
     /** JSON Schema (2020-12 compatible) for the arguments. */
     fun inputSchema(): Map<String, Any?> {
@@ -1475,12 +1478,16 @@ object ToolCatalog {
         fun tool(
             name: String, title: String, category: String, access: Access, description: String,
             properties: Map<String, Map<String, Any?>> = emptyMap(), required: List<String> = emptyList(),
-            op: String = name, output: Output = Output.JSON,
-        ) = add(ToolDef(name, title, description, op, properties, required, access, output, category))
+            op: String = name, output: Output = Output.JSON, fixed: Map<String, Any?> = emptyMap(),
+        ) = add(ToolDef(name, title, description, op, properties, required, access, output, category, fixed))
 
         // -- Canvas ---------------------------------------------------------------------
         tool("canvas_inspect", "Inspect canvas", "canvas", Access.READ,
-            "Canvas size, current revision, layers, frames (with durations), tags and active layer/frame. Call this first and whenever you need the latest revision.")
+            "Canvas size, current revision, layers (with pixel density and blend), frames, tags and active layer/frame. Call this first and whenever you need the latest revision. " +
+                "detail: summary (default) | full (pixel counts, storage) | frame (one frame's cels and tags) | animation (playback order, durations, FPS of a tag/range) | palette (swatches, material ramps, palette library) | gamedev (slices, tilesets, tilemaps).",
+            linkedMapOf("detail" to string("What to inspect.", listOf("summary", "full", "frame", "animation", "palette", "gamedev")), "frame" to FRAME,
+                "tag" to string("detail=animation: tag name."), "from" to integer("detail=animation: first frame.", 0), "to" to integer("detail=animation: last frame.", 0),
+                "direction" to string("detail=animation: direction.", listOf("forward", "reverse", "pingpong"))))
         tool("canvas_snapshot", "Look at the canvas", "canvas", Access.READ,
             "Your eyes: returns a PNG image of a frame (all visible layers, upscaled for viewing) plus a JSON summary of content bounds and used colors. Use after drawing to check your work.",
             props(linkedMapOf("frame" to FRAME, "scale" to integer("Integer upscale factor 1-64 (default: auto to ~512px).", 1, 64),
@@ -1493,14 +1500,12 @@ object ToolCatalog {
         tool("read_region", "Read pixels", "canvas", Access.READ,
             "Reads a rectangle of pixels (max 128x128) as text. format 'ascii' (default) gives one string per row with a color legend ('.' = transparent) — ideal for reasoning about shapes; 'hex' gives exact colors.",
             props(region(), target(), linkedMapOf("format" to string("Output format.", listOf("ascii", "hex")), "composite" to boolean("Read the composited frame."))))
-        tool("set_pixel", "Paint pixel", "canvas", Access.WRITE, "Paints a single pixel.",
+        tool("set_pixel", "Paint pixel", "canvas", Access.WRITE, "Paints (or with color 'transparent' erases) a single pixel. On a density 2/4 layer, x/y address its finer grid.",
             props(linkedMapOf("x" to X, "y" to Y, "color" to color()), target()), listOf("x", "y", "color"))
         tool("set_pixels", "Paint pixels", "canvas", Access.WRITE,
             "Paints many explicit pixels in one undoable step. Each entry is [x, y, color] or {x, y, color}; entries without a color use 'color'. Use null/'transparent' to erase. Up to 262144 pixels.",
             props(linkedMapOf("pixels" to linkedMapOf("type" to "array", "description" to "Pixels: [[x, y, \"#RRGGBB\"], ...] or [{\"x\":..,\"y\":..,\"color\":..}, ...].",
                 "items" to linkedMapOf("type" to listOf("array", "object"))), "color" to color("Default color for entries without one.")), target()), listOf("pixels"))
-        tool("erase_pixel", "Erase pixel", "canvas", Access.WRITE, "Makes one pixel transparent.",
-            props(linkedMapOf("x" to X, "y" to Y), target()), listOf("x", "y"))
         tool("draw_line", "Draw line", "canvas", Access.WRITE, "Draws a 1-pixel Bresenham line including both end points.",
             props(linkedMapOf("x0" to X, "y0" to Y, "x1" to X, "y1" to Y, "color" to color()), target()), listOf("x0", "y0", "x1", "y1", "color"))
         tool("draw_rectangle", "Draw rectangle", "canvas", Access.WRITE, "Draws a rectangle outline, or a filled rectangle with filled=true.",
@@ -1511,13 +1516,13 @@ object ToolCatalog {
             listOf("x", "y", "width", "height", "color"))
         tool("fill_region", "Fill area", "canvas", Access.WRITE, "Bucket fill: replaces the connected area of the seed pixel's color (4-connected). contiguous=false replaces that color everywhere on the layer.",
             props(linkedMapOf("x" to X, "y" to Y, "color" to color(), "contiguous" to boolean("Default true.")), target()), listOf("x", "y", "color"))
-        tool("replace_color", "Replace color", "canvas", Access.WRITE, "Replaces every pixel of one color with another in a cel, a layer (all frames), a frame (all layers) or everywhere.",
-            props(linkedMapOf("from" to color("Color to replace."), "to" to color("New color."), "scope" to string("Where to replace (default 'cel').", listOf("cel", "layer", "frame", "all"))), target()),
-            listOf("from", "to"))
-        tool("flip_horizontal", "Flip horizontally", "canvas", Access.WRITE, "Mirrors a region (default whole layer) left↔right.", props(region(), target()))
-        tool("flip_vertical", "Flip vertically", "canvas", Access.WRITE, "Mirrors a region (default whole layer) top↕bottom.", props(region(), target()))
-        tool("rotate", "Rotate", "canvas", Access.WRITE, "Rotates a region clockwise by 90/180/270 degrees (90/270 need a square region).",
-            props(linkedMapOf("degrees" to linkedMapOf("type" to "integer", "enum" to listOf(90, 180, 270), "description" to "Clockwise rotation.")), region(), target()), listOf("degrees"))
+        tool("flip", "Flip", "canvas", Access.WRITE, "Mirrors a region (default whole layer) left↔right (axis horizontal) or top↕bottom (axis vertical).",
+            props(linkedMapOf("axis" to string("Default horizontal.", listOf("horizontal", "vertical"))), region(), target()))
+        tool("rotate", "Rotate", "canvas", Access.WRITE,
+            "Rotates clockwise. 90/180/270 rotate a region exactly (90/270 need a square region); any other angle (or method rotsprite) rotates the cel with RotSprite — clean lines, no blur, no new colors (swords, swing frames).",
+            props(linkedMapOf("degrees" to linkedMapOf<String, Any?>("type" to "number", "description" to "Clockwise degrees."), "method" to string("auto (default) or rotsprite.", listOf("auto", "rotsprite")),
+                "center" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf("type" to "number"), "minItems" to 2, "maxItems" to 2, "description" to "RotSprite pivot [x, y] (default: content center).")),
+                region(), target()), listOf("degrees"))
         tool("move_region", "Move pixels", "canvas", Access.WRITE, "Moves the pixels of a region by (dx, dy) on the same layer. mode 'over' keeps destination pixels under transparent source pixels.",
             props(region(), linkedMapOf("dx" to integer("Horizontal offset."), "dy" to integer("Vertical offset."), "mode" to string("Paste mode (default 'over').", listOf("over", "replace"))), target()),
             listOf("dx", "dy"))
@@ -1538,11 +1543,9 @@ object ToolCatalog {
         tool("frame_delete", "Delete frame", "animation", Access.DESTRUCTIVE, "Deletes a frame and its pixels. Requires the user's approval.",
             linkedMapOf("frame" to integer("Frame index to delete.", 0)), listOf("frame"))
         tool("frame_move", "Move frame", "animation", Access.WRITE, "Reorders a frame.", linkedMapOf("frame" to FRAME, "index" to integer("New position.", 0)), listOf("index"))
-        tool("frame_get", "Frame details", "animation", Access.READ, "Duration, tags and per-layer pixel counts/bounds of a frame.", linkedMapOf("frame" to FRAME))
         tool("frame_set_duration", "Set frame duration", "animation", Access.WRITE, "Sets how long a frame is shown (ms). frame='all' sets every frame.",
             linkedMapOf("frame" to linkedMapOf("type" to listOf("integer", "string"), "description" to "Frame index, or \"all\"."), "duration" to integer("Milliseconds (1-60000).", 1, 60000)),
             listOf("duration"))
-        tool("frame_select", "Select frame", "animation", Access.WRITE, "Makes a frame the active one (shown in the editor).", linkedMapOf("frame" to FRAME), listOf("frame"))
         tool("animation_tag_create", "Create animation tag", "animation", Access.WRITE, "Names a frame range as an animation (e.g. Idle, Walk, Attack) with a playback direction.",
             linkedMapOf("name" to string("Tag name."), "from" to integer("First frame index.", 0), "to" to integer("Last frame index.", 0),
                 "direction" to string("Playback direction.", listOf("forward", "reverse", "pingpong")), "repeat" to integer("0 = loop forever.", 0, 65535)),
@@ -1551,42 +1554,43 @@ object ToolCatalog {
         tool("animation_set_loop", "Set loop mode", "animation", Access.WRITE, "Sets a tag's direction (forward/reverse/pingpong) and repeat count.",
             linkedMapOf("tag" to string("Tag name."), "direction" to string("Direction.", listOf("forward", "reverse", "pingpong")), "repeat" to integer("0 = loop forever.", 0, 65535)),
             listOf("tag"))
-        tool("animation_info", "Animation timing", "animation", Access.READ, "Playback order, durations, total length and average FPS for a tag or frame range.",
-            linkedMapOf("tag" to string("Tag name."), "from" to integer("First frame.", 0), "to" to integer("Last frame.", 0), "direction" to string("Direction.", listOf("forward", "reverse", "pingpong"))))
         tool("animation_preview", "Preview animation", "animation", Access.READ, "Renders the animation (or a tag) as an animated GIF so you can review motion.",
             linkedMapOf("tag" to string("Tag name."), "from" to integer("First frame.", 0), "to" to integer("Last frame.", 0), "scale" to integer("Upscale 1-64.", 1, 64)),
-            op = "export_gif", output = Output.GIF_IMAGE)
+            op = "export", output = Output.GIF_IMAGE, fixed = mapOf("format" to "gif"))
 
         // -- Layers ---------------------------------------------------------------------
         tool("layer_create", "Create layer", "layers", Access.WRITE, "Adds a layer (default: above the active one) and selects it. Split characters into parts (Body, Head, Weapon, ...) so they can be edited independently.",
             linkedMapOf("name" to string("Layer name."), "index" to integer("Position (0 = bottom).", 0)))
         tool("layer_delete", "Delete layer", "layers", Access.DESTRUCTIVE, "Deletes a layer and all its pixels in every frame. Requires the user's approval.",
             linkedMapOf("layer" to LAYER), listOf("layer"))
-        tool("layer_rename", "Rename layer", "layers", Access.WRITE, "Renames a layer.", linkedMapOf("layer" to LAYER, "name" to string("New name.")), listOf("name"))
-        tool("layer_visibility", "Show/hide layer", "layers", Access.WRITE, "Shows or hides a layer.", linkedMapOf("layer" to LAYER, "visible" to boolean("Visible?")), listOf("visible"))
-        tool("layer_lock", "Lock layer", "layers", Access.WRITE, "Locks/unlocks a layer against edits.", linkedMapOf("layer" to LAYER, "locked" to boolean("Locked?")), listOf("locked"))
-        tool("layer_opacity", "Layer opacity", "layers", Access.WRITE, "Sets layer opacity 0-255.", linkedMapOf("layer" to LAYER, "opacity" to integer("0-255.", 0, 255)), listOf("opacity"))
+        tool("layer_set", "Layer properties", "layers", Access.WRITE,
+            "Changes any layer property in one call: name, visible, locked, opacity, blend (normal, multiply for shadows, screen/add for glow, overlay, darken, lighten, soft_light) " +
+                "and density — 1, 2 or 4 pixels per canvas pixel. A density 2/4 layer holds half/quarter-size pixels (eye shines, strands, fine trims) on top of normal ones; changing density resamples the art.",
+            linkedMapOf("layer" to LAYER, "name" to string("New name."), "visible" to boolean("Show or hide."), "locked" to boolean("Lock against edits."),
+                "opacity" to integer("0-255.", 0, 255), "blend" to string("Blend mode.", listOf("normal", "multiply", "screen", "add", "overlay", "darken", "lighten", "soft_light")),
+                "density" to linkedMapOf<String, Any?>("type" to "integer", "enum" to listOf(1, 2, 4), "description" to "Pixels per canvas pixel.")))
         tool("layer_move", "Move layer", "layers", Access.WRITE, "Changes a layer's stacking position.", linkedMapOf("layer" to LAYER, "index" to integer("New position (0 = bottom).", 0)), listOf("index"))
-        tool("layer_select", "Select layer", "layers", Access.WRITE, "Makes a layer the active one.", linkedMapOf("layer" to LAYER), listOf("layer"))
 
         // -- Palette --------------------------------------------------------------------
-        tool("palette_get", "Get swatches", "palette", Access.READ, "Lists the project's color swatches with their indices. The canvas itself is true color and not limited to them.")
-        tool("palette_set", "Change swatch", "palette", Access.WRITE, "Changes a swatch; every pixel that used the old color is recolored (great for color variants).",
-            linkedMapOf("index" to integer("Palette index (1+).", 1), "color" to color()), listOf("index", "color"))
-        tool("palette_add", "Add swatches", "palette", Access.WRITE, "Adds colors to the swatch list (plan a palette before drawing).",
-            linkedMapOf("colors" to linkedMapOf("type" to "array", "items" to color(), "description" to "Hex colors.")), listOf("colors"))
+        tool("palette_set", "Set palette", "palette", Access.WRITE,
+            "With index+color: changes a swatch and recolors every pixel that used it (color variants). With preset (endesga-32/64, resurrect-64, sweetie-16, apollo, aap-64, pico-8, lospec500, vinik24 …) or colors: loads swatches, mode replace (default) or add.",
+            linkedMapOf("index" to integer("Swatch index (1+).", 1), "color" to color(), "preset" to string("Library palette name (see canvas_inspect detail=palette)."),
+                "colors" to linkedMapOf("type" to "array", "items" to color(), "description" to "Explicit colors."), "mode" to string("replace (default) or add.", listOf("replace", "add"))))
 
         // -- Project --------------------------------------------------------------------
-        tool("project_inspect", "Inspect project", "project", Access.READ, "Like canvas_inspect, plus per-layer pixel counts and storage statistics.")
         tool("project_save", "Save project", "project", Access.WRITE, "Saves the project (.pxs) to its file in the Pixel Studio workspace.",
             linkedMapOf("name" to string("Optional file name (letters, digits, - and _ only).")), op = "project_save", output = Output.PROJECT_SAVE)
         tool("project_export", "Export", "project", Access.WRITE,
-            "Exports into the workspace's Exports folder: png (one frame), gif (animation), spritesheet (PNG + JSON), atlas (trimmed packed PNG + Aseprite-compatible JSON), godot (atlas PNG + SpriteFrames .tres), tiled (tileset PNG + .tmj map), normal_map (PNG).",
-            linkedMapOf("format" to string("Export format.", listOf("png", "gif", "spritesheet", "atlas", "godot", "tiled", "normal_map")), "name" to string("File name without extension."),
+            "Exports into the workspace's Exports folder: png (one frame), gif (animation), spritesheet (PNG + JSON), atlas (trimmed, de-duplicated MaxRects PNG + Aseprite-compatible JSON with tags and slices for Phaser/PixiJS/Unity/Godot), godot (atlas PNG + Godot 4 SpriteFrames .tres), tiled (tileset PNG + .tmj map with Wang terrain), tileset (tileset atlas PNG), normal_map (PNG for 2D lighting).",
+            linkedMapOf("format" to string("Export format.", listOf("png", "gif", "spritesheet", "atlas", "godot", "tiled", "tileset", "normal_map")), "name" to string("File name without extension."),
                 "tilemap" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Tilemap (format tiled)."), "layer" to LAYER,
                 "trim" to boolean("Atlas: trim transparent borders (default true)."), "extrude" to integer("Atlas: edge extrusion px.", 0, 16),
                 "frame" to FRAME, "tag" to string("Tag to export (gif/spritesheet)."), "scale" to integer("Upscale 1-64.", 1, 64),
-                "columns" to integer("Sprite sheet columns (0 = auto).", 0), "padding" to integer("Sprite sheet padding in px.", 0, 64)),
+                "columns" to integer("Sprite sheet columns (0 = auto).", 0), "padding" to integer("Sprite sheet padding in px.", 0, 64),
+                "tileset" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Tileset (format tileset)."),
+                "strength" to linkedMapOf<String, Any?>("type" to "number", "description" to "Normal map bump strength (default 3)."),
+                "bevel" to linkedMapOf<String, Any?>("type" to "number", "description" to "Normal map edge roundness px (default 3)."),
+                "density" to linkedMapOf<String, Any?>("type" to "integer", "enum" to listOf(1, 2, 4), "description" to "Output pixels per canvas pixel (default: finest layer).")),
             listOf("format"), op = "export", output = Output.PROJECT_EXPORT)
         tool("project_new", "New project", "project", Access.DESTRUCTIVE, "Replaces the current project with a new blank canvas (undoable). Requires the user's approval.",
             linkedMapOf("width" to integer("Width 1-4096.", 1, 4096), "height" to integer("Height 1-4096.", 1, 4096), "name" to string("Project name.")), listOf("width", "height"))
@@ -1617,11 +1621,9 @@ object ToolCatalog {
             "Builds a shading ramp from a base color: shadows shift toward cool purple, highlights toward warm yellow (perceptual OKLCH). Adds the ramp to the swatches. Use 4-6 steps per material.",
             linkedMapOf("base" to color("Base (mid) color."), "steps" to integer("2-16 (default 5).", 2, 16),
                 "hue_shift" to linkedMapOf<String, Any?>("type" to "number", "description" to "Degrees of hue shift at the ends (default 18)."),
-                "contrast" to linkedMapOf<String, Any?>("type" to "number", "description" to "0-1 lightness range (default 0.75)."), "add_to_palette" to boolean("Default true.")),
+                "contrast" to linkedMapOf<String, Any?>("type" to "number", "description" to "0-1 lightness range (default 0.75)."), "add_to_palette" to boolean("Default true."),
+                "name" to string("Also store it as a named material ramp (skin, hair, cloth…) for shade / auto_shade.")),
             listOf("base"))
-        tool("palette_list", "Palette library", "pixelart", Access.READ, "Lists built-in pixel-art palettes (ENDESGA 32/64, Resurrect 64, Sweetie 16, Apollo, AAP-64, PICO-8, Lospec500, Vinik24, …) with credits.")
-        tool("palette_load", "Load palette", "pixelart", Access.WRITE, "Loads a library palette (or explicit colors) into the swatches.",
-            linkedMapOf("name" to string("Library palette name, e.g. endesga-32."), "colors" to linkedMapOf("type" to "array", "items" to color(), "description" to "Explicit colors."), "replace" to boolean("Replace swatches (default true).")))
         tool("quantize", "Reduce colors", "pixelart", Access.WRITE,
             "Reduces colors of a cel/frame/layer/everything to a limited palette (median cut N colors, the swatches, or a library palette) with optional ordered dithering — turns renders and imports into crisp pixel art. One shared palette across the scope keeps animations consistent.",
             props(linkedMapOf("scope" to string("cel | frame | layer | all.", listOf("cel", "frame", "layer", "all")), "colors" to integer("Target color count (2-256).", 2, 256),
@@ -1631,15 +1633,18 @@ object ToolCatalog {
         tool("dither_fill", "Dither fill", "pixelart", Access.WRITE, "Fills a region with an ordered-dither blend of two colors; level 0 = color, 16 = color2 (gradients, glass, shading transitions).",
             props(region(), linkedMapOf("color" to color(), "color2" to color("Second color."), "level" to integer("0-16 density.", 0, 16), "only_opaque" to boolean("Only over existing pixels.")), target()),
             listOf("color", "color2"))
-        tool("export_normal_map", "Sprite normal map", "pixelart", Access.READ, "Generates a normal map of a frame/layer for 2D dynamic lighting (Godot, Unity, Unreal Paper2D).",
-            linkedMapOf("frame" to FRAME, "layer" to LAYER, "strength" to linkedMapOf<String, Any?>("type" to "number", "description" to "Bump strength (default 3)."),
-                "bevel" to linkedMapOf<String, Any?>("type" to "number", "description" to "Edge roundness in pixels (default 3)."), "scale" to integer("Upscale 1-64.", 1, 64)),
-            output = Output.PNG_IMAGE)
         addGameTools()
         addCharTools()
 
-        tool("image_import", "Import image", "project", Access.WRITE, "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
-            props(linkedMapOf("data_base64" to string("PNG file as base64."), "x" to X, "y" to Y), target()), listOf("data_base64"))
+        tool("image_import", "Import image", "project", Access.WRITE,
+            "Imports a PNG as pixel art at x,y. grid auto recovers the true pixel grid of upscaled art (also non-integer scales like 3.35×); transparent auto drops a solid background; " +
+                "max_colors limits the palette; ramps true turns its colors into material ramps (hue families, dark → light) for shade and auto_shade. " +
+                "reference true puts it on a locked, faded 'Reference' layer to study or trace. layer: index/name; an unknown name creates that layer.",
+            props(linkedMapOf("data_base64" to string("PNG file as base64."), "x" to X, "y" to Y,
+                "grid" to linkedMapOf<String, Any?>("type" to listOf("string", "number"), "description" to "auto (default), none, or the upscale factor."),
+                "transparent" to string("auto (default) or none.", listOf("auto", "none")), "max_colors" to integer("Reduce to N colors.", 2, 256),
+                "ramps" to boolean("Build material ramps from its colors (default false)."), "reference" to boolean("Import as a locked, faded reference layer.")), target()),
+            listOf("data_base64"))
 
         // -- 3D pixel art (voxels) ---------------------------------------------------------
         val model = linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Model index or name (default: the first model).")
@@ -1691,7 +1696,6 @@ object ToolCatalog {
         tool("voxel_model_delete", "Delete 3D model", "3d", Access.DESTRUCTIVE, "Deletes a voxel model. Requires the user's approval.", linkedMapOf("model" to model), listOf("model"))
         tool("voxel_model_set", "Rename / re-pivot model", "3d", Access.WRITE, "Renames a model or moves its origin pivot.", linkedMapOf("model" to model, "name" to string("New name."), "origin" to vec3("New origin.")))
         tool("voxel_inspect", "Inspect 3D project", "3d", Access.READ, "Models (size, voxel count, bounds, skeleton, animations), PBR materials and textures.", linkedMapOf("model" to model))
-        tool("voxel_get", "Read voxel", "3d", Access.READ, "Color, material and bone of one voxel.", linkedMapOf("model" to model, "x" to X, "y" to Y, "z" to integer("Z coordinate.")), listOf("x", "y", "z"))
         tool("voxel_set", "Place voxel", "3d", Access.WRITE, "Places (or with 'transparent' removes) one voxel.",
             linkedMapOf("model" to model, "x" to X, "y" to Y, "z" to integer("Z coordinate."), "color" to color(), "material" to materialRef, "bone" to boneRef), listOf("x", "y", "z", "color"))
         tool("voxel_set_many", "Place voxels", "3d", Access.WRITE, "Places up to 1,000,000 explicit voxels in one undoable step: [[x, y, z, color], ...] or objects with material/bone.",
@@ -1760,7 +1764,7 @@ object ToolCatalog {
     /** Access level of a raw engine operation (REST passthrough), by matching tool. */
     fun accessForOp(op: String): Access = tools.firstOrNull { it.op == op }?.access ?: when (op) {
         "project_load" -> Access.DESTRUCTIVE
-        "status", "render_frame", "export_png", "export_gif", "export_spritesheet" -> Access.READ
+        "status", "render_frame", "export" -> Access.READ
         else -> Access.WRITE
     }
 }
@@ -1787,26 +1791,19 @@ internal fun MutableList<ToolDef>.addGameTools() {
         "trim" to boolean("Trim transparent borders (default true)."), "padding" to integer("Gap between sprites (default 1).", 0, 64),
         "extrude" to integer("Edge pixels repeated around each sprite against bleeding (default 0).", 0, 16), "power_of_two" to boolean("Power-of-two atlas size."),
     )
-    tool("layer_blend", "Layer blend mode", "gamedev", Access.WRITE,
-        "Sets a layer's blend mode: normal, multiply (shadows, ambient occlusion), screen/add (glow, fire light, magic), overlay/soft_light (color grading), darken, lighten.",
-        linkedMapOf<String, Map<String, Any?>>("layer" to LAYER, "mode" to string("Blend mode.", listOf("normal", "multiply", "screen", "add", "overlay", "darken", "lighten", "soft_light"))), listOf("mode"))
     tool("slice_set", "Set slice / hitbox", "gamedev", Access.WRITE,
-        "Creates or updates a named per-frame rectangle (Aseprite-compatible slice): hitbox, hurtbox, pivot, weapon attach point. A key without 'frame' covers the whole animation; later keys override from their frame on. Exported in export_atlas meta.slices.",
+        "Creates or updates a named per-frame rectangle (Aseprite-compatible slice): hitbox, hurtbox, pivot, weapon attach point. A key without 'frame' covers the whole animation; later keys override from their frame on. Exported in the atlas meta.slices.",
         linkedMapOf<String, Map<String, Any?>>("name" to string("Slice name, e.g. hitbox, hurtbox, pivot."), "frame" to FRAME, "x" to X, "y" to Y, "width" to integer("Width.", 1), "height" to integer("Height.", 1),
         "pivot" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf<String, Any?>("type" to "integer"), "minItems" to 2, "maxItems" to 2, "description" to "Pivot [x, y] relative to the slice."),
         "color" to color("Editor color of the slice.")),
         listOf("name", "x", "y", "width", "height"))
     tool("slice_delete", "Delete slice", "gamedev", Access.WRITE, "Deletes a slice, or only its key at 'frame'.", linkedMapOf<String, Map<String, Any?>>("name" to string("Slice name."), "frame" to FRAME), listOf("name"))
     tool("palette_swap", "Palette swap", "gamedev", Access.WRITE,
-        "Remaps colors (RGB match, alpha kept) across a cel/layer/frame/everything: team colors, enemy variants, day/night palettes, damage flashes.",
+        "Replaces or remaps colors (RGB match, alpha kept) across a cel/layer/frame/everything: one from/to pair, many, or a map — team colors, enemy variants, day/night palettes, damage flashes.",
         props(linkedMapOf<String, Map<String, Any?>>("map" to linkedMapOf<String, Any?>("type" to "object", "description" to "{\"#from\": \"#to\", …}"),
-        "from" to linkedMapOf<String, Any?>("type" to "array", "items" to color(), "description" to "Source colors (with 'to')."),
-        "to" to linkedMapOf<String, Any?>("type" to "array", "items" to color(), "description" to "Target colors, same length as 'from'."),
+        "from" to linkedMapOf<String, Any?>("type" to listOf("string", "array"), "items" to color(), "description" to "Source color, or colors (with 'to')."),
+        "to" to linkedMapOf<String, Any?>("type" to listOf("string", "array"), "items" to color(), "description" to "Target color, or colors (same length as 'from')."),
         "scope" to string("cel | layer | frame | all (default cel).", listOf("cel", "layer", "frame", "all"))), target()))
-    tool("rotsprite", "RotSprite rotate", "gamedev", Access.WRITE,
-        "Rotates a cel by any angle with the RotSprite algorithm (Scale2x ×8 + nearest): clean lines, no blur, no new colors — swords, projectiles, swing frames.",
-        props(linkedMapOf<String, Map<String, Any?>>("degrees" to num("Clockwise degrees."), "center" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf<String, Any?>("type" to "number"), "minItems" to 2, "maxItems" to 2, "description" to "Pivot [x, y] (default: content center).")), target()),
-        listOf("degrees"))
     tool("tileset_create", "Create tileset", "gamedev", Access.WRITE, "Creates an empty tileset (fill it with tileset_add_tiles).",
         linkedMapOf<String, Map<String, Any?>>("name" to string("Tileset name."), "tile_size" to integer("Square tile size (default 16).", 1, 256), "tile_width" to integer("Tile width.", 1, 256), "tile_height" to integer("Tile height.", 1, 256)), listOf("name"))
     tool("tileset_add_tiles", "Cut tiles from canvas", "gamedev", Access.WRITE,
@@ -1840,10 +1837,7 @@ internal fun MutableList<ToolDef>.addGameTools() {
         "cells" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf<String, Any?>("type" to "array"), "description" to "[[x, y], …]."), "mode" to string("add (default) or remove.", listOf("add", "remove"))))
     tool("tilemap_bake", "Bake tilemap to layer", "gamedev", Access.WRITE, "Draws a tilemap into a layer cel at x/y (so it composites, lights and exports with the scene).",
         props(linkedMapOf<String, Map<String, Any?>>("tilemap" to tilemapRef, "x" to X, "y" to Y, "replace" to boolean("Also clear pixels under empty cells.")), target()))
-    tool("gamedev_inspect", "Inspect game data", "gamedev", Access.READ, "Lists slices (with keys/pivots), tilesets, tilemaps (with ASCII terrain) and layer blend modes.")
     tool("tilemap_render", "Look at tilemap", "gamedev", Access.READ, "Renders a tilemap to PNG.", linkedMapOf<String, Map<String, Any?>>("tilemap" to tilemapRef, "scale" to integer("Upscale 1-64.", 1, 64)), output = Output.PNG_IMAGE)
-    tool("export_tileset", "Tileset image", "gamedev", Access.READ, "Renders a tileset atlas PNG (blob sets: 8 columns in mask order, masks listed).",
-        linkedMapOf<String, Map<String, Any?>>("tileset" to tilesetRef, "columns" to integer("Tiles per row.", 1, 256), "scale" to integer("Upscale 1-64.", 1, 64)), output = Output.PNG_IMAGE)
     tool("render_lit", "Preview 2D lighting", "gamedev", Access.READ,
         "Renders a frame with normal-mapped 2D point lights (torches, campfires, spells) — what Godot/Unity 2D lights do with the exported normal map. Normals are generated from the art or taken from a hand-painted normal layer; unlit_layers (fire, glowing eyes, UI) stay full-bright. bands ≥ 2 quantizes light into crisp pixel-art steps.",
         linkedMapOf<String, Map<String, Any?>>("frame" to FRAME,
@@ -1853,15 +1847,6 @@ internal fun MutableList<ToolDef>.addGameTools() {
         "normal_strength" to num("Normal map influence 0-8 (default 1)."), "normal_layer" to LAYER, "unlit_layers" to linkedMapOf<String, Any?>("type" to "array", "items" to LAYER, "description" to "Layers drawn full-bright on top."),
         "strength" to num("Generated normal bump strength."), "bevel" to num("Generated normal bevel px."), "background" to color("Opaque background."), "scale" to integer("Upscale 1-64.", 1, 64)),
         output = Output.PNG_IMAGE)
-    tool("export_atlas", "Pack texture atlas", "gamedev", Access.READ,
-        "Packs frames into a trimmed, de-duplicated MaxRects texture atlas and returns it with Aseprite-compatible JSON (frames, frameTags, layers, slices) that Phaser, PixiJS, Unity and Godot importers read. Use project_export format=atlas to write the files.",
-        pack, output = Output.PNG_IMAGE)
-    tool("export_godot_spriteframes", "Godot SpriteFrames", "gamedev", Access.READ,
-        "Packs frames into an atlas and returns a Godot 4 SpriteFrames .tres (one animation per tag, trimmed frames restored with AtlasTexture margins, per-frame durations).",
-        props(pack, linkedMapOf<String, Map<String, Any?>>("texture_path" to string("res:// path of the atlas PNG (default res://atlas.png)."))), output = Output.PNG_IMAGE)
-    tool("export_tiled", "Tiled map export", "gamedev", Access.READ,
-        "Exports a tilemap as a Tiled TMJ map (with an embedded tileset and, for blob sets, a Wang terrain set) plus the tileset PNG.",
-        linkedMapOf<String, Map<String, Any?>>("tilemap" to tilemapRef, "image" to string("Tileset image file name referenced by the map.")), output = Output.PNG_IMAGE)
 
 }
 
@@ -1883,6 +1868,22 @@ internal fun MutableList<ToolDef>.addCharTools() {
     )
     val scope: Schema = string("cel (default) | layer (all frames) | frame (all layers) | all.", listOf("cel", "layer", "frame", "all"))
 
+    val pts: Schema = linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf("type" to "number"), "minItems" to 2, "maxItems" to 2), "description" to "[[x, y], …]")
+    tool("ramp_set", "Material ramp", Access.WRITE,
+        "Defines a named material ramp, dark → light (skin, hair, cloth, metal, outline). Ramps are the palette discipline of hand-made pixel art: shade steps along them and auto_shade with palette_lock uses only them.",
+        linkedMapOf<String, Schema>("name" to string("Ramp name."), "colors" to colors("2-16 opaque colors, dark → light.")), listOf("name", "colors"))
+    tool("ramp_delete", "Delete ramp", Access.WRITE, "Deletes a material ramp.", linkedMapOf<String, Schema>("name" to string("Ramp name.")), listOf("name"))
+    tool("shade", "Shade brush", Access.WRITE,
+        "Moves pixels along their own material ramp: steps -1 = one tone darker, +1 lighter (clamped at the ramp ends). Never invents colors — this is how pixel artists place shadows and highlights by hand. " +
+            "Target a rectangle (x, y, width, height) or explicit pixels; only_color limits it to one color.",
+        linkedMapOf<String, Schema>("steps" to integer("-15..15 (default -1).", -15, 15), "x" to integer("Left."), "y" to integer("Top."), "width" to integer("Width (default 1).", 1), "height" to integer("Height (default 1).", 1),
+            "pixels" to pts, "only_color" to color("Only pixels of this color."),
+            "layer" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Layer."), "frame" to integer("Frame.", min = 0)))
+    tool("draw_stroke", "Freehand stroke", Access.WRITE,
+        "Draws a freehand polyline through points with pixel-perfect corners (no L-shaped doubles) — hair strands, cloth folds, outlines, sword trails. size 1-4.",
+        linkedMapOf<String, Schema>("points" to pts, "color" to color(), "size" to integer("Brush size 1-4 (default 1).", 1, 4), "pixel_perfect" to boolean("Default true."),
+            "layer" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Layer."), "frame" to integer("Frame.", min = 0)),
+        listOf("points", "color"))
     tool("auto_shade", "Auto cel-shade", Access.WRITE,
         "Shades flat-colored shapes like an anime pixel artist: every same-color region gets hue-shifted 2-4 tone cel shading that follows its outline " +
             "(lit edges toward the light, shadow on the far side), layers ABOVE cast shadows onto it (bangs on the forehead, head on the neck), optional rim light. " +
@@ -1900,6 +1901,7 @@ internal fun MutableList<ToolDef>.addCharTools() {
             "ramps" to linkedMapOf<String, Any?>("type" to "object", "description" to "Explicit ramps: {\"#base\": [shadow, highlight] | [shadow, base, highlight] | [deep, shadow, base, highlight]}."),
             "preserve" to colors("Colors never shaded."), "min_region" to integer("Smallest region shaded, px (default 6).", 1),
             "rim" to color("Rim-light color on edges facing away from the light."), "rim_strength" to num("Rim blend 0-1 (default 0.55)."),
+            "palette_lock" to boolean("Shade only with the document's material ramps and leave other colors untouched (default: on when ramps exist)."),
         ))
     tool("gradient_map", "Gradient map (color grade)", Access.WRITE,
         "Color-grades by mapping luminance onto a dark→light gradient (rainy blue night, sunset, sepia flashback, unified palettes), blended by strength.",
@@ -2151,6 +2153,7 @@ class ToolExecutor(
     fun call(name: String, rawArgs: Map<String, Any?>?, actor: String): ToolResult {
         val tool = ToolCatalog[name] ?: throw UnknownToolException(name)
         val args = LinkedHashMap(rawArgs ?: emptyMap())
+        args.putAll(tool.fixed)
         val expectedRevision = (args.remove("expectedRevision") as? Number)?.toLong()
         val operationId = args.remove("operationId") as? String
 
@@ -2197,7 +2200,7 @@ class ToolExecutor(
         val s = structured(r)
         val hint = when (r.errorCode) {
             "conflict" -> "\nHint: someone else changed the canvas. Call canvas_inspect (or canvas_snapshot), then retry with the new revision."
-            "locked" -> "\nHint: the layer is locked; unlock it with layer_lock or draw on another layer."
+            "locked" -> "\nHint: the layer is locked; unlock it with layer_set locked=false or draw on another layer."
             else -> ""
         }
         return ToolResult(listOf(text(Json.write(s) + hint)), s, isError = !r.ok)
@@ -2225,14 +2228,14 @@ class ToolExecutor(
 
     private fun export(args: Map<String, Any?>, actor: String): ToolResult {
         val format: String = args.str("format") ?: return refusal("missing 'format'")
-        val op: String = EXPORT_OPS[format] ?: return refusal("unknown format '$format' (${EXPORT_OPS.keys.joinToString(", ")})")
+        if (format !in EXPORT_FORMATS) return refusal("unknown format '$format' (${EXPORT_FORMATS.joinToString(", ")})")
+        val op = "export"
         val mime = if (format == "gif") "image/gif" else "image/png"
         val ext = if (format == "gif") "gif" else "png"
         val projectName: String = engine.execute("canvas_inspect").result.str("name") ?: "export"
         val base: String = args.str("name") ?: (projectName + "_" + format)
         val safeBase: String = DirectoryWorkspace.sanitize(base)
         val engineArgs = LinkedHashMap<String, Any?>(args)
-        engineArgs.remove("format")
         engineArgs.remove("name")
         if (format == "godot") engineArgs.putIfAbsent("texture_path", "res://$safeBase.png")
         if (format == "atlas") engineArgs.putIfAbsent("image", "$safeBase.png")
@@ -2277,13 +2280,10 @@ class ToolExecutor(
     }
 
     companion object {
-        private val EXPORT_OPS: Map<String, String> = linkedMapOf(
-            "png" to "export_png", "gif" to "export_gif", "spritesheet" to "export_spritesheet", "atlas" to "export_atlas",
-            "godot" to "export_godot_spriteframes", "tiled" to "export_tiled", "normal_map" to "export_normal_map",
-        )
+        private val EXPORT_FORMATS = listOf("png", "gif", "spritesheet", "atlas", "godot", "tiled", "tileset", "normal_map")
 
         /** Engine operations every catalogue tool relies on (checked against the engine in tests). */
-        fun engineOps(): Set<String> = ToolCatalog.tools.map { it.op }.filter { it != "export" }.toSet() + EXPORT_OPS.values.toSet()
+        fun engineOps(): Set<String> = ToolCatalog.tools.map { it.op }.toSet()
     }
 }
 
