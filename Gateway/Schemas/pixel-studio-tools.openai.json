@@ -2701,6 +2701,434 @@
   {
     "type": "function",
     "function": {
+      "name": "art_review",
+      "description": "The objective critic — call it after every major step and fix what it reports. Measures the light/dark value span (the #1 reason art reads muddy), figure/background separation, banding pairs (Pixel Fixer metric), pillow shading, 1-px stripes, noise and silhouette jaggies, returns a 0-100 score, issues with the tool that fixes each, and a greyscale value-map PNG with problems marked (red banding, yellow stripes, cyan pillow, magenta jaggies).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Review one layer only (default: the whole frame)."
+          },
+          "scale": {
+            "type": "integer",
+            "description": "PNG upscale 1-64 (default auto).",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "shade_form",
+      "description": "Lights flat ramp-coloured shapes like a 3D form: surface normals of a sphere, a tapered capsule (limbs, boots, sleeves) or an 'inflated' height field of any silhouette, Lambert-quantised into ramp steps from ONE light direction, with reflected light on the shadow side. Replaces pillow shading. Block each material in its ramp's base tone first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "form": {
+            "type": "string",
+            "description": "inflate (default, any shape), sphere or capsule.",
+            "enum": ["inflate","sphere","capsule"]
+          },
+          "cx": {
+            "type": "number",
+            "description": "Sphere centre x."
+          },
+          "cy": {
+            "type": "number",
+            "description": "Sphere centre y."
+          },
+          "rx": {
+            "type": "number",
+            "description": "Sphere radius x."
+          },
+          "ry": {
+            "type": "number",
+            "description": "Sphere radius y (default rx)."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "[[x, y], …]"
+          },
+          "radius": {
+            "type": ["number","array"],
+            "description": "Capsule radius, or radii per point (taper)."
+          },
+          "light": {
+            "type": ["string","array"],
+            "description": "Direction toward the light: top-left (default), top-right, top, left, right, front, bottom or [x, y, z] (y down, z toward viewer)."
+          },
+          "ramp": {
+            "type": "string",
+            "description": "Only pixels of this ramp."
+          },
+          "only_color": {
+            "type": "string",
+            "description": "Only pixels of this colour.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "x": {
+            "type": "integer",
+            "description": "Region left."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Region top."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Region width.",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Region height.",
+            "minimum": 1
+          },
+          "depth": {
+            "type": "integer",
+            "description": "Extra ramp steps for the whole form (-1 = farther/behind).",
+            "minimum": -3,
+            "maximum": 3
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer (default active)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "shadow_steps": {
+            "type": "integer",
+            "description": "Ramp steps below the base tone for shadows (default 2).",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "light_steps": {
+            "type": "integer",
+            "description": "Ramp steps above the base tone for lights (default 1).",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "reflected_light": {
+            "type": "boolean",
+            "description": "Bounce light on the shadow-side rim (default true)."
+          },
+          "bias": {
+            "type": "number",
+            "description": "Shift the terminator: positive = more light (-0.8..0.8)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "draw_path",
+      "description": "Draws smooth curves the pixel-art way: Catmull-Rom through points (or cubic Bézier, or polyline). 1-px paths are pixel-perfect with monotone run lengths (no jaggies). width > 1 or [w0, …, wn] makes a tapered stroke (hair locks, scarf tails, capes, blades); closed+filled makes a curved shape (clothes, hair masses, leaves).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "description": "[[x, y], …]"
+          },
+          "color": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "curve": {
+            "type": "string",
+            "description": "spline (default), bezier (p0,c1,c2,p1,…) or polyline.",
+            "enum": ["spline","bezier","polyline"]
+          },
+          "width": {
+            "type": ["number","array"],
+            "description": "Stroke width, or widths along the path for a taper."
+          },
+          "closed": {
+            "type": "boolean",
+            "description": "Close the path."
+          },
+          "filled": {
+            "type": "boolean",
+            "description": "Fill the closed shape."
+          },
+          "edge": {
+            "type": "boolean",
+            "description": "Filled shapes: also draw the clean 1-px edge (default true)."
+          },
+          "pixel_perfect": {
+            "type": "boolean",
+            "description": "Default true."
+          },
+          "smooth": {
+            "type": "boolean",
+            "description": "Monotone runs + flattened bumps (default true)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer (default active)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["points","color"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "antialias",
+      "description": "Softens stair-steps of darker lines against lighter fills INSIDE the sprite with an in-between ramp tone: longer runs get longer AA, 45° steps and transparent edges are never touched.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "Only lines of this colour.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Fraction of each run that gets AA, 0-1 (default 0.5)."
+          },
+          "min_contrast": {
+            "type": "number",
+            "description": "Minimum lightness difference line/fill (default 18)."
+          },
+          "allow_new_colors": {
+            "type": "boolean",
+            "description": "Mix a new colour when no ramp tone fits (default false)."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer (default active)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fix_banding",
+      "description": "Automatic banding correction (Pixel Fixer): shortens one end of each same-length parallel run pair with the in-between ramp tone (or the neighbour's colour) while the banding error falls.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "average (default) or copy.",
+            "enum": ["average","copy"]
+          },
+          "passes": {
+            "type": "integer",
+            "description": "1-32 (default 6).",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer (default active)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "draw_figure",
+      "description": "Draws a proportioned, posed and form-lit body (head, neck, torso, arms, hands, legs, feet) with a skin ramp — the base to dress with draw_path shapes. Returns the joints (head, neck, shoulders, elbows, wrists, waist, pelvis, hips, knees, ankles, toes) to place clothes. layers 5 puts far arm, far leg, body, near leg and near arm on separate layers so sleeves and skirts stack correctly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer",
+            "description": "Centre x between the feet."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Ground y (feet)."
+          },
+          "height": {
+            "type": "number",
+            "description": "Figure height in px (default 80% of the canvas)."
+          },
+          "heads": {
+            "type": "number",
+            "description": "Heads tall: 2-3 chibi, 5 stylised, 6.5-7.5 realistic (default 7)."
+          },
+          "pose": {
+            "type": "string",
+            "description": "Pose.",
+            "enum": ["contrapposto","walk","stand"]
+          },
+          "facing": {
+            "type": "string",
+            "description": "Facing direction (3/4 view).",
+            "enum": ["right","left"]
+          },
+          "build": {
+            "type": "number",
+            "description": "Width factor 0.6-1.6."
+          },
+          "hips": {
+            "type": "number",
+            "description": "Hip width factor 0.7-1.5."
+          },
+          "ramp": {
+            "type": "string",
+            "description": "Skin ramp name (default skin)."
+          },
+          "base": {
+            "type": "integer",
+            "description": "Base ramp index (default middle-low)."
+          },
+          "shade": {
+            "type": "boolean",
+            "description": "Form-light it (default true)."
+          },
+          "light": {
+            "type": ["string","array"],
+            "description": "Direction toward the light: top-left (default), top-right, top, left, right, front, bottom or [x, y, z] (y down, z toward viewer)."
+          },
+          "layers": {
+            "type": "integer",
+            "enum": [3,5],
+            "description": "3 (far/body/near) or 5 (each limb group)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Layer name prefix (default Body)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "shadow_steps": {
+            "type": "integer",
+            "description": "Ramp steps below the base tone for shadows (default 2).",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "light_steps": {
+            "type": "integer",
+            "description": "Ramp steps above the base tone for lights (default 1).",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "reflected_light": {
+            "type": "boolean",
+            "description": "Bounce light on the shadow-side rim (default true)."
+          },
+          "bias": {
+            "type": "number",
+            "description": "Shift the terminator: positive = more light (-0.8..0.8)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["x","y"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "ramp_set",
       "description": "Defines a named material ramp, dark → light (skin, hair, cloth, metal, outline). Ramps are the palette discipline of hand-made pixel art: shade steps along them and auto_shade with palette_lock uses only them.",
       "parameters": {

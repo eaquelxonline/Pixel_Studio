@@ -35,6 +35,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 15. [Piksel piksel karşılaştırma: Kade ve Bram](#15-piksel-piksel-karşılaştırma-kade-ve-bram)
 16. [128×128 özgün karakter: Sela](#16-128128-özgün-karakter-sela)
 17. [Editör arayüzü (Windows 10/11 ve Android)](#17-editör-arayüzü-windows-1011-ve-android)
+18. [Kalite araçları: eleştirmen, form ışığı, eğriler, manken](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)
 
 ---
 
@@ -44,7 +45,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 74 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 80 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -57,7 +58,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **93 araç** | ✅ | 15 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **99 araç** | ✅ | 15 uçtan uca gateway testi |
 | Masaüstü editör (Windows 10/11 tarzı): **Pixel + Voxel 3D** sekmeleri, 11 araç, rampa paneli, katman yoğunluğu | ✅ | derleniyor; Xvfb altında çalıştırıldı, ekran görüntüleri [bölüm 17](#17-editör-arayüzü-windows-1011-ve-android) |
 | Android: 2D editör (9 araç, rampa/HSV sayfası, katman paneli) + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint hatası yok; **cihazda ve emülatörde henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
@@ -138,7 +139,7 @@ Freedom Network düzeni: her platform tek kaynak dosyası (`Core.kt` / `Core.rs`
 ### Hızlı başlangıç
 
 ```bash
-cd Native && cargo test                     # Rust motoru: 74 test (golden render dahil)
+cd Native && cargo test                     # Rust motoru: 80 test (golden render dahil)
 ./gradlew test                              # JVM: JSON, JNI köprüsü, gateway (Rust'ı otomatik derler)
 ./gradlew :Windows:run                      # masaüstü editörü
 ./gradlew :Gateway:run --args="--size 64x64 --port 38471 --workspace ./workspace [--token T] [--allow-destructive]"
@@ -316,9 +317,9 @@ Sunucu "dual-era"dır ve iki dönemi aynı endpoint'te sunar:
 
 Yanıtlar her zaman `application/json` olarak döner. Bildirimler `202` alır. `GET /mcp` isteği `405` döner.
 
-### Araçlar (93)
+### Araçlar (99)
 
-Araç seti 2026-11'de sadeleştirildi: aynı işi yapan küçük araçlar birleştirildi (113 → 93 araç, motorda 124 → 97 işlem), el ile piksel sanatı için dört yeni araç eklendi. Eski adlar ve karşılıkları:
+Araç seti 2026-11'de sadeleştirildi: aynı işi yapan küçük araçlar birleştirildi (113 → 93 araç, motorda 124 → 97 işlem), el ile piksel sanatı için dört yeni araç eklendi. Ardından kalite araçları geldi (99 araç, 103 işlem; bkz. [bölüm 18](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)). Eski adlar ve karşılıkları:
 
 | Eski | Yeni |
 | --- | --- |
@@ -340,7 +341,8 @@ Tam şemalar `Gateway/Schemas/pixel-studio-tools.mcp.json` dosyasındadır.
 | Tuval | `canvas_inspect`, `canvas_snapshot` (PNG + özet), `get_pixel`, `read_region` (ascii/hex), `set_pixel`, `set_pixels`, `draw_line`, `draw_rectangle`, `draw_ellipse`, `draw_polygon`, `pattern_fill` (tuğla/kiremit/tahta/taş/karo/çim/dalga/dama), `draw_stroke` (pixel-perfect serbest çizgi), `fill_region`, `flip`, `rotate` (RotSprite dahil), `move_region`, `copy_region`, `clear`, `canvas_resize`* |
 | Animasyon | `frame_add`, `frame_duplicate`, `frame_delete`*, `frame_move`, `frame_set_duration`, `animation_tag_create`, `animation_tag_delete`, `animation_set_loop`, `animation_preview` (GIF) |
 | Katman | `layer_create`, `layer_delete`*, `layer_set` (ad, görünürlük, kilit, opaklık, karışım, piksel yoğunluğu 1/2/4), `layer_move` |
-| Palet ve rampa | `palette_set`, `ramp_set`, `ramp_delete`, `shade` (rampa fırçası) |
+| Palet ve rampa | `palette_set`, `ramp_set` (değer aralığı uyarısı), `ramp_delete`, `shade` (rampa fırçası) |
+| Kalite | `art_review` (eleştirmen + işaretli değer haritası PNG), `shade_form` (form ışığı), `draw_path` (eğri, incelen fırça, dolu şekil), `antialias` (seçici AA), `fix_banding`, `draw_figure` (pozlu manken) |
 | Efekt ve hareket | `fx_generate` — 23 efekt türü, tek çağrıda 8–16 kare, otomatik zamanlama, isteğe bağlı additive glow; `fx_particles` — genel parçacık yayıcı; `anim_generate` — durağan sprite'tan 8+ karelik ikincil hareket (nefes, sallanma, squash, vuruş flaşı …) |
 | Piksel art | `draw_ascii`, `outline` (selective/selout/solid), `auto_shade`, `gradient_map`, `draw_sparkle`, `pixel_cleanup`, `color_ramp`, `quantize`, `dither_fill` |
 | 3D Voxel | `voxel_model_create`, `voxel_model_clone`, `voxel_model_delete`*, `voxel_model_set`, `voxel_inspect`, `voxel_set`, `voxel_set_many`, `voxel_shape`, `voxel_mirror`, `material_set`, `texture_import`, `texture_generate`, `rig_bone_add`, `rig_clear`*, `rig_bind`, `anim3d_create`, `anim3d_key`, `anim3d_generate`, `voxel_render` (PNG), `voxel_render_sheet` (PNG), `voxel_render_to_frames`, `voxel_pick` |
@@ -950,28 +952,38 @@ Hedef, referans görsellerdeki kaliteye motorun kendi araçlarıyla ulaşmaktı:
 | Temiz serbest çizgi | `draw_stroke` (L köşe çiftleri otomatik silinir) |
 | Referans çalışma | `image_import grid=auto ramps=true reference=true` |
 
-### Süreç
+### İlk deneme neden kötüydü?
+
+İlk Sela (v1) renk sayısı ve küme boyutu gibi ikincil ölçütlerde referansla aynı bantta çıktı, ama kötü görünüyordu. Gri tonlamaya çevirince sebep ortaya çıktı: **açık-koyu (değer) aralığı** referansın yarısıydı (39'a karşı 72) ve figür arka plandan ayrışmıyordu. Ayrıca gölgeler formu izlemiyordu (satır satır hesaplanan ışık dikey şeritler bırakıyordu), duruş kazık gibiydi ve eğriler düz çokgen kenarlarından oluşuyordu. Bu eksikleri kapatmak için [bölüm 18](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)'deki araçlar yazıldı ve Sela onlarla sıfırdan yapıldı.
+
+![Sela v1 ve v2](Assets/Gallery/sela_v1_v2.png)
+
+### Süreç (v2)
 
 ![Sela süreç](Assets/Gallery/sela_process.png)
 
-1. **Bloklama:** Uzuvlar konik kapsüllerle (`draw_polygon`), her malzeme kendi katmanında düz taban rengiyle.
-2. **Işık:** Sol üstten ışık. Her malzeme bölgesi tek bir form olarak aydınlatılır ve `shade` fırçasıyla yalnızca kendi rampasında ton kaydırılır. Saç alnına ve boyna, atkı göğse, etek bacaklara gölge düşürür. Uzak bacak ve kol bir ton daha koyudur (değer planı).
-3. **Bitiriş:** Kumaş kıvrımları ve saç telleri `draw_stroke` ile rampa tonlarında çizilir. Siluete tek renk koyu kontur eklenir. Saç bağı ve küpe parıltısı `density=2` katmanında yarım piksellerle işlenir.
+1. **Değer planı:** Her malzeme için koyudan açığa en az ~45 L aralıklı bir rampa (`ramp_set` aralığı raporlar). Açık malzemeler (tunik, ten) rampanın üst yarısından başlar; figür arka plandan açık durur.
+2. **Beden:** `draw_figure` 6,6 kafa boyunda, kontrapposto pozunda, sola dönük, 5 katmanlı bir manken çizer ve eklem noktalarını döndürür.
+3. **Giysi ve saç:** Eklemlere göre `draw_path` ile dolu eğri şekiller (tunik, kemer, çizmeler, saç kütlesi, atkı) ve incelen fırça darbeleri (at kuyruğu, atkı uçları, bileklikler). Her parça uzuvların arasındaki doğru katmanda.
+4. **Işık:** Her malzeme katmanı `shade_form` ile sol üstten tek ışıkla, şişirilmiş form normalleri üzerinden aydınlatılır; uzak parçalar bir ton koyu (`depth -1`).
+5. **Çizgiler ve bitiriş:** Kumaş kıvrımları, saç telleri ve çizme ağızları rampa tonlarında `draw_path`; boyunda ve uyluklarda `shade` ile düşen gölge; mankenin silüet kopyasına tek koyu kontur; `fix_banding` ve `antialias`.
+6. **Kontrol:** `art_review`.
 
-![Sela](Assets/Gallery/sela_x4.png)
+![Sela](Assets/Gallery/sela_x4.png) ![Eleştirmen haritası](Assets/Gallery/sela_review.png)
 
-Üretici: `python3 Assets/Sprites.py sela` (163 motor komutu) → `run_script Assets/Build/sela_showcase.jsonl out/`.
+Üretici: `python3 Assets/Sprites.py sela` (103 motor komutu) → `run_script Assets/Build/sela_showcase.jsonl out/`.
 
-### Ölçüm
+### Ölçüm (`art_review`)
 
-| | Referans (127×127) | Sela (128×128) |
-| --- | --- | --- |
-| Renk | 35 | 33 |
-| Baskın dış kontur | `#060715`, kenarın %64'ü | `#0A0912`, kenarın %84'ü |
-| Renk kümesi medyanı | 2 px | 2 px |
-| Tek piksel oranı | %5,0 | %4,4 |
+| | Referans (127×127) | Sela v1 | Sela v2 |
+| --- | --- | --- | --- |
+| Puan | 94 | 47 | **95** |
+| Değer aralığı (iç tonlar, p10–p90) | 72 | 39 | **61** |
+| Figür–zemin ayrımı (L) | 20 | 12 | **21** |
+| Renk | 36 | 33 | 33 |
+| Eleştirmenin bulduğu sorunlar | küçük bir pillow bölgesi | düşük değer, zayıf silüet, zeminle karışma, şeritler | yok |
 
-Sela, Bram'daki (bölüm 15) 134 renklik bulanıklığa düşmeden, referansın palet disiplini ve küme yapısıyla aynı bantta kalıyor. Bu sonucu belirleyen, otomatik gölge yerine rampa üzerinde **elle yerleştirilen** tonlar ve tek renkli kontur oldu.
+Referansla kalan fark artık değer yapısında değil, el emeği detayda: karın ve diz gibi anatomi kümeleri, yırtık kumaş kenarları, daha zengin kıvrımlar. Bunlar `draw_path` ve `shade` ile tek tek eklenebilir; v2'nin üreticisi bunun iskeletini veriyor.
 
 ## 17. Editör arayüzü (Windows 10/11 ve Android)
 
@@ -1005,4 +1017,32 @@ Arayüz, hazır şablon görünümünden çıkarılıp piksel sanatçısının i
 - **Kare şeridi:** oynat, kare seçimi, uzun basışla süre ayarı ve silme, ekle ve çoğalt.
 
 Doğrulama: APK `assembleDebug` ile derleniyor, `lintDebug` hata vermiyor (kalan uyarılar eski kodla aynı türden: metin birleştirme, özel View yapıcıları, başlatıcı simge şekli). Bu ortamda Android emülatörü ve KVM bulunmadığından Android arayüzünün ekran görüntüsü alınamadı. Cihazda deneme bekliyor.
+
+## 18. Kalite araçları: eleştirmen, form ışığı, eğriler, manken
+
+Sela v1'in neden kötü göründüğünü araştırırken ortaya çıkan eksikler, güncel pixel art kaynaklarına dayanan altı araçla kapatıldı. Hepsi `Native/Core.rs` içinde `mod artkit` altında; testleri `Native/Tests.rs` içinde `mod artkit_tools`.
+
+| Araç | Yöntem ve kaynak |
+| --- | --- |
+| `art_review` | Kareyi (ya da tek katmanı) tuval pikselinde render eder ve ölçer. Ölçütler: iç tonların değer aralığı (p10–p90), en açık ton, silüet ve figür–zemin kontrastı, **banding** (Pixel Fixer, TU Delft 2025: aynı renk kümesinde ≥ 2 px'lik yatay/dikey segmentin komşu satır/sütundaki farklı renkli segmentle aynı başlangıç ve bitişe sahip olması; hata Eb = çift sayısı), **pillow** (spritebox lint kuralı: açık yarının ağırlık merkezi şeklin merkeziyle çakışıyor ve açıklık kenardan uzaklıkla artıyor), 1 px şeritler, yetim pikseller, silüet tırtıkları (adımlı bir bölümde iki komşusundan ≥ 2 px uzun/kısa koşu). 0–100 puan, her sorun için düzelten aracı ve sorunları işaretleyen gri tonlu değer haritası PNG'si döndürür (kırmızı banding, sarı şerit, camgöbeği pillow, mor tırtık). |
+| `fix_banding` | Pixel Fixer'ın otomatik düzeltmesi: banding çiftindeki segmentin bir ucu kısaltılır, uç pikselin rengi rampadaki ara tondan seçilir (ya da komşunun rengi kopyalanır). Hata düştüğü sürece tekrarlanır. |
+| `shade_form` | Pillow'un tersi: yüzey normali üzerinden Lambert ışığı, rampa basamaklarına kuantize. Form türleri küre/elips, incelen kapsül (uzuvlar, çizmeler) ve herhangi bir silüetin "şişirilmiş" yükseklik alanı (pah mesafesi → dairesel profil → yumuşatma → gradyan). Gölge tarafında yansıyan ışık, tek başına kalan ton pikselleri temizlenir, yalnızca rampa renkleri kullanılır. |
+| `draw_path` | Noktalardan geçen Catmull-Rom eğrisi, kübik Bézier zinciri ya da çoklu çizgi. 1 px yol pixel-perfect yapılır; aynı yönde adımlayan her bölümde koşu uzunlukları tek yönlü hale getirilir (izotonik regresyon, toplam korunur, en fazla 2 px kayma). Eğri tepesindeki tek piksellik tümsekler düzleştirilir. `width` sayı ya da liste olabilir (incelen fırça); `closed+filled` dolu eğri şekil çizer. |
+| `antialias` | Seçici iç AA (Ricky Han'ın segment yöntemi ve Pixel Parmesan kuralları): koyu çizginin açık dolguya yaptığı her iç köşede, koşu uzunluğunun `amount` kadarına ara ton konur. 45° basamaklara ve saydamlığa dokunulmaz. Ton rampadaki ara basamaktan ya da en yakın mevcut renkten seçilir. |
+| `draw_figure` | 2–9 kafa boyunda, `stand` / `contrapposto` / `walk` pozunda, 3/4 açıda manken. Uzuvlar incelen kapsüllerden, gövde kapalı eğriden, baş elipsten oluşur. Uzak taraf bir ton koyu; form ışığıyla aydınlatılmış hazır gelir. Eklem noktalarını döndürür. `layers 5` uzak kol, uzak bacak, gövde, yakın bacak ve yakın kolu ayrı katmanlara koyar. |
+
+`ramp_set` artık rampanın açıklık değerlerini döndürür; tonlar koyudan açığa sıralı değilse ya da aralık 40 L'nin altındaysa uyarır.
+
+**Ajan rehberi** (`pixel-studio://guide` kaynağı ve `draw_sprite` / `review_canvas` promptları) bu sırayı öğretir: değer planı → `draw_figure` → `draw_path` → `shade_form` → çizgiler → kontur, `fix_banding`, `antialias` → `art_review` 85 ve üzeri puan verene kadar.
+
+**Arayüz:** Masaüstünde *Image* menüsü (Review art… `Ctrl+Shift+R`, Form light, Fix banding, Selective anti-alias); Android'de taşma menüsü.
+
+**Eleştirmenin kalibrasyonu:** Referans görsel 94, Sela v1 47, Sela v2 95 puan aldı. Değer aralığı eşiği (55), referansın 72'si ile v1'in 39'u arasında. Figür–zemin ve silüet eşikleri, referansı geçirip v1'i yakalayacak şekilde ayarlandı.
+
+Kaynaklar:
+- R. Bites, *Pixel Fixer: Semi-Automated Techniques for Correcting Pixel Art*, TU Delft, 2025 — <https://repository.tudelft.nl/record/uuid:b3c91b18-d9e8-48e0-91ce-8afafd2439d8>
+- spritebox lint kuralları (pillow, banding) — <https://github.com/jmsansan/spritebox/issues/23>
+- Ricky Han, *Pixel Art Algorithm: Selective Anti-Aliasing* — <http://rickyhan.com/jekyll/update/2019/09/01/pixel-art-algorithm-selective-outlining-anti-aliasing.html>
+- Pixel Parmesan, *Anti-Aliasing Fundamentals for Pixel Artists* — <https://pixelparmesan.com/anti-aliasing-fundamentals-for-pixel-artists>
+- PixNote, *Shading & Lighting* — <https://pixnote.net/en/learn/shading>
 

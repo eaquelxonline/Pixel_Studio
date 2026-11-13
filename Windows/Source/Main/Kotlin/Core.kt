@@ -229,7 +229,12 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             add(item("Outline: one dark color") { c.run("outline", mapOf("color" to c.color, "mode" to "solid")) })
             add(item("Outline: selective") { c.run("outline", mapOf("mode" to "selective")) })
             add(item("Outline: selout (soft)") { c.run("outline", mapOf("mode" to "selout")) })
+            add(item("Review art…", ctrl(KeyEvent.VK_R, true)) { reviewArt() })
+            addSeparator()
+            add(item("Form light layer (ramps)") { report(c.run("shade_form", mapOf("light" to "top-left", "shadow_steps" to 2, "light_steps" to 2))) })
             add(item("Auto shade layer (ramps)") { c.run("auto_shade", mapOf("light" to "top-left", "tones" to 3)) })
+            add(item("Fix banding (layer)") { report(c.run("fix_banding")) })
+            add(item("Selective anti-alias (layer)") { report(c.run("antialias", mapOf("amount" to 0.5))) })
             add(item("Pixel-perfect cleanup") { c.run("pixel_cleanup") })
             addSeparator()
             add(item("Reduce colors…") {
@@ -253,6 +258,39 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
         add(JMenu("Agent").apply {
             add(item("Connect an AI agent…", ctrl(KeyEvent.VK_K)) { AgentDialog(this@PixelStudioWindow, gateway) { toggleGateway() }.isVisible = true })
         })
+    }
+
+    private fun report(r: EngineResponse) {
+        if (r.ok) status.flash(r.result.entries.joinToString("  ·  ") { "${it.key} ${it.value}" }.take(160))
+    }
+
+    /** The critic: score, issues with their fixes, and the marked value map. */
+    private fun reviewArt() {
+        val r = c.run("art_review", mapOf("frame" to c.doc.activeFrame))
+        if (!r.ok) return
+        val res = r.result
+        val img = ImageIO.read(r.binary.inputStream())
+        val d = JDialog(this, "Art review", false)
+        val text = StringBuilder()
+        val v = res.obj("values")
+        text.append("Score ${res["score"]} / 100\n")
+        text.append("Values: dark ${v?.get("p10")} · median ${v?.get("median")} · light ${v?.get("p90")} · span ${v?.get("span")} (aim ≥ 55)\n")
+        text.append("Banding pairs ${res.obj("banding")?.get("pairs")} · stripes ${res["stripesPercent"]}% · jaggies ${res["jaggies"]} · colours ${res["colors"]}\n\n")
+        val issues = res.list("issues").orEmpty().map { it as Map<*, *> }
+        if (issues.isEmpty()) text.append("No issues found.\n")
+        issues.forEach { text.append("• [${it["severity"]}] ${it["message"]}\n    → ${it["fix"]}\n") }
+        text.append("\n").append(res.str("legend") ?: "")
+        val area = JTextArea(text.toString()).apply {
+            isEditable = false; lineWrap = true; wrapStyleWord = true; background = Theme.PANEL; foreground = Theme.TEXT
+            border = BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        }
+        val pic = JLabel(ImageIcon(img)).apply { border = BorderFactory.createEmptyBorder(8, 8, 8, 8) }
+        d.contentPane.background = Theme.PANEL
+        d.contentPane.add(JScrollPane(pic).apply { Theme.scroll(this); border = BorderFactory.createEmptyBorder() }, BorderLayout.CENTER)
+        d.contentPane.add(JScrollPane(area).apply { preferredSize = Dimension(380, 400); Theme.scroll(this); border = BorderFactory.createMatteBorder(0, 1, 0, 0, Theme.BORDER) }, BorderLayout.EAST)
+        d.size = Dimension(min(1200, img.width + 440), min(860, img.height + 80))
+        d.setLocationRelativeTo(this)
+        d.isVisible = true
     }
 
     private fun toggleGateway() {

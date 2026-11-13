@@ -1155,6 +1155,16 @@ object Guidance {
         - Animation: keep volume constant between frames; use squash/stretch sparingly at 16-64px.
           Typical timings: idle 4-6 frames @ 150-200ms, walk 6-8 frames @ 80-120ms, attack: short anticipation, fast strike, longer recovery.
         - Verify consistency by comparing frames with onion skin (canvas_snapshot with onion {"before":1}).
+
+        ## Character workflow (64-256 px) — the order matters
+        1. Value plan first: one ramp per material with ramp_set, dark → light, spanning ≥ 45 L (ramp_set reports lightness and warns).
+           Light materials sit high on their ramp; keep the figure clearly lighter (or darker) than the background.
+        2. Body: draw_figure (pose contrapposto/walk, heads 6-7.5 realistic, 2-3 chibi, layers 5) — use the returned joints for everything else.
+        3. Clothes, hair, props: draw_path closed+filled shapes and tapered strokes in each ramp's base tone, on layers stacked between the limbs.
+        4. Light: shade_form per material layer from ONE light (inflate for cloth/hair, capsule for limbs/boots, sphere for heads/orbs); depth -1 for far parts.
+        5. Design lines: draw_path folds and hair strands in ramp tones, shade for cast shadows (hair on neck, hem on thighs).
+        6. One dark silhouette outline, then fix_banding and antialias on the detailed layers.
+        7. art_review after each stage; fix every high/medium issue it lists (score ≥ 85, value span ≥ 55) before animating.
     """.trimIndent()
 
     class PromptDef(val name: String, val title: String, val description: String, val arguments: List<Triple<String, String, Boolean>>, val render: (Map<String, String>) -> String)
@@ -1166,7 +1176,8 @@ object Guidance {
         ) { a ->
             "Using the Pixel Studio tools, draw ${a["subject"]} on a ${a["size"] ?: "the current"} canvas. " +
                 "Start with canvas_inspect, plan a palette of at most 16 colors and the layers you need, block in the silhouette, " +
-                "then refine shading and outline with set_pixels. Check the result with canvas_snapshot after each stage and fix problems you see."
+                "then refine shading and outline with set_pixels. Check the result with canvas_snapshot after each stage and fix problems you see. " +
+                "For characters of 64 px and more, follow the guide's character workflow (ramp_set → draw_figure → draw_path → shade_form → art_review) and keep going until art_review scores ≥ 85."
         },
         PromptDef(
             "animate_sprite", "Animate a sprite", "Builds a frame-by-frame animation from the existing drawing.",
@@ -1186,8 +1197,9 @@ object Guidance {
                 "format=${a["engine"] ?: "tiled"}."
         },
         PromptDef("review_canvas", "Critique the canvas", "Reviews the current artwork and suggests concrete pixel-level fixes.", emptyList()) {
-            "Look at the canvas with canvas_snapshot and read_region. Critique silhouette, palette, shading direction, outline quality and (if animated) " +
-                "frame-to-frame consistency. List concrete fixes with coordinates, then apply them only after summarizing your plan."
+            "Run art_review first and read its value map and issues, then look with canvas_snapshot and read_region. Critique value structure, silhouette, palette, " +
+                "shading direction, outline quality and (if animated) frame-to-frame consistency. List concrete fixes with coordinates and the tool for each, " +
+                "then apply them only after summarizing your plan, and re-run art_review to confirm."
         },
     )
 
@@ -1869,6 +1881,56 @@ internal fun MutableList<ToolDef>.addCharTools() {
     val scope: Schema = string("cel (default) | layer (all frames) | frame (all layers) | all.", listOf("cel", "layer", "frame", "all"))
 
     val pts: Schema = linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf("type" to "number"), "minItems" to 2, "maxItems" to 2), "description" to "[[x, y], …]")
+    val layerArg: Schema = linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Layer (default active).")
+    val frameArg: Schema = integer("Frame (default active).", min = 0)
+    val lightArg: Schema = linkedMapOf<String, Any?>("type" to listOf("string", "array"),
+        "description" to "Direction toward the light: top-left (default), top-right, top, left, right, front, bottom or [x, y, z] (y down, z toward viewer).")
+    val bandArgs: Map<String, Schema> = linkedMapOf(
+        "shadow_steps" to integer("Ramp steps below the base tone for shadows (default 2).", 1, 4),
+        "light_steps" to integer("Ramp steps above the base tone for lights (default 1).", 0, 3),
+        "reflected_light" to boolean("Bounce light on the shadow-side rim (default true)."),
+        "bias" to num("Shift the terminator: positive = more light (-0.8..0.8)."),
+    )
+    add(ToolDef("art_review", "Critique the pixel art", "The objective critic — call it after every major step and fix what it reports. Measures the light/dark value span " +
+        "(the #1 reason art reads muddy), figure/background separation, banding pairs (Pixel Fixer metric), pillow shading, 1-px stripes, noise and silhouette jaggies, " +
+        "returns a 0-100 score, issues with the tool that fixes each, and a greyscale value-map PNG with problems marked (red banding, yellow stripes, cyan pillow, magenta jaggies).",
+        "art_review", linkedMapOf("frame" to frameArg, "layer" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Review one layer only (default: the whole frame)."),
+            "scale" to integer("PNG upscale 1-64 (default auto).", 1, 64)), emptyList(), Access.READ, Output.PNG_IMAGE, "pixelart"))
+    tool("shade_form", "Form lighting", Access.WRITE,
+        "Lights flat ramp-coloured shapes like a 3D form: surface normals of a sphere, a tapered capsule (limbs, boots, sleeves) or an 'inflated' height field of any silhouette, " +
+            "Lambert-quantised into ramp steps from ONE light direction, with reflected light on the shadow side. Replaces pillow shading. Block each material in its ramp's base tone first.",
+        linkedMapOf<String, Schema>("form" to string("inflate (default, any shape), sphere or capsule.", listOf("inflate", "sphere", "capsule")),
+            "cx" to num("Sphere centre x."), "cy" to num("Sphere centre y."), "rx" to num("Sphere radius x."), "ry" to num("Sphere radius y (default rx)."),
+            "points" to pts, "radius" to linkedMapOf<String, Any?>("type" to listOf("number", "array"), "description" to "Capsule radius, or radii per point (taper)."),
+            "light" to lightArg, "ramp" to string("Only pixels of this ramp."), "only_color" to color("Only pixels of this colour."),
+            "x" to integer("Region left."), "y" to integer("Region top."), "width" to integer("Region width.", 1), "height" to integer("Region height.", 1),
+            "depth" to integer("Extra ramp steps for the whole form (-1 = farther/behind).", -3, 3), "layer" to layerArg, "frame" to frameArg) + bandArgs)
+    tool("draw_path", "Smooth curve / shape", Access.WRITE,
+        "Draws smooth curves the pixel-art way: Catmull-Rom through points (or cubic Bézier, or polyline). 1-px paths are pixel-perfect with monotone run lengths (no jaggies). " +
+            "width > 1 or [w0, …, wn] makes a tapered stroke (hair locks, scarf tails, capes, blades); closed+filled makes a curved shape (clothes, hair masses, leaves).",
+        linkedMapOf<String, Schema>("points" to pts, "color" to color(), "curve" to string("spline (default), bezier (p0,c1,c2,p1,…) or polyline.", listOf("spline", "bezier", "polyline")),
+            "width" to linkedMapOf<String, Any?>("type" to listOf("number", "array"), "description" to "Stroke width, or widths along the path for a taper."),
+            "closed" to boolean("Close the path."), "filled" to boolean("Fill the closed shape."), "edge" to boolean("Filled shapes: also draw the clean 1-px edge (default true)."),
+            "pixel_perfect" to boolean("Default true."), "smooth" to boolean("Monotone runs + flattened bumps (default true)."), "layer" to layerArg, "frame" to frameArg),
+        listOf("points", "color"))
+    tool("antialias", "Selective anti-aliasing", Access.WRITE,
+        "Softens stair-steps of darker lines against lighter fills INSIDE the sprite with an in-between ramp tone: longer runs get longer AA, 45° steps and transparent edges are never touched.",
+        linkedMapOf<String, Schema>("color" to color("Only lines of this colour."), "amount" to num("Fraction of each run that gets AA, 0-1 (default 0.5)."),
+            "min_contrast" to num("Minimum lightness difference line/fill (default 18)."), "allow_new_colors" to boolean("Mix a new colour when no ramp tone fits (default false)."),
+            "layer" to layerArg, "frame" to frameArg))
+    tool("fix_banding", "Fix banding", Access.WRITE,
+        "Automatic banding correction (Pixel Fixer): shortens one end of each same-length parallel run pair with the in-between ramp tone (or the neighbour's colour) while the banding error falls.",
+        linkedMapOf<String, Schema>("mode" to string("average (default) or copy.", listOf("average", "copy")), "passes" to integer("1-32 (default 6).", 1, 32), "layer" to layerArg, "frame" to frameArg))
+    tool("draw_figure", "Posed body mannequin", Access.WRITE,
+        "Draws a proportioned, posed and form-lit body (head, neck, torso, arms, hands, legs, feet) with a skin ramp — the base to dress with draw_path shapes. " +
+            "Returns the joints (head, neck, shoulders, elbows, wrists, waist, pelvis, hips, knees, ankles, toes) to place clothes. layers 5 puts far arm, far leg, body, near leg and near arm on separate layers so sleeves and skirts stack correctly.",
+        linkedMapOf<String, Schema>("x" to integer("Centre x between the feet."), "y" to integer("Ground y (feet)."), "height" to num("Figure height in px (default 80% of the canvas)."),
+            "heads" to num("Heads tall: 2-3 chibi, 5 stylised, 6.5-7.5 realistic (default 7)."), "pose" to string("Pose.", listOf("contrapposto", "walk", "stand")),
+            "facing" to string("Facing direction (3/4 view).", listOf("right", "left")), "build" to num("Width factor 0.6-1.6."), "hips" to num("Hip width factor 0.7-1.5."),
+            "ramp" to string("Skin ramp name (default skin)."), "base" to integer("Base ramp index (default middle-low)."), "shade" to boolean("Form-light it (default true)."),
+            "light" to lightArg, "layers" to linkedMapOf<String, Any?>("type" to "integer", "enum" to listOf(3, 5), "description" to "3 (far/body/near) or 5 (each limb group)."),
+            "name" to string("Layer name prefix (default Body)."), "frame" to frameArg) + bandArgs,
+        listOf("x", "y"))
     tool("ramp_set", "Material ramp", Access.WRITE,
         "Defines a named material ramp, dark → light (skin, hair, cloth, metal, outline). Ramps are the palette discipline of hand-made pixel art: shade steps along them and auto_shade with palette_lock uses only them.",
         linkedMapOf<String, Schema>("name" to string("Ramp name."), "colors" to colors("2-16 opaque colors, dark → light.")), listOf("name", "colors"))

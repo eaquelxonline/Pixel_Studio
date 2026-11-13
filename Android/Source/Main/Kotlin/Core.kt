@@ -657,6 +657,7 @@ class MainActivity : Activity() {
         val items = listOf(
             "New 32 × 32", "New 64 × 64", "New 128 × 128", "Open .pxs…", "Save .pxs…", "Import image…", "Import reference…",
             "Export PNG…", "Export GIF…", "Outline (primary color)", "Outline (selective)", "Auto shade layer", "Pixel-perfect cleanup",
+            "Review art…", "Form light layer", "Fix banding", "Selective anti-alias",
         )
         items.forEachIndexed { i, s -> menu.menu.add(0, i, i, s) }
         menu.setOnMenuItemClickListener { item ->
@@ -674,10 +675,30 @@ class MainActivity : Activity() {
                 10 -> engine.execute("outline", mapOf("mode" to "selective"))
                 11 -> engine.execute("auto_shade", mapOf("light" to "top-left", "tones" to 3))
                 12 -> engine.execute("pixel_cleanup")
+                13 -> reviewArt()
+                14 -> engine.execute("shade_form", mapOf("light" to "top-left", "shadow_steps" to 2, "light_steps" to 2)).let { if (!it.ok) toast(it.errorMessage ?: "") }
+                15 -> engine.execute("fix_banding")
+                16 -> engine.execute("antialias", mapOf("amount" to 0.5))
             }
             true
         }
         menu.show()
+    }
+
+    /** The critic: score, issues and the marked value map in one dialog. */
+    private fun reviewArt() {
+        val r = engine.execute("art_review", mapOf("frame" to activeFrame()))
+        if (!r.ok) { toast(r.errorMessage ?: "nothing to review"); return }
+        val res = r.result
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        box.addView(android.widget.ImageView(this).apply {
+            setImageBitmap(BitmapFactory.decodeByteArray(r.binary, 0, r.binary.size)); adjustViewBounds = true
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        val v = res["values"] as? Map<*, *>
+        val lines = StringBuilder("Score ${res["score"]} / 100\nValue span ${v?.get("span")} (aim ≥ 55)\n\n")
+        (res["issues"] as? List<*>).orEmpty().forEach { i -> (i as Map<*, *>).let { lines.append("• ${it["message"]}\n   → ${it["fix"]}\n") } }
+        box.addView(TextView(this).apply { text = lines.toString(); setTextColor(Ui.TEXT); textSize = 13f; setPadding(0, dp(8), 0, 0) })
+        AlertDialog.Builder(this).setTitle("Art review").setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Close", null).show()
     }
 
     private fun newProject(size: Int) {

@@ -520,6 +520,17 @@ class GatewayTest {
         call("draw_sparkle", mapOf("points" to listOf(listOf(2, 2, 2), listOf(29, 29)), "layer" to "Bangs"))
         call("gradient_map", mapOf("colors" to listOf("#141C3A", "#8EA6D8", "#E6EEFF"), "scope" to "frame", "strength" to 0.4))
         call("pixel_cleanup", mapOf("layer" to "Bangs"))
+        // Quality toolkit: curves, form lighting, AA, banding fix, mannequin and the critic's PNG.
+        call("ramp_set", mapOf("name" to "skin", "colors" to listOf("#4A2620", "#7A3F2E", "#A9603F", "#CF8657", "#EDB184", "#FFDDB6")))
+        call("draw_path", mapOf("points" to listOf(listOf(2, 30), listOf(12, 20), listOf(28, 18)), "width" to listOf(4, 1), "color" to "#A9603F"))
+        call("shade_form", mapOf("form" to "inflate", "ramp" to "skin"))
+        call("antialias", mapOf("amount" to 0.5))
+        call("fix_banding", mapOf("layer" to 0))
+        val fig = call("draw_figure", mapOf("x" to 16, "y" to 31, "height" to 28, "heads" to 3, "pose" to "stand"))
+        assertTrue(fig.obj("structuredContent")!!.obj("result")!!.obj("joints")!!.containsKey("kneeNear"))
+        val review = call("art_review", emptyMap())
+        assertEquals("image", (review.list("content")!!.first() as Map<*, *>)["type"])
+        assertTrue((review.obj("structuredContent")!!.obj("result")!!["score"] as Number).toDouble() in 0.0..100.0)
     }
 
     @Test
