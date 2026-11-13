@@ -2139,12 +2139,159 @@ def build_warrior(out):
     print(f"{len(ANIMS)} animations, {total} frames, {len(lines)} commands")
 
 
+# ════ Kade — a 32×32 warrior placed pixel by pixel ════════════════════════════════════════
+# The comparison piece for Bram: no shapes, no auto-shading. Every pixel and color of the
+# base pose is typed by hand (rows written as (x, run) pieces), and the 8 idle frames are
+# hand edits of that pose: a 1-px breath with a 1-px tabard stretch, plume and scarf flicks,
+# a blink and a glint running up the blade. 24 colors for the whole clip.
+
+KADE_PAL = {
+ "o":"#1C1828",  # deepest outline
+ "E":"#2B3150",  # steel outline (cool)
+ "D":"#4F5A7C", "C":"#7A88A8", "B":"#AAB8D0", "A":"#E2EAF6",   # steel ramp
+ "Z":"#6E4622", "Y":"#C8923A", "y":"#F2CC72",                  # bronze
+ "S":"#C4845E", "s":"#F2C49C",                                 # skin
+ "b":"#6E4230", "n":"#9A6040",                                 # beard
+ "q":"#5E1A2C", "R":"#A82E3A", "r":"#E0544A",                  # red scarf/plume
+ "T":"#1F5A54", "t":"#3A9A88",                                 # teal tabard
+ "k":"#323C5E", "c":"#56648E",                                 # trousers
+ "L":"#3A2A24", "l":"#6E4A34",                                 # leather/boots
+ "v":"#9EB0C8", "w":"#F6FAFF",                                 # blade
+ "e":"#1C1828",
+}
+
+
+def kade_grid(spec):
+    g = [["."] * 32 for _ in range(32)]
+    for y, runs in spec.items():
+        for x, run in runs:
+            for i, ch in enumerate(run):
+                if ch != " ":
+                    g[y][x + i] = ch
+    return ["".join(r) for r in g]
+
+KADE_BASE = {
+    # plume (sweeps back) + helmet
+    2:  [(12, "qq")],
+    3:  [(10, "qqrRq")],
+    4:  [(9, "qRrrRR"), (15, "EEEE")],
+    5:  [(8, "qRrRq"), (13, "EEBBAAAE")],
+    6:  [(8, "qRq"), (12, "EDBBAAAAAE")],
+    7:  [(9, "q"), (12, "EDCBBBAAABE")],
+    8:  [(12, "EDCYYYYYyyE")],
+    9:  [(12, "EDCZEssssSE")],
+    10: [(12, "EDCE"), (17, "sesSsE")],
+    11: [(12, "EDCEnsssSE")],
+    12: [(12, "oDCEbnnbbE")],
+    # scarf knot + tail behind
+    13: [(11, "qRrrRbbbbo")],
+    14: [(10, "qRrrRRREEEEo")],
+    15: [(9, "qRq"), (12, "EEDCBBAEYYE")],
+    16: [(8, "qRq"), (12, "EDCBBBAEyyYE")],
+    # shield (oval, bronze rim, teal face, boss) behind the body
+    17: [(5, "ZYYYZ"), (11, "EDCCBBBBAEYYZE")],
+    18: [(4, "ZYtttYZ"), (11, "EDCCBBBBAEDCE")],
+    19: [(4, "YttTttY"), (11, "EDCCBBBBBEDCE")],
+    20: [(4, "YtTyTtY"), (11, "EDCCCBBBBE"), (21, "llL")],
+    21: [(4, "YtTTTtY"), (11, "oZYYyYYYZo"), (21, "LLo")],
+    22: [(4, "YttTttY"), (11, "oTttttttTo"), (22, "Y")],
+    23: [(4, "ZYtttYZ"), (12, "oTtttttTo")],
+    24: [(5, "ZYYYZ"), (12, "okcTTTcko")],
+    # legs: 3 px wide, bronze knee plates, greaves, boots
+    25: [(11, "okkco"), (16, "ocCco")],
+    26: [(11, "oZYyo"), (16, "oZYyo")],
+    27: [(11, "oDCCo"), (16, "oCBBo")],
+    28: [(11, "oDCCo"), (16, "oCBAo")],
+    29: [(10, "olllllo"), (16, "olllllo")],
+    30: [(9, "oLLLLLLo"), (16, "oLLLLLLLo")],
+}
+# sword: grip in the hand (x22,y20), guard across, 2-px blade rising to the upper right
+KADE_SWORD = {
+    19: [(23, "y"), (24, "wv")],
+    20: [(24, "Y")],
+    21: [(25, "Z")],
+    18: [(25, "wv")],
+    17: [(26, "wv")],
+    16: [(27, "wv")],
+    15: [(28, "wv")],
+    14: [(29, "wv")],
+    13: [(30, "wv")],
+    12: [(31, "w")],
+}
+
+
+def kade_base_rows():
+    spec = {k: list(v) for k, v in KADE_BASE.items()}
+    for y, r in KADE_SWORD.items():
+        spec.setdefault(y, []).extend(r)
+    return [list(r) for r in kade_grid(spec)]
+
+def kade_put(g, pts):
+    for x, y, ch in pts:
+        g[y][x] = ch
+
+def kade_breathe(g):
+    """Inhale: everything from the plume to the belt rises 1 px, the tabard stretches 1 px."""
+    old = [r[:] for r in g]
+    for y in range(1, 22):
+        for x in range(32):
+            if x <= 25 or y >= 12:  # body columns; the blade rises with the hand too
+                g[y][x] = old[y + 1][x]
+    return g
+
+KADE_PLUME_B = [(12, 2, "."), (13, 2, "."), (11, 2, "q"), (12, 2, "q"), (10, 3, "q"), (9, 3, "q")]  # tip flicks back
+KADE_SCARF_B = [(8, 16, "."), (9, 16, "q"), (7, 17, "q"), (8, 17, "R"), (9, 17, "q")]                # tail sways
+KADE_BLINK = [(18, 10, "S")]
+
+def kade_frame(k):
+    g = kade_base_rows()
+    if k in (2, 3):
+        g = kade_breathe(g)
+        dy = -1
+    else:
+        dy = 0
+    if k in (1, 2, 5, 6):
+        kade_put(g, [(x, y + dy, c) for x, y, c in KADE_PLUME_B])
+    if k in (3, 4, 7):
+        kade_put(g, [(x, y + dy, c) for x, y, c in KADE_SCARF_B])
+    if k == 5:
+        kade_put(g, KADE_BLINK)
+    # a glint runs up the blade on frames 6-7
+    if k == 6:
+        kade_put(g, [(27, 16, "A"), (28, 16, "A")])
+    if k == 7:
+        kade_put(g, [(30, 13, "A"), (31, 12, "A"), (31, 11, "w")])
+    return ["".join(r) for r in g]
+
+KADE_FRAMES = [kade_frame(k) for k in range(8)]
+KADE_DURATIONS = [160, 140, 160, 200, 140, 100, 120, 120]
+
+
+def build_kade(out):
+    """Writes kade.jsonl (+ showcase): the hand-pixeled idle as draw_ascii frames."""
+    lines = [json.dumps({"op": "project_new", "width": 32, "height": 32, "name": "Kade - hand-pixeled warrior"}),
+             json.dumps({"op": "layer_rename", "layer": 0, "name": "Kade"}),
+             json.dumps({"op": "frame_add", "count": len(KADE_FRAMES) - 1})]
+    for f, g in enumerate(KADE_FRAMES):
+        used = sorted({c for r in g for c in r if c != "."})
+        lines.append(json.dumps({"op": "draw_ascii", "layer": "Kade", "frame": f, "rows": g, "legend": {c: KADE_PAL[c] for c in used}}))
+        lines.append(json.dumps({"op": "frame_set_duration", "frame": f, "duration": KADE_DURATIONS[f]}))
+    lines.append(json.dumps({"op": "animation_tag_create", "name": "idle", "from": 0, "to": len(KADE_FRAMES) - 1}))
+    with open(os.path.join(out, "kade.jsonl"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    show = lines + [json.dumps({"op": "export_gif", "tag": "idle", "scale": 8, "_save": "kade/kade_idle_x8.gif"}),
+                    json.dumps({"op": "export_spritesheet", "scale": 1, "_save": "kade/kade_idle_sheet.png", "_json": True})]
+    with open(os.path.join(out, "kade_showcase.jsonl"), "w") as fh:
+        fh.write("\n".join(show) + "\n")
+    print(f"Kade: {len(KADE_FRAMES)} hand-edited frames")
+
+
 def main(argv):
-    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|all]   → command scripts in Assets/Build/."""
+    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|all]   → command scripts in Assets/Build/."""
     import os
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Build")
     os.makedirs(out, exist_ok=True)
-    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior}
+    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade}
     wanted = argv[1:] or ["all"]
     for name, fn in targets.items():
         if "all" in wanted or name in wanted:

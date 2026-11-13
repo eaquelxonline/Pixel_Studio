@@ -32,6 +32,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 12. [Karşılaştırmalı asset üretim testleri](#12-karşılaştırmalı-asset-üretim-testleri)
 13. [Gelişmiş VFX paketi ve ikincil hareket](#13-gelişmiş-vfx-paketi-ve-ikincil-hareket)
 14. [Savaşçı karakter: 9 animasyon](#14-savaşçı-karakter-9-animasyon)
+15. [Piksel piksel karşılaştırma: Kade ve Bram](#15-piksel-piksel-karşılaştırma-kade-ve-bram)
 
 ---
 
@@ -878,3 +879,35 @@ Ayrıca parçacık döngüsünü ve 8 hareket türünü doğrular: kare 0 orijin
 | jump | 10 | one-shot | 930 | 120/60/70/80/120/100/80/70/110/120 | 0.847 | 0.879 | ✅ |
 | hurt | 8 | one-shot | 710 | 60/60/90/100/90/90/100/120 | 0.631 | 0.974 | ✅ |
 | death | 12 | one-shot | 1790 | 60/100/100/120/160/90/80/70/90/120/200/600 | 0.728 | 0.999 | ✅ |
+
+---
+
+## 15. Piksel piksel karşılaştırma: Kade ve Bram
+
+Bram'ın kalitesi neden internetteki iyi piksel sanatının gerisinde kalıyor? Bunu görmek için aynı türde özgün bir savaşçıyı, **Kade**'i, 32×32 boyutta elle yaptım:
+
+- Ana pozun her pikseli ve rengi tek tek yazıldı (`Assets/Sprites.py`, `build_kade`).
+- 8 karelik idle animasyonu bu pozun elle düzenlenmesiyle oluşturuldu:
+  - 1 piksellik nefes ve tabardın 1 piksel esnemesi,
+  - tüylük ve atkı ucunun salınımı,
+  - göz kırpma,
+  - namluda gezen parıltı.
+
+![Kade ve Bram](Assets/Gallery/kade_vs_bram.png) ![Kade idle](Assets/Gallery/kade_idle_x8.gif)
+
+| | Bram (kodla hesaplanan) | Kade (piksel piksel) |
+| --- | --- | --- |
+| Boyut | 128×110 kare, ~60 px karakter | 32×32 kare, ~29 px karakter |
+| Yöntem | Kapsül ve poligon iskelet, otomatik gölge, otomatik outline | Her piksel elle; gölge, ışık tarafı ve outline elle seçildi |
+| Animasyondaki toplam renk | 134 | 24 |
+| Siluet tanımı | %83 | %79 |
+| Idle döngü dikişi | 0.143 | 0.020 |
+
+**Ders:** Okunaklılığı ve "piksel sanatı" hissini, palet disiplini ve her pikselin bilinçli seçimi belirliyor; çözünürlük değil. Otomatik araçlar aynı malzemeye onlarca ara ton üretip görüntüyü bulanıklaştırıyor. Elle çizimde her renk bir amaç taşıyor.
+
+İki yöntemin güçlü yanları farklı:
+- **Kodla iskelet (Bram):** Çok sayıda animasyonu ve ara kareyi hızlı üretiyor.
+- **Elle çizim (Kade):** Kalite getiriyor ama zaman alıyor.
+
+En iyi sonuç ikisini birleştirmekten gelir: anahtar pozları ve karakteri elle çizmek, ara işleri araçlara bırakmak (ara kareler, varyantlar, efektler, dışa aktarma).
+
