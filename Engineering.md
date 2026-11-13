@@ -30,6 +30,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 10. [.pxs proje formatı](#10-pxs-proje-formatı)
 11. [Bağımlılık politikası](#11-bağımlılık-politikası)
 12. [Karşılaştırmalı asset üretim testleri](#12-karşılaştırmalı-asset-üretim-testleri)
+13. [Gelişmiş VFX paketi ve ikincil hareket](#13-gelişmiş-vfx-paketi-ve-ikincil-hareket)
 
 ---
 
@@ -39,7 +40,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 69 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 71 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -52,7 +53,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **111 araç** | ✅ | 14 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **113 araç** | ✅ | 15 uçtan uca gateway testi |
 | Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
 | Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
@@ -133,7 +134,7 @@ Freedom Network düzeni: her platform tek kaynak dosyası (`Core.kt` / `Core.rs`
 ### Hızlı başlangıç
 
 ```bash
-cd Native && cargo test                     # Rust motoru: 69 test (golden render dahil)
+cd Native && cargo test                     # Rust motoru: 71 test (golden render dahil)
 ./gradlew test                              # JVM: JSON, JNI köprüsü, gateway (Rust'ı otomatik derler)
 ./gradlew :Windows:run                      # masaüstü editörü
 ./gradlew :Gateway:run --args="--size 64x64 --port 38471 --workspace ./workspace [--token T] [--allow-destructive]"
@@ -311,7 +312,7 @@ Sunucu "dual-era"dır ve iki dönemi aynı endpoint'te sunar:
 
 Yanıtlar her zaman `application/json` olarak döner. Bildirimler `202` alır. `GET /mcp` isteği `405` döner.
 
-### Araçlar (111)
+### Araçlar (113)
 
 Tam şemalar `Gateway/Schemas/pixel-studio-tools.mcp.json` dosyasındadır.
 
@@ -321,7 +322,7 @@ Tam şemalar `Gateway/Schemas/pixel-studio-tools.mcp.json` dosyasındadır.
 | Animasyon | `frame_add`, `frame_duplicate`, `frame_delete`*, `frame_move`, `frame_get`, `frame_set_duration`, `frame_select`, `animation_tag_create`, `animation_tag_delete`, `animation_set_loop`, `animation_info`, `animation_preview` (GIF) |
 | Katman | `layer_create`, `layer_delete`*, `layer_rename`, `layer_visibility`, `layer_lock`, `layer_opacity`, `layer_move`, `layer_select` |
 | Palet | `palette_get`, `palette_set`, `palette_add` |
-| Efekt | `fx_generate` — ateş, kamp ateşi, kılıç izi, vuruş, büyü, duman, yıldırım, iyileşme, patlama; tek çağrıda animasyonlu kareler |
+| Efekt ve hareket | `fx_generate` — 23 efekt türü, tek çağrıda 8–16 kare, otomatik zamanlama, isteğe bağlı additive glow; `fx_particles` — genel parçacık yayıcı; `anim_generate` — durağan sprite'tan 8+ karelik ikincil hareket (nefes, sallanma, squash, vuruş flaşı …) |
 | Piksel art | `draw_ascii`, `outline` (selective/selout/solid), `auto_shade`, `gradient_map`, `draw_sparkle`, `pixel_cleanup`, `color_ramp`, `palette_list`, `palette_load`, `quantize`, `dither_fill`, `export_normal_map` |
 | 3D Voxel | `voxel_model_create`, `voxel_model_clone`, `voxel_model_delete`*, `voxel_model_set`, `voxel_inspect`, `voxel_get`, `voxel_set`, `voxel_set_many`, `voxel_shape`, `voxel_mirror`, `material_set`, `texture_import`, `texture_generate`, `rig_bone_add`, `rig_clear`*, `rig_bind`, `anim3d_create`, `anim3d_key`, `anim3d_generate`, `voxel_render` (PNG), `voxel_render_sheet` (PNG), `voxel_render_to_frames`, `voxel_pick` |
 | Oyun üretimi | `layer_blend`, `slice_set`, `slice_delete`, `palette_swap`, `rotsprite`, `tileset_create`, `tileset_add_tiles`, `tileset_generate_blob`, `tileset_delete`*, `tilemap_create`, `tilemap_delete`*, `tilemap_set`, `tilemap_terrain`, `tilemap_bake`, `tilemap_render` (PNG), `export_tileset` (PNG), `render_lit` (PNG), `export_atlas`, `export_godot_spriteframes`, `export_tiled`, `gamedev_inspect` — bkz. [Oyun üretimi](#9-oyun-üretimi) |
@@ -671,39 +672,34 @@ A yolu karşılaştırma tabanıdır, değerlendirmeye girmez.
 
 ![Karşılaştırma](Assets/Gallery/asset_benchmark.png)
 
-| Asset | Path | Calls | Payload KB | ms | Colors | Shade depth | Outline % | Result |
-|---|---|---|---|---|---|---|---|---|
-| Cottage (house) | A | 7 | 0.9 | 5 | 6 | 2.0 | 0 | ✅ |
-| Cottage (house) | B | 41 | 4.1 | 8 | 40 | 11.7 | 97 | ✅ |
-| Cottage (house) | C | 22 | 2.3 | 24 | 24 | 6.7 | 98 | ✅ |
-| Ranger (character) | A | 15 | 1.8 | 4 | 8 | 2.0 | 10 | ✅ |
-| Ranger (character) | B | 24 | 2.4 | 4 | 50 | 8.4 | 97 | ✅ |
-| Ranger (character) | C | 10 | 1.0 | 6 | 16 | 3.2 | 88 | ✅ |
-| Slime (monster) | A | 3 | 0.5 | 3 | 3 | 1.0 | 0 | ✅ |
-| Slime (monster) | B | 7 | 0.9 | 3 | 18 | 4.2 | 100 | ✅ |
-| Treasure chest | A | 7 | 0.9 | 3 | 4 | 4.0 | 3 | ✅ |
-| Treasure chest | B | 15 | 1.5 | 4 | 37 | 17.5 | 99 | ✅ |
-| Potion | A | 4 | 0.6 | 3 | 3 | 1.0 | 36 | ✅ |
-| Potion | B | 11 | 1.2 | 3 | 21 | 5.7 | 100 | ✅ |
-| Oak tree | A | 8 | 1.0 | 3 | 2 | 1.0 | 0 | ✅ |
-| Oak tree | B | 16 | 1.5 | 5 | 35 | 6.5 | 99 | ✅ |
-| Oak tree | C | 8 | 0.9 | 14 | 16 | 5.0 | 100 | ✅ |
-| Explosion (8f) | A | 8 | 1.1 | 11 | 1 | 1.0 | 0 | ✅ |
-| Explosion (8f) | B | 88 | 29.4 | 12 | 14 | 3.5 | 52 | ✅ |
-| Explosion (8f) | G | 1 | 0.2 | 10 | 5 | 2.0 | 16 | ✅ |
-| Magic circle (8f) | A | 8 | 1.0 | 8 | 1 | 1.0 | 55 | ✅ |
-| Magic circle (8f) | B | 50 | 5.9 | 15 | 9 | 3.0 | 76 | ✅ |
-| Magic circle (8f) | G | 1 | 0.2 | 9 | 5 | 3.0 | 88 | ✅ |
-| Fire loop | G | 1 | 0.2 | 19 | 6 | 2.0 | 54 | ✅ |
-| Sword slash | G | 1 | 0.2 | 8 | 4 | 1.3 | 82 | ✅ |
-| Hit spark | G | 1 | 0.2 | 6 | 4 | 1.3 | 38 | ✅ |
-| Lightning | G | 1 | 0.2 | 8 | 3 | 1.5 | 26 | ✅ |
-| Heal | G | 1 | 0.2 | 10 | 4 | 1.3 | 43 | ✅ |
-| Smoke puff | G | 1 | 0.2 | 8 | 3 | 3.0 | 14 | ✅ |
+| Asset | Path | Calls | Frames | Payload KB | ms | Colors | Shade depth | Outline % | Motion | Loop seam | Result |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Cottage (house) | A | 9 | 8 | 1.2 | 21 | 9 | 3.0 | 2 | 0.012 | 0.01 | ✅ |
+| Cottage (house) | B | 44 | 8 | 4.5 | 23 | 42 | 12.7 | 95 | 0.109 | 0.122 | ✅ |
+| Cottage (house) | C | 24 | 8 | 2.5 | 42 | 27 | 7.7 | 94 | 0.01 | 0.008 | ✅ |
+| Ranger (character) | A | 16 | 8 | 1.8 | 9 | 8 | 2.0 | 10 | 0.036 | 0.0 | ✅ |
+| Ranger (character) | B | 25 | 8 | 2.5 | 11 | 49 | 8.2 | 91 | 0.08 | 0.0 | ✅ |
+| Ranger (character) | C | 11 | 8 | 1.1 | 11 | 16 | 3.2 | 90 | 0.114 | 0.0 | ✅ |
+| Slime (monster) | A | 4 | 8 | 0.6 | 8 | 3 | 1.0 | 0 | 0.092 | 0.141 | ✅ |
+| Slime (monster) | B | 8 | 8 | 0.9 | 12 | 18 | 4.2 | 100 | 0.22 | 0.31 | ✅ |
+| Treasure chest | A | 8 | 8 | 0.9 | 8 | 4 | 4.0 | 3 | 0.083 | 0.194 | ✅ |
+| Treasure chest | B | 16 | 8 | 1.5 | 14 | 37 | 17.5 | 99 | 0.28 | 0.654 | ✅ |
+| Potion | A | 5 | 8 | 0.7 | 9 | 3 | 1.0 | 36 | 0.113 | 0.264 | ✅ |
+| Potion | B | 12 | 8 | 1.2 | 10 | 21 | 5.7 | 100 | 0.225 | 0.525 | ✅ |
+| Oak tree | A | 9 | 8 | 1.0 | 23 | 2 | 1.0 | 0 | 0.028 | 0.061 | ✅ |
+| Oak tree | B | 17 | 8 | 1.6 | 25 | 35 | 6.5 | 99 | 0.144 | 0.295 | ✅ |
+| Oak tree | C | 9 | 8 | 1.0 | 31 | 16 | 5.0 | 99 | 0.303 | 0.627 | ✅ |
+| Explosion (8f) | A | 8 | 8 | 1.1 | 16 | 1 | 1.0 | 0 | 0.296 | 0.966 | ✅ |
+| Explosion (8f) | B | 86 | 8 | 29.1 | 17 | 14 | 3.5 | 52 | 0.582 | 0.999 | ✅ |
+| Explosion (8f) | G | 1 | 8 | 0.2 | 13 | 5 | 2.0 | 16 | 0.593 | 1.0 | ✅ |
+| Magic circle (8f) | A | 8 | 8 | 1.0 | 10 | 1 | 1.0 | 55 | 0.0 | 0.0 | ✅ |
+| Magic circle (8f) | B | 50 | 8 | 5.9 | 14 | 9 | 3.0 | 76 | 0.321 | 0.378 | ✅ |
+| Magic circle (8f) | G | 1 | 8 | 0.2 | 17 | 5 | 3.0 | 88 | 0.876 | 1.0 | ✅ |
 
-| Tek çağrılık efektler (G) | | | |
-| --- | --- | --- | --- |
-| ![fire](Assets/Gallery/fx_fire_G.gif) | ![explosion](Assets/Gallery/fx_explosion_G.gif) | ![magic](Assets/Gallery/fx_magic_G.gif) | ![slash](Assets/Gallery/fx_slash_G.gif) |
+Her varlık en az 8 karelik bir döngüdür. Durağan varlıklara tek bir `anim_generate` ya da `fx_particles` çağrısıyla ikincil hareket eklenir; Bölüm 13'e bakın. Ölçümler bu yüzden zaman da içerir:
+
+- **Hareket:** ardışık kareler arasında değişen piksellerin oranı.
+- **Döngü dikişi:** son kareden ilk kareye geçerken değişen piksellerin oranı.
 
 **Sonuçlar:**
 - **Yapılar, eşyalar, karakterler:** B yolu 7–41 çağrıyla oyuna hazır sonuç veriyor. Siluet tanımı %97–100, ton derinliği 4–17. A ise düz kalıyor (siluet %0–36, ton derinliği 1–2).
@@ -722,4 +718,99 @@ python3 Assets/Bench.py        # komut betikleri, görseller, Assets/Build/bench
 ```
 
 Eşiklerin altında kalan bir sonuç olursa betik hata koduyla çıkar, bu yüzden CI'da da çalıştırılabilir.
+
+---
+
+## 13. Gelişmiş VFX paketi ve ikincil hareket
+
+### Araştırma: bu efektler nasıl yapılıyor?
+
+Telifli ve telifsiz çalışmalar yalnızca teknik açıdan incelendi; hiçbir görsel ya da kare kopyalanmadı. Çıkan kurallar araçlara şöyle uygulandı:
+
+| Gözlem | Kaynak | Pixel Studio'daki karşılığı |
+| --- | --- | --- |
+| Her efektte hazırlık → doruk → sönme fazları vardır; ateş beyazdan altına, oradan köze soğur. Efektler iki görünümde yapılır: "strict" (sınırlı palet, bantlı ışık, ikili alfa) ve "lit" (additive) | [PVFX Foundry (CC0)](https://nerijs.itch.io/pvfx-foundry) | `fx_generate` fazlı çizer; sıcaktan soğuğa bantlı rampalar kullanır; `glow` lit görünüm için ayrı bir Add katmanına dithered hale ekler |
+| Eşit kare süresi en sık yapılan hatadır: hazırlık kısa, darbe karesi uzun tutulur, ilk ve son kareler yavaşlatılır | [Sprite AI: animasyon ilkeleri](https://www.sprite-ai.art/guides/animation-principles) | `timing: auto`: doruk karesi 1.7×, hazırlık 0.8×, son kare 1.3×; döngülerde kare süresi eşit kalır |
+| Smear'ler 2–3 renkle sınırlı kalır, hafif darbelerde 3–8 döküntü pikseli olur, darbe anında 1–2 karelik beyaz flaş olur | [GamineAI: combat FX](https://gamineai.com/blog/pixel-art-combat-fx-hitstop-smear-frames-impact-timing-2026) | `slash` ve `dash` 4–5 renk kullanır; `shockwave`'de 10 döküntü pikseli var; `anim_generate kind=hurt` 2 kare beyaz flaş + sönen sarsıntı üretir |
+| Nefes ve squash için 1–3 piksel yeterlidir; saç ve pelerin gövdeden geç hareket eder (follow-through); ikincil hareket sprite'ı canlandırır | [Sprite AI](https://www.sprite-ai.art/guides/animation-principles), [WigglyPaint rehberi](https://wigglypaint.com/blog/pixel-art-animation-guide/), [cxong: 12 ilke](https://cxong.github.io/2023/03/12-principles-of-animation) | `anim_generate`: `breathe` (1 px), `squash` (alanı koruyarak), `sway` (üst kısım gecikmeli), `float`, `bob`, `shake`, `pulse`; hareketin uç noktaları 1.4× uzun tutulur |
+| Patlamalar 12 karede, 96 px civarında yapılır; ateş ve parçacıklar kareden kareye ("straight-ahead") çizilir | [OpenGameArt örnekleri](https://opengameart.org/content/free-pixel-effects-pack), [Penusbmic: explosions](https://penusbmic.itch.io/pixel-art-tutorial-understanding-explosions) | `explosion` varsayılan olarak 12 karedir; `fx_particles` kareden kareye fizik simülasyonu yapar |
+
+### Paket: 33 efekt, hepsi en az 8 kare
+
+![VFX paketi](Assets/Gallery/vfx_pack.png)
+
+| | | | |
+| --- | --- | --- | --- |
+| ![portal](Assets/Gallery/vfx_portal_G.gif) | ![shockwave](Assets/Gallery/vfx_shockwave_G.gif) | ![beam](Assets/Gallery/vfx_beam_lit_G.gif) | ![ice](Assets/Gallery/vfx_ice_G.gif) |
+| ![levelup](Assets/Gallery/vfx_levelup_G.gif) | ![pickup](Assets/Gallery/vfx_pickup_G.gif) | ![shield](Assets/Gallery/vfx_shield_G.gif) | ![teleport](Assets/Gallery/vfx_teleport_G.gif) |
+| ![splash](Assets/Gallery/vfx_splash_G.gif) | ![holy](Assets/Gallery/vfx_holy_lit_G.gif) | ![fire](Assets/Gallery/vfx_fire_lit_G.gif) | ![poison](Assets/Gallery/vfx_poison_G.gif) |
+| ![embers](Assets/Gallery/vfx_embers_P.gif) | ![confetti](Assets/Gallery/vfx_confetti_P.gif) | ![rain](Assets/Gallery/vfx_rain_P.gif) | ![magic dust](Assets/Gallery/vfx_magic_dust_P.gif) |
+
+**`fx_generate` (23 tür, tek çağrı):**
+- **Döngüler:** fire, campfire, shadow, poison, portal, shield, heal, pickup.
+- **Tek seferlikler:** slash, hit, magic, smoke, lightning, explosion, shockwave, beam, ice, splash, dash, levelup, dust, holy, teleport.
+
+**`fx_particles`:** rain, snow, embers, confetti, coin burst ve magic dust bu araçla tek çağrıda yapıldı. Ayrıca fire, portal, beam ve holy'nin glow'lu "lit" sürümleri var.
+
+### İkincil hareket: durağan sprite → 8 karelik döngü
+
+| Nefes (karakter) | Squash (slime) | Sallanma (ağaç) | Baca dumanı + pencere ışığı (ev) |
+| --- | --- | --- | --- |
+| ![breathe](Assets/Gallery/anim_ranger_breathe.gif) | ![squash](Assets/Gallery/anim_slime_squash.gif) | ![sway](Assets/Gallery/anim_tree_sway.gif) | ![smoke](Assets/Gallery/anim_cottage_smoke.gif) |
+
+### Testler
+
+`Assets/Bench.py` her efekti ve her varlığı kare kare dışa aktarır ve şu eşiklerle değerlendirir:
+
+1. En az 8 kare.
+2. Hareket var (kareler arası değişim ≥ %0.5).
+3. Durağan varlıkların hareketi tutarlı (değişim ≤ %50; titreme olmaz).
+4. Döngüler dikişsiz kapanır (son → ilk kare değişimi, ortalama adımın 2.5 katından ya da %10'dan küçük).
+5. Tek seferlik efektler söner (doruk ilk ya da son karede değildir veya son kare doruğun %95'inden küçüktür).
+6. 2–24 renk.
+
+| VFX | Calls | Frames | Colors | Type | Motion | Loop seam | Peak frame | End/peak | Result |
+|---|---|---|---|---|---|---|---|---|---|
+| fire | 1 | 16 | 6 | loop | 0.506 | 0.527 | 9 | 0.87 | ✅ |
+| campfire | 1 | 16 | 9 | loop | 0.444 | 0.466 | 9 | 0.88 | ✅ |
+| slash | 1 | 8 | 5 | one-shot | 0.852 | 1.0 | 3 | 0.08 | ✅ |
+| hit | 1 | 8 | 5 | one-shot | 0.493 | 0.968 | 1 | 0.15 | ✅ |
+| magic | 1 | 12 | 5 | one-shot | 0.861 | 1.0 | 5 | 0.29 | ✅ |
+| smoke | 1 | 8 | 4 | one-shot | 0.726 | 1.0 | 3 | 0.0 | ✅ |
+| lightning | 1 | 8 | 4 | one-shot | 0.528 | 0.982 | 0 | 0.4 | ✅ |
+| heal | 1 | 12 | 4 | loop | 0.779 | 0.791 | 10 | 0.99 | ✅ |
+| explosion | 1 | 12 | 7 | one-shot | 0.488 | 1.0 | 7 | 0.53 | ✅ |
+| shockwave | 1 | 10 | 4 | one-shot | 0.936 | 1.0 | 4 | 0.0 | ✅ |
+| beam | 1 | 12 | 4 | one-shot | 0.724 | 1.0 | 6 | 0.02 | ✅ |
+| portal | 1 | 12 | 6 | loop | 0.286 | 0.285 | 0 | 1.0 | ✅ |
+| ice | 1 | 10 | 5 | one-shot | 0.661 | 1.0 | 4 | 0.0 | ✅ |
+| poison | 1 | 12 | 6 | loop | 0.404 | 0.448 | 3 | 0.95 | ✅ |
+| splash | 1 | 10 | 4 | one-shot | 0.858 | 1.0 | 5 | 0.12 | ✅ |
+| dash | 1 | 8 | 4 | one-shot | 0.85 | 1.0 | 4 | 0.42 | ✅ |
+| shield | 1 | 12 | 5 | loop | 0.307 | 0.367 | 1 | 1.0 | ✅ |
+| levelup | 1 | 14 | 5 | one-shot | 0.688 | 1.0 | 5 | 0.13 | ✅ |
+| pickup | 1 | 8 | 5 | loop | 0.636 | 0.546 | 0 | 0.77 | ✅ |
+| dust | 1 | 8 | 4 | one-shot | 0.799 | 1.0 | 3 | 0.0 | ✅ |
+| holy | 1 | 12 | 4 | one-shot | 0.722 | 0.832 | 3 | 0.13 | ✅ |
+| shadow | 1 | 16 | 5 | loop | 0.456 | 0.483 | 9 | 0.87 | ✅ |
+| teleport | 1 | 12 | 4 | one-shot | 0.638 | 1.0 | 0 | 0.0 | ✅ |
+| fire (lit) | 1 | 16 | 6 | loop | 0.461 | 0.472 | 9 | 0.89 | ✅ |
+| portal (lit) | 1 | 12 | 6 | loop | 0.294 | 0.293 | 1 | 1.0 | ✅ |
+| beam (lit) | 1 | 12 | 4 | one-shot | 0.556 | 0.872 | 6 | 0.18 | ✅ |
+| holy (lit) | 1 | 12 | 4 | one-shot | 0.46 | 0.673 | 3 | 0.15 | ✅ |
+| rain | 1 | 8 | 2 | loop | 0.709 | 0.718 | 6 | 0.96 | ✅ |
+| snow | 1 | 16 | 2 | loop | 0.984 | 0.971 | 8 | 0.9 | ✅ |
+| embers | 1 | 12 | 5 | loop | 0.968 | 0.967 | 0 | 0.94 | ✅ |
+| confetti | 1 | 12 | 5 | one-shot | 0.864 | 1.0 | 10 | 0.46 | ✅ |
+| coin burst | 1 | 10 | 4 | one-shot | 0.802 | 1.0 | 4 | 0.89 | ✅ |
+| magic dust | 1 | 12 | 4 | loop | 0.672 | 0.838 | 10 | 0.94 | ✅ |
+
+**Testlerin bulduğu ve düzeltilen hata:** Efekt ya da parçacık aracı zaman çizelgesini uzattığında yeni karelerde diğer katmanlar boş kalıyordu; evin voxel sürümü ilk kareden sonra kayboluyordu. Artık yeni kareler diğer katmanları önceki kareden taşır.
+
+Motor testi 23 efekt türünün hepsini kontrol eder:
+- en az 8 kare,
+- tek seferliklerde uzun tutulan doruk, döngülerde eşit zamanlama,
+- glow katmanının Add karışımıyla oluşması.
+
+Ayrıca parçacık döngüsünü ve 8 hareket türünü doğrular: kare 0 orijinal poz olarak kalır ve katmanlar birlikte hareket eder.
 

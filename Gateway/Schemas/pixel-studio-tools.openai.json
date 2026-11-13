@@ -3709,26 +3709,31 @@
     "type": "function",
     "function": {
       "name": "fx_generate",
-      "description": "Creates a complete animated pixel-art effect in ONE call: fire (loop), campfire (loop, with logs), slash, hit, magic, smoke, lightning, heal (loop), explosion. Frames are added as needed from 'frame' on, durations set, and an optional tag created. Any size and frame count; 'colors' recolors the ramp (hot → cold).",
+      "description": "Creates a complete animated pixel-art effect in ONE call (8-16 frames, anticipation → peak → decay, banded hot→cold ramps): fire/campfire/shadow/poison/portal/shield/heal/pickup (loops), slash, hit, magic, smoke, lightning, explosion, shockwave, beam, ice, splash, dash, levelup, dust, holy, teleport. Timing 'auto' rushes the anticipation, holds the peak frame and eases out (loops stay even). glow=true (or a color) adds the 'lit' tier: a dithered additive halo on its own Add-blend layer. Frames are added as needed; other layers are held.",
       "parameters": {
         "type": "object",
         "properties": {
           "kind": {
             "type": "string",
             "description": "Effect.",
-            "enum": ["fire","campfire","slash","hit","magic","smoke","lightning","heal","explosion"]
+            "enum": ["fire","campfire","slash","hit","magic","smoke","lightning","heal","explosion","shockwave","beam","portal","ice","poison","splash","dash","shield","levelup","pickup","dust","holy","shadow","teleport"]
           },
           "frames": {
             "type": "integer",
-            "description": "Frame count (default per effect).",
+            "description": "Frame count (default per effect, 8-16).",
             "minimum": 1,
             "maximum": 64
           },
           "frame_ms": {
             "type": "integer",
-            "description": "ms per frame.",
+            "description": "Base ms per frame.",
             "minimum": 1,
             "maximum": 60000
+          },
+          "timing": {
+            "type": "string",
+            "description": "auto (held peak, slow-out) or uniform.",
+            "enum": ["auto","uniform"]
           },
           "size": {
             "type": "integer",
@@ -3762,9 +3767,194 @@
             },
             "description": "Replacement ramp colors, brightest first."
           },
+          "glow": {
+            "type": ["boolean","string"],
+            "description": "Additive glow halo: true or a color."
+          },
+          "glow_layer": {
+            "type": "string",
+            "description": "Glow layer name (default '<layer> Glow')."
+          },
           "layer": {
             "type": ["integer","string"],
             "description": "Layer (default active)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "required": ["kind"],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "fx_particles",
+      "description": "General particle emitter for custom effects (rain, snow, embers, sparks, debris, dust, confetti, coins, bubbles): burst or looping stream, speed/gravity/drag physics, a color ramp over each particle's life, size over life, shapes dot/square/plus/star/streak. Frames are added as needed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "frames": {
+            "type": "integer",
+            "description": "Frames (default 8).",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "frame_ms": {
+            "type": "integer",
+            "description": "ms per frame (default 60).",
+            "minimum": 1,
+            "maximum": 60000
+          },
+          "count": {
+            "type": "integer",
+            "description": "Particles (default 24).",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "origin": {
+            "type": ["array","number"],
+            "description": "[x, y] emitter (default canvas center)."
+          },
+          "area": {
+            "type": ["array","number"],
+            "description": "[half-width, half-height] of the emitter area (default point)."
+          },
+          "angle": {
+            "type": "number",
+            "description": "Direction in degrees (-90 = up, default)."
+          },
+          "spread": {
+            "type": "number",
+            "description": "Cone in degrees (default 360)."
+          },
+          "speed": {
+            "type": ["array","number"],
+            "description": "[min, max] px per frame (default [1, 3])."
+          },
+          "gravity": {
+            "type": "number",
+            "description": "px/frame² (negative rises; default 0.15)."
+          },
+          "drag": {
+            "type": "number",
+            "description": "0-0.95 velocity loss per frame (default 0.02)."
+          },
+          "life": {
+            "type": ["array","number"],
+            "description": "[min, max] frames each particle lives."
+          },
+          "size": {
+            "type": ["array","number"],
+            "description": "[start, end] size over life (default [2, 1])."
+          },
+          "shape": {
+            "type": "string",
+            "description": "Particle shape.",
+            "enum": ["dot","square","plus","star","streak"]
+          },
+          "emit": {
+            "type": "string",
+            "description": "burst (default) or stream.",
+            "enum": ["burst","stream"]
+          },
+          "loop": {
+            "type": "boolean",
+            "description": "Seamless loop (default true for streams)."
+          },
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+              "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+            },
+            "description": "Color ramp over life."
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Random seed."
+          },
+          "clear": {
+            "type": "boolean",
+            "description": "Clear the layer in those frames first (default true)."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "First frame (default 0).",
+            "minimum": 0
+          },
+          "tag": {
+            "type": "string",
+            "description": "Animation tag to create."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Layer (default active)."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "anim_generate",
+      "description": "Turns a still sprite into an 8+ frame loop with secondary motion: breathe (1-px chest/head rise), bob, float, sway (top lags: follow-through for trees, hair, capes), squash (area-preserving), shake, pulse (glow), hurt (white hit-flash, then decaying shake). Frame 0 stays the original pose, extremes are held longer (slow-in/out) and every layer with content moves together unless 'layer' restricts it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Motion.",
+            "enum": ["breathe","bob","float","sway","squash","shake","pulse","hurt"]
+          },
+          "frames": {
+            "type": "integer",
+            "description": "Frames (default 8).",
+            "minimum": 2,
+            "maximum": 64
+          },
+          "frame_ms": {
+            "type": "integer",
+            "description": "Base ms per frame.",
+            "minimum": 1,
+            "maximum": 60000
+          },
+          "amount": {
+            "type": "number",
+            "description": "Strength: px for breathe/bob/float/sway/shake/hurt, fraction for squash, brightness for pulse."
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Source pose frame (default 0).",
+            "minimum": 0
+          },
+          "tag": {
+            "type": "string",
+            "description": "Animation tag to create."
+          },
+          "layer": {
+            "type": ["integer","string"],
+            "description": "Only this layer moves (others are held)."
           },
           "expectedRevision": {
             "type": "integer",

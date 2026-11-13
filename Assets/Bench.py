@@ -322,6 +322,14 @@ def explosion(path):
             pts = ring(24, 24, rr, rr * 0.92, 14, phase=f * 0.4 + k)
             pts = [[x + math.sin(i * 2.3 + f) * rr * 0.12, y + math.cos(i * 1.7 + f) * rr * 0.12] for i, (x, y) in enumerate(pts)]
             s("draw_polygon", layer="Fire", frame=f, points=pts, color=FIRE[ci])
+        if t > 0.85:
+            # Dissipation: the fire is spent, only thinning smoke remains.
+            for i in range(6):
+                a = i / 6 * math.tau + f * 0.2
+                sr = 3 + 3 * (1 - t)
+                s("draw_ellipse", layer="Smoke", frame=f, x=round(24 + math.cos(a) * r - sr), y=round(24 + math.sin(a) * r - sr - 6), width=round(sr * 2), height=round(sr * 2), color="#8E8496", filled=True)
+            s("dither_fill", layer="Smoke", frame=f, color="#8E8496", color2="transparent", level=10, only_opaque=True)
+            continue
         if t > 0.35:
             for i in range(6):
                 a = i / 6 * math.tau + f * 0.2
@@ -362,34 +370,105 @@ def magic(path):
     return s
 
 
-def generated(kind, size=48, frames=None):
+FX_FRAMES = {"fire": 16, "campfire": 16, "slash": 8, "hit": 8, "magic": 12, "smoke": 8, "lightning": 8, "heal": 12, "explosion": 12,
+             "shockwave": 10, "beam": 12, "portal": 12, "ice": 10, "poison": 12, "splash": 10, "dash": 8, "shield": 12, "levelup": 14,
+             "pickup": 8, "dust": 8, "holy": 12, "shadow": 16, "teleport": 12}
+FX_LOOPS = {"fire", "campfire", "heal", "portal", "poison", "shield", "pickup", "shadow"}
+
+
+def generated(kind, size=48, frames=None, glow=False, suffix=""):
     def make():
-        s = Script(f"{kind}_G", size, size, frames=1)
+        s = Script(f"{kind}{suffix}_G", size, size, frames=1)
         s.layers("FX")
         args = dict(kind=kind, layer="FX", tag=kind)
         if frames:
             args["frames"] = frames
+        if glow:
+            args["glow"] = True
         s("fx_generate", **args)
-        s.frames = frames or {"fire": 16, "slash": 8, "hit": 6, "magic": 12, "smoke": 8, "lightning": 8, "heal": 12, "explosion": 12}[kind]
+        s.frames = frames or FX_FRAMES[kind]
+        s.looped = kind in FX_LOOPS
         return s
     return make
 
 
+def particles(name, frames=12, **args):
+    def make():
+        s = Script(f"{name}_P", 64, 64, frames=1)
+        s.layers("FX")
+        s("fx_particles", layer="FX", frames=frames, tag=name, **args)
+        s.frames = frames
+        s.looped = args.get("emit") == "stream"
+        return s
+    return make
+
+
+# Secondary motion: every still asset becomes an ≥ 8-frame loop with one or two calls.
+MOTION = {
+    "Cottage (house)": "smoke",
+    "Ranger (character)": dict(kind="breathe", amount=1),
+    "Slime (monster)": dict(kind="squash", amount=0.12),
+    "Treasure chest": dict(kind="float", amount=1),
+    "Potion": dict(kind="float", amount=1),
+    "Oak tree": dict(kind="sway", amount=2),
+}
+
+
+def animated(title, make):
+    def build():
+        s = make()
+        if s.frames >= 8:
+            return s
+        motion = MOTION[title]
+        if motion == "smoke":
+            s("layer_create", name="Smoke")
+            s("fx_particles", layer="Smoke", frames=8, emit="stream", count=14, origin=[45, 6], area=[1, 0], angle=-90, spread=30,
+              speed=[0.4, 0.8], gravity=-0.02, drag=0.0, size=[2, 4], life=[6, 8], colors=["#E9E4E6", "#C5BDC2", "#9A9098", "#6E6470"], seed=4)
+            if "Glow" in getattr(s, "layer_names", ()):
+                s("anim_generate", layer="Glow", kind="pulse", amount=0.4)
+        else:
+            s("anim_generate", **motion)
+        s.frames = 8
+        s.looped = True
+        return s
+    return build
+
+
 SUITE = [
-    ("Cottage (house)", "building", [("A", cottage_raw), ("B", cottage_craft), ("C", cottage_voxel)]),
-    ("Ranger (character)", "character", [("A", ranger_raw), ("B", ranger_craft), ("C", ranger_voxel)]),
-    ("Slime (monster)", "character", [("A", lambda: slime("A")), ("B", lambda: slime("B"))]),
-    ("Treasure chest", "prop", [("A", lambda: chest("A")), ("B", lambda: chest("B"))]),
-    ("Potion", "item", [("A", lambda: potion("A")), ("B", lambda: potion("B"))]),
-    ("Oak tree", "nature", [("A", lambda: tree("A")), ("B", lambda: tree("B")), ("C", lambda: tree("C"))]),
+    ("Cottage (house)", "building", [("A", animated("Cottage (house)", cottage_raw)), ("B", animated("Cottage (house)", cottage_craft)),
+                                     ("C", animated("Cottage (house)", cottage_voxel))]),
+    ("Ranger (character)", "character", [("A", animated("Ranger (character)", ranger_raw)), ("B", animated("Ranger (character)", ranger_craft)),
+                                         ("C", animated("Ranger (character)", ranger_voxel))]),
+    ("Slime (monster)", "character", [("A", animated("Slime (monster)", lambda: slime("A"))), ("B", animated("Slime (monster)", lambda: slime("B")))]),
+    ("Treasure chest", "prop", [("A", animated("Treasure chest", lambda: chest("A"))), ("B", animated("Treasure chest", lambda: chest("B")))]),
+    ("Potion", "item", [("A", animated("Potion", lambda: potion("A"))), ("B", animated("Potion", lambda: potion("B")))]),
+    ("Oak tree", "nature", [("A", animated("Oak tree", lambda: tree("A"))), ("B", animated("Oak tree", lambda: tree("B"))),
+                            ("C", animated("Oak tree", lambda: tree("C")))]),
     ("Explosion (8f)", "effect", [("A", lambda: explosion("A")), ("B", lambda: explosion("B")), ("G", generated("explosion", frames=8))]),
     ("Magic circle (8f)", "effect", [("A", lambda: magic("A")), ("B", lambda: magic("B")), ("G", generated("magic", frames=8))]),
-    ("Fire loop", "effect", [("G", generated("fire"))]),
-    ("Sword slash", "effect", [("G", generated("slash"))]),
-    ("Hit spark", "effect", [("G", generated("hit"))]),
-    ("Lightning", "effect", [("G", generated("lightning"))]),
-    ("Heal", "effect", [("G", generated("heal"))]),
-    ("Smoke puff", "effect", [("G", generated("smoke"))]),
+]
+
+# The VFX pack: every generator kind at 64×64 (≥ 8 frames), "lit" variants with the additive
+# glow pass, and custom effects built with the particle emitter.
+FIRE_RAMP = ["#FFF9D6", "#FFE066", "#FFA431", "#F2581F", "#B72727"]
+VFX_SUITE = [(k, generated(k, size=64)) for k in FX_FRAMES] + [
+    ("fire (lit)", generated("fire", size=64, glow=True, suffix="_lit")),
+    ("portal (lit)", generated("portal", size=64, glow=True, suffix="_lit")),
+    ("beam (lit)", generated("beam", size=64, glow=True, suffix="_lit")),
+    ("holy (lit)", generated("holy", size=64, glow=True, suffix="_lit")),
+    ("rain", particles("rain", frames=8, emit="stream", count=40, origin=[32, -4], area=[40, 0], angle=100, spread=4, speed=[4, 5],
+                       gravity=0.1, drag=0, life=[8, 8], size=[2, 2], shape="streak", colors=["#C9E6FF", "#8FB8E8"], seed=2)),
+    ("snow", particles("snow", frames=16, emit="stream", count=28, origin=[32, -2], area=[36, 0], angle=95, spread=40, speed=[3.2, 4.6],
+                       gravity=0.0, drag=0.0, life=[16, 16], size=[2, 1], shape="dot", colors=["#FFFFFF", "#DDEBFF"], seed=3)),
+    ("embers", particles("embers", frames=12, emit="stream", count=20, origin=[32, 60], area=[14, 0], angle=-90, spread=40, speed=[3.0, 4.5],
+                         gravity=-0.05, drag=0.0, life=[12, 12], size=[2, 1], shape="dot", colors=FIRE_RAMP, seed=5)),
+    ("confetti", particles("confetti", frames=12, count=40, origin=[32, 40], angle=-90, spread=120, speed=[2, 4], gravity=0.22, drag=0.04,
+                           life=[10, 12], size=[2, 2], shape="square", colors=["#FF6B8A", "#FFD24A", "#6FE3B0", "#7AA8FF", "#C68BFF"], seed=6)),
+    ("coin burst", particles("coin_burst", frames=10, count=14, origin=[32, 44], angle=-90, spread=140, speed=[2, 3.5], gravity=0.3, drag=0.02,
+                             life=[9, 10], size=[3, 2], shape="star", colors=["#FFFFFF", "#FFE58A", "#FFC23D", "#C8862B"], seed=7)),
+    ("magic dust", particles("magic_dust", frames=12, emit="stream", count=18, origin=[32, 32], area=[18, 18], angle=-90, spread=360,
+                             speed=[0.2, 0.6], gravity=-0.02, drag=0.05, life=[6, 10], size=[3, 1], shape="star",
+                             colors=["#FFFFFF", "#E7C9FF", "#B57BFF", "#7A3FE0"], seed=8)),
 ]
 
 
@@ -441,37 +520,77 @@ def metrics(img):
 BARS = dict(depth=3.0, outline=80, colors=64)
 
 
+def temporal(frames):
+    """Motion metrics over the frame sequence: frame count, mean change between consecutive
+    frames, loop seam (last → first change) and the coverage envelope."""
+    def changed(a, b):
+        pa, pb = a.load(), b.load()
+        diff = union = 0
+        for y in range(a.height):
+            for x in range(a.width):
+                ca, cb = pa[x, y], pb[x, y]
+                if ca[3] or cb[3]:
+                    union += 1
+                    diff += ca != cb
+        return diff / max(1, union)
+
+    steps = [changed(frames[i], frames[i + 1]) for i in range(len(frames) - 1)]
+    cover = [sum(1 for p in f.getdata() if p[3]) for f in frames]
+    return dict(frames=len(frames), motion=round(sum(steps) / max(1, len(steps)), 3),
+                seam=round(changed(frames[-1], frames[0]), 3), peak=cover.index(max(cover)), end=round(cover[-1] / max(1, max(cover)), 2))
+
+
+def run(s):
+    """Replays a script, exporting every frame; returns (wall ms, frame images)."""
+    from PIL import Image
+
+    lines = list(s.lines)
+    if "Shadow" in getattr(s, "layer_names", ()):
+        lines.append(json.dumps({"op": "layer_visibility", "layer": "Shadow", "visible": False}))
+    lines.append(json.dumps({"op": "export_png", "frame": s.frames // 2, "scale": 1, "_save": f"{s.name}_measure.png"}))
+    if "Shadow" in getattr(s, "layer_names", ()):
+        lines.append(json.dumps({"op": "layer_visibility", "layer": "Shadow", "visible": True}))
+    for k in range(s.frames):
+        lines.append(json.dumps({"op": "export_png", "frame": k, "scale": 1, "_save": f"frames/{s.name}_{k:02d}.png"}))
+    lines.append(json.dumps({"op": "export_gif", "scale": 3, "_save": f"{s.name}.gif"}))
+    script = os.path.join(OUT, f"{s.name}.jsonl")
+    with open(script, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    t0 = time.perf_counter()
+    r = subprocess.run([RUNNER, script, OUT], capture_output=True, text=True)
+    ms = (time.perf_counter() - t0) * 1000
+    if r.returncode != 0:
+        print(r.stdout, r.stderr)
+        raise SystemExit(f"{s.name} failed")
+    frames = [Image.open(os.path.join(OUT, "frames", f"{s.name}_{k:02d}.png")).convert("RGBA") for k in range(s.frames)]
+    return ms, frames, Image.open(os.path.join(OUT, f"{s.name}_measure.png")).convert("RGBA")
+
+
+def motion_ok(t, looped, effect):
+    """≥ 8 frames, something moves, stills stay coherent, loops close, one-shots dissipate."""
+    if t["frames"] < 8 or t["motion"] < 0.005:
+        return False
+    if not effect and t["motion"] > 0.5:
+        return False
+    if looped:
+        return t["seam"] <= max(2.5 * t["motion"], 0.1)
+    return (not effect) or t["end"] < 0.95 or t["peak"] not in (0, t["frames"] - 1)
+
+
 def main():
     from PIL import Image, ImageDraw
 
     if not os.path.exists(RUNNER):
         subprocess.run(["cargo", "build", "--release", "--example", "run_script"], cwd=os.path.join(ROOT, "Native"), check=True)
-    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(os.path.join(OUT, "frames"), exist_ok=True)
     rows, cells = [], []
     for title, kind, paths in SUITE:
         for path, make in paths:
             s = make()
-            lines = list(s.lines)
-            lines.append(json.dumps({"op": "export_png", "frame": 0, "scale": 1, "_save": f"{s.name}.png"}))
-            # Measurement copy: the sprite alone (ground shadows are separate sprites in a game).
-            if "Shadow" in getattr(s, "layer_names", ()):
-                lines.append(json.dumps({"op": "layer_visibility", "layer": "Shadow", "visible": False}))
-            lines.append(json.dumps({"op": "export_png", "frame": s.frames // 2, "scale": 1, "_save": f"{s.name}_measure.png"}))
-            if s.frames > 1:
-                lines.append(json.dumps({"op": "export_gif", "scale": 3, "_save": f"{s.name}.gif"}))
-                lines.append(json.dumps({"op": "export_png", "frame": s.frames // 2, "scale": 1, "_save": f"{s.name}_mid.png"}))
-            script = os.path.join(OUT, f"{s.name}.jsonl")
-            with open(script, "w") as fh:
-                fh.write("\n".join(lines) + "\n")
-            t0 = time.perf_counter()
-            r = subprocess.run([RUNNER, script, OUT], capture_output=True, text=True)
-            ms = (time.perf_counter() - t0) * 1000
-            if r.returncode != 0:
-                print(r.stdout, r.stderr)
-                raise SystemExit(f"{s.name} failed")
-            shot = f"{s.name}_mid.png" if s.frames > 1 else f"{s.name}.png"
-            img = Image.open(os.path.join(OUT, shot)).convert("RGBA")
-            m = metrics(Image.open(os.path.join(OUT, f"{s.name}_measure.png")).convert("RGBA"))
+            ms, frames, measure = run(s)
+            m = metrics(measure)
+            t = temporal(frames)
+            looped = getattr(s, "looped", kind != "effect" or title.startswith("Magic"))
             if kind == "effect":
                 # Effects use one hot→cold ramp across hues: judge brightness bands, not hue families.
                 ok = path == "A" or (3 <= m["colors"] <= 24)
@@ -479,11 +598,25 @@ def main():
                 ok = path == "A" or (m["depth"] >= BARS["depth"] and m["colors"] <= BARS["colors"] and m["outline"] >= BARS["outline"])
             if path == "G":
                 ok = ok and s.calls == 1
-            rows.append(dict(asset=title, kind=kind, path=path, calls=s.calls, kb=round(s.payload() / 1024, 1), ms=round(ms), ok=ok, **m))
-            cells.append((title, path, img))
-            print(f"{title:22} {path}  calls {s.calls:3}  {ms:6.0f} ms  colors {m['colors']:3}  depth {m['depth']:4}  outline {m['outline']:3}%  {'PASS' if ok else 'FAIL'}")
+            ok = path == "A" or (ok and motion_ok(t, looped, kind == "effect"))
+            rows.append(dict(asset=title, kind=kind, path=path, calls=s.calls, kb=round(s.payload() / 1024, 1), ms=round(ms), ok=ok, **m, **t))
+            cells.append((title, path, frames[len(frames) // 2]))
+            print(f"{title:22} {path}  calls {s.calls:3}  {ms:6.0f} ms  colors {m['colors']:3}  depth {m['depth']:4}  outline {m['outline']:3}%"
+                  f"  frames {t['frames']:2} motion {t['motion']:.3f} seam {t['seam']:.3f}  {'PASS' if ok else 'FAIL'}")
 
-    # Comparison sheet: one row per asset, columns A / B / C at 4×.
+    vfx = []
+    for title, make in VFX_SUITE:
+        s = make()
+        ms, frames, measure = run(s)
+        m, t = metrics(measure), temporal(frames)
+        # Particles of one burst share an age (one color per frame): count colors over the clip.
+        m["colors"] = len({p[:3] for f in frames for p in f.getdata() if p[3]})
+        ok = s.calls == 1 and 2 <= m["colors"] <= 24 and motion_ok(t, s.looped, True)
+        vfx.append(dict(asset=title, calls=s.calls, ms=round(ms), ok=ok, loop=s.looped, colors=m["colors"], frames_img=frames, **t))
+        print(f"VFX {title:16} frames {t['frames']:2}  colors {m['colors']:2}  motion {t['motion']:.3f}  seam {t['seam']:.3f}  "
+              f"peak {t['peak']:2} end {t['end']:.2f}  {'loop' if s.looped else 'once'}  {'PASS' if ok else 'FAIL'}")
+
+    # Comparison sheet: one row per asset, columns A / B / C / G at 4× (middle frame).
     titles = [t for t, _, _ in SUITE]
     cw, ch, sc = 64 * 4 + 16, 64 * 4 + 28, 4
     sheet = Image.new("RGBA", (180 + cw * 4, ch * len(titles) + 30), (34, 36, 52, 255))
@@ -502,15 +635,35 @@ def main():
             bg.alpha_composite(big, ((bg.width - big.width) // 2, (bg.height - big.height) // 2))
             sheet.alpha_composite(bg, (180 + j * cw + 8, y0 + 4))
             r = next(r for r in rows if r["asset"] == t and r["path"] == path)
-            d.text((180 + j * cw + 8, y0 + ch - 22), f"{r['calls']} calls · {r['colors']} col · depth {r['depth']} · outline {r['outline']}%", fill=(200, 200, 220, 255))
+            d.text((180 + j * cw + 8, y0 + ch - 22), f"{r['calls']} calls · {r['frames']}f · {r['colors']} col · outline {r['outline']}%", fill=(200, 200, 220, 255))
     sheet.save(os.path.join(OUT, "comparison.png"))
 
+    # VFX pack film strips: 8 evenly spaced frames per effect at 2×.
+    fw, rh = 64 * 2 + 4, 64 * 2 + 8
+    strip = Image.new("RGBA", (150 + fw * 8, rh * len(vfx) + 8), (20, 20, 32, 255))
+    d = ImageDraw.Draw(strip)
+    for i, v in enumerate(vfx):
+        y0 = 4 + i * rh
+        d.text((8, y0 + 40), v["asset"], fill=(220, 220, 240, 255))
+        d.text((8, y0 + 56), f"{v['frames']}f {'loop' if v['loop'] else 'once'}", fill=(150, 150, 180, 255))
+        fr = v["frames_img"]
+        for j in range(8):
+            img = fr[round(j * (len(fr) - 1) / 7)]
+            strip.alpha_composite(img.resize((128, 128), Image.NEAREST), (150 + j * fw, y0 + 2))
+    strip.save(os.path.join(OUT, "vfx_pack.png"))
+
     with open(os.path.join(OUT, "report.md"), "w") as fh:
-        fh.write("| Asset | Path | Calls | Payload KB | ms | Colors | Shade depth | Outline % | Result |\n|---|---|---|---|---|---|---|---|---|\n")
+        fh.write("| Asset | Path | Calls | Frames | Payload KB | ms | Colors | Shade depth | Outline % | Motion | Loop seam | Result |\n"
+                 "|---|---|---|---|---|---|---|---|---|---|---|---|\n")
         for r in rows:
-            fh.write(f"| {r['asset']} | {r['path']} | {r['calls']} | {r['kb']} | {r['ms']} | {r['colors']} | {r['depth']} | {r['outline']} | {'✅' if r['ok'] else '❌'} |\n")
-    failed = [r for r in rows if not r["ok"]]
-    print(f"\n{len(rows)} builds, {len(failed)} below the quality bars → {os.path.join(OUT, 'report.md')}")
+            fh.write(f"| {r['asset']} | {r['path']} | {r['calls']} | {r['frames']} | {r['kb']} | {r['ms']} | {r['colors']} | {r['depth']} | "
+                     f"{r['outline']} | {r['motion']} | {r['seam']} | {'✅' if r['ok'] else '❌'} |\n")
+        fh.write("\n| VFX | Calls | Frames | Colors | Type | Motion | Loop seam | Peak frame | End/peak | Result |\n|---|---|---|---|---|---|---|---|---|---|\n")
+        for v in vfx:
+            fh.write(f"| {v['asset']} | {v['calls']} | {v['frames']} | {v['colors']} | {'loop' if v['loop'] else 'one-shot'} | {v['motion']} | "
+                     f"{v['seam']} | {v['peak']} | {v['end']} | {'✅' if v['ok'] else '❌'} |\n")
+    failed = [r for r in rows if not r["ok"]] + [v for v in vfx if not v["ok"]]
+    print(f"\n{len(rows)} asset builds + {len(vfx)} VFX, {len(failed)} below the bars → {os.path.join(OUT, 'report.md')}")
     return 1 if failed else 0
 
 

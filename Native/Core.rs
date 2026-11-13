@@ -1344,16 +1344,31 @@ pub mod commands {
         const S: i32 = 64;
         type Img = HashMap<(i32, i32), u8>;
 
-        pub const KINDS: [(&str, u32, u32); 9] = [
-            ("fire", 16, 70),
-            ("campfire", 16, 70),
-            ("slash", 8, 45),
-            ("hit", 6, 50),
-            ("magic", 12, 60),
-            ("smoke", 8, 80),
-            ("lightning", 8, 50),
-            ("heal", 12, 60),
-            ("explosion", 12, 60),
+        /// (name, default frames, ms per frame, loops)
+        pub const KINDS: [(&str, u32, u32, bool); 23] = [
+            ("fire", 16, 70, true),
+            ("campfire", 16, 70, true),
+            ("slash", 8, 45, false),
+            ("hit", 8, 50, false),
+            ("magic", 12, 60, false),
+            ("smoke", 8, 80, false),
+            ("lightning", 8, 50, false),
+            ("heal", 12, 60, true),
+            ("explosion", 12, 60, false),
+            ("shockwave", 10, 50, false),
+            ("beam", 12, 50, false),
+            ("portal", 12, 70, true),
+            ("ice", 10, 55, false),
+            ("poison", 12, 70, true),
+            ("splash", 10, 55, false),
+            ("dash", 8, 40, false),
+            ("shield", 12, 80, true),
+            ("levelup", 14, 60, false),
+            ("pickup", 8, 90, true),
+            ("dust", 8, 60, false),
+            ("holy", 12, 60, false),
+            ("shadow", 16, 70, true),
+            ("teleport", 12, 50, false),
         ];
 
         fn palette(kind: &str) -> &'static [&'static str] {
@@ -1366,6 +1381,20 @@ pub mod commands {
                 "smoke" => &["#E9E4E6", "#C5BDC2", "#9A9098", "#6E6470", "#4A4250"],
                 "lightning" => &["#FFFFFF", "#E3F6FF", "#8FD8FF", "#3F8CFF", "#2A3FA0"],
                 "heal" => &["#FFFFFF", "#D9FFC9", "#8BF07A", "#3FBF5A", "#1F7A4A"],
+                "shockwave" => &["#FFFFFF", "#FFF3C4", "#FFC861", "#E8743B", "#8A3A3A"],
+                "beam" => &["#FFFFFF", "#D6FBFF", "#6FE3FF", "#2E8FE8", "#1D3F8A"],
+                "portal" => &["#FFFFFF", "#F2C9FF", "#C67BFF", "#7A3FE0", "#3A1F7A", "#160C33"],
+                "ice" => &["#FFFFFF", "#DFF6FF", "#9ED8FF", "#5AA8F0", "#2F5FB0"],
+                "poison" => &["#F4FFD0", "#C6F26B", "#7CCB3A", "#3F8F3A", "#245A3A", "#B05AD8"],
+                "splash" => &["#FFFFFF", "#C9EEFF", "#6FC3F2", "#2F7FC8", "#1F4A8A"],
+                "dash" => &["#FFFFFF", "#E9F2FF", "#A9C4F0", "#6E86C8"],
+                "shield" => &["#FFFFFF", "#C9FFF4", "#6FF0D8", "#2FB8B0", "#1F6E7A"],
+                "levelup" => &["#FFFFFF", "#FFF6B0", "#FFD84A", "#F2A23A", "#B8662E"],
+                "pickup" => &["#FFFFFF", "#FFF3B0", "#FFD24A", "#D99A2B", "#6E5A4E"],
+                "dust" => &["#F2E8DA", "#D4C4AE", "#A8957E", "#7A6A5A"],
+                "holy" => &["#FFFFFF", "#FFF8DA", "#FFE89A", "#F2C55A", "#C88A3A"],
+                "shadow" => &["#B57BFF", "#6E3FB0", "#3A2260", "#1E1236", "#0C0818"],
+                "teleport" => &["#FFFFFF", "#E0F4FF", "#8FD0FF", "#4A7FE8", "#2A3A9A"],
                 _ => &["#FFFFFF", "#FFF0A6", "#FFB53D", "#F25F22", "#A52A2A", "#5A4A4E", "#3A3036"],
             }
         }
@@ -1797,6 +1826,646 @@ pub mod commands {
             img
         }
 
+        fn ease_out(p: f32) -> f32 {
+            1.0 - (1.0 - p) * (1.0 - p)
+        }
+
+        fn bayer4(x: i32, y: i32) -> f32 {
+            [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5][((y & 3) * 4 + (x & 3)) as usize] as f32 / 16.0
+        }
+
+        fn disc(img: &mut Img, cx: f32, cy: f32, r: f32, mut color: impl FnMut(f32, f32, f32) -> Option<u8>) {
+            for y in (cy - r - 1.0) as i32..=(cy + r + 1.0) as i32 {
+                for x in (cx - r - 1.0) as i32..=(cx + r + 1.0) as i32 {
+                    let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+                    let d = dx.hypot(dy) / r.max(0.01);
+                    if d <= 1.0
+                        && let Some(c) = color(dx, dy, d)
+                    {
+                        img.insert((x, y), c);
+                    }
+                }
+            }
+        }
+
+        fn phase(t: u32, n: u32) -> f32 {
+            t as f32 / (n.max(2) - 1) as f32
+        }
+
+        fn shockwave(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            if p < 0.12 {
+                disc(&mut img, 32.0, 40.0, 3.0 + p / 0.12 * 4.0, |_, _, d| Some(if d < 0.5 { 0 } else { 1 }));
+            }
+            let r0 = 4.0 + 26.0 * ease_out(p);
+            let thick = 4.0 * (1.0 - p) + 1.2;
+            let shift = (p * 2.0) as u8;
+            for y in 0..S {
+                for x in 0..S {
+                    let (dx, dy) = (x as f32 - 31.5, (y as f32 - 39.5) * 2.0);
+                    let d = (dx.hypot(dy) - r0).abs();
+                    if d > thick || (p > 0.7 && bayer4(x, y) < (p - 0.7) / 0.3) {
+                        continue;
+                    }
+                    let k = d / thick;
+                    img.insert(
+                        (x, y),
+                        ((if k < 0.35 {
+                            0
+                        } else if k < 0.7 {
+                            1
+                        } else {
+                            2
+                        }) + shift)
+                            .min(4),
+                    );
+                }
+            }
+            let mut rng = Rng::new(21);
+            for _ in 0..10 {
+                let a = rng.uniform(0.0, TAU);
+                let s = rng.uniform(0.8, 1.2);
+                if p < 0.9 {
+                    let dist = (r0 + 2.0) * s;
+                    let h = 16.0 * s * 4.0 * p * (1.0 - p);
+                    put(&mut img, 32.0 + a.cos() * dist, 40.0 + a.sin() * dist * 0.5 - h, if p < 0.6 { 2 } else { 3 });
+                }
+            }
+            img
+        }
+
+        fn beam(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            let tf = t as f32;
+            if p < 0.3 {
+                let q = p / 0.3;
+                disc(&mut img, 8.0, 32.0, 2.0 + 7.0 * q, |_, _, d| {
+                    Some(if d < 0.35 {
+                        0
+                    } else if d < 0.7 {
+                        1
+                    } else {
+                        2
+                    })
+                });
+                for i in 0..8 {
+                    let a = i as f32 * TAU / 8.0 + q * 2.0;
+                    let r = 18.0 * (1.0 - q) + 3.0;
+                    put(&mut img, 8.0 + a.cos() * r, 32.0 + a.sin() * r, 1);
+                }
+            } else if p < 0.8 {
+                let q = (p - 0.3) / 0.5;
+                let w = (6.0 * (std::f32::consts::PI * q).sin()).max(1.5) + 1.0;
+                for x in 6..62 {
+                    let xf = x as f32;
+                    let wobble = (xf * 0.5 + tf * 1.7).sin() * 0.8;
+                    let half = w * (0.85 + 0.15 * (xf * 0.9 - tf * 2.3).sin());
+                    for y in 0..S {
+                        let d = (y as f32 - 32.0 - wobble * 0.3).abs();
+                        if d <= half {
+                            let k = d / half;
+                            img.insert(
+                                (x, y),
+                                if k < 0.3 {
+                                    0
+                                } else if k < 0.6 {
+                                    1
+                                } else if k < 0.85 {
+                                    2
+                                } else {
+                                    3
+                                },
+                            );
+                        }
+                    }
+                }
+                disc(&mut img, 8.0, 32.0, 8.0, |_, _, d| Some(if d < 0.45 { 0 } else { 1 }));
+                for i in 0..6 {
+                    let a = std::f32::consts::PI * (0.6 + 0.8 * i as f32 / 5.0);
+                    let len = 4.0 + ((i * 3 + t as i32) % 5) as f32;
+                    for s in 0..len as i32 {
+                        put(&mut img, 58.0 + a.cos() * s as f32, 32.0 + a.sin() * s as f32, if s < 2 { 1 } else { 2 });
+                    }
+                }
+            } else {
+                let q = (p - 0.8) / 0.2;
+                for x in 6..62 {
+                    if ((x + t as i32 * 3).rem_euclid(4) as f32) < 3.0 - q * 3.0 {
+                        img.insert((x, 32), if q < 0.5 { 2 } else { 3 });
+                    }
+                }
+                if q < 0.9 {
+                    disc(&mut img, 8.0, 32.0, 8.0 * (1.0 - q) + 0.6, |_, _, d| Some(if d < 0.5 { 1 } else { 2 }));
+                }
+            }
+            img
+        }
+
+        fn portal(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let ph = TAU * t as f32 / n as f32;
+            for y in 0..S {
+                for x in 0..S {
+                    let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
+                    let r = dx.hypot(dy);
+                    if r > 27.0 {
+                        continue;
+                    }
+                    if r < 7.0 {
+                        img.insert((x, y), if hnoise(x, y, t as i32, 4) > 0.96 { 1 } else { 5 });
+                        continue;
+                    }
+                    let arm = (3.0 * dy.atan2(dx) - r * 0.38 + ph).sin();
+                    let c = if r > 24.0 {
+                        if arm > -0.2 { 2 } else { 3 }
+                    } else if arm > 0.35 {
+                        1 + ((r - 7.0) / 17.0 * 2.0) as u8
+                    } else if arm > -0.1 {
+                        4
+                    } else {
+                        5
+                    };
+                    img.insert((x, y), c);
+                }
+            }
+            for i in 0..6 {
+                let a = ph + i as f32 * TAU / 6.0;
+                let (x, y) = (31.5 + a.cos() * 29.5, 31.5 + a.sin() * 29.5);
+                put(&mut img, x, y, 0);
+                for (ox, oy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                    put(&mut img, x + ox, y + oy, 1);
+                }
+            }
+            img
+        }
+
+        fn ice(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            let mut rng = Rng::new(5);
+            let spikes: Vec<(f32, f32)> =
+                (0..7).map(|i| (i as f32 * TAU / 7.0 + rng.uniform(-0.3, 0.3), rng.uniform(14.0, 26.0))).collect();
+            if p < 0.65 {
+                let grow = ease_out((p / 0.35).min(1.0));
+                for &(ang, len) in &spikes {
+                    let (cx, cy) = (ang.cos(), ang.sin());
+                    let l = len * grow;
+                    for y in 0..S {
+                        for x in 0..S {
+                            let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
+                            let u = dx * cx + dy * cy;
+                            let v = (-dx * cy + dy * cx).abs();
+                            let half = 1.8 * (1.0 - u / l.max(0.1)) + 0.4;
+                            if u > 0.0 && u < l && v < half {
+                                let c = if v < 0.6 {
+                                    0
+                                } else if v > half - 0.7 {
+                                    3
+                                } else if u < l * 0.5 {
+                                    2
+                                } else {
+                                    1
+                                };
+                                img.insert((x, y), c);
+                            }
+                        }
+                    }
+                }
+                let core = 5.0 * grow;
+                for y in 0..S {
+                    for x in 0..S {
+                        let d = (x as f32 - 31.5).abs() + (y as f32 - 31.5).abs();
+                        if d <= core {
+                            img.insert((x, y), if d < core * 0.5 { 0 } else { 1 });
+                        }
+                    }
+                }
+            } else {
+                let q = (p - 0.65) / 0.35;
+                for &(ang, len) in &spikes {
+                    for (j, f) in [0.4f32, 0.7, 1.0].iter().enumerate() {
+                        let dist = len * f * (1.0 + 0.6 * q);
+                        let (x, y) = (31.5 + ang.cos() * dist, 31.5 + ang.sin() * dist + 12.0 * q * q);
+                        let s = 2.0 * (1.0 - q) + 1.0;
+                        for oy in -(s as i32)..=(s as i32) {
+                            for ox in -(s as i32)..=(s as i32) {
+                                let (px, py) = (x as i32 + ox, y as i32 + oy);
+                                if (ox.abs() + oy.abs()) as f32 <= s && !(q > 0.5 && bayer4(px, py) < (q - 0.5) * 2.0) {
+                                    img.insert((px, py), if ox.abs() + oy.abs() == 0 { 1 } else { 2 + (j % 2) as u8 });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mist_r = 10.0 + 16.0 * p;
+            for y in 0..S {
+                for x in 0..S {
+                    let r = (x as f32 - 31.5).hypot(y as f32 - 31.5);
+                    if (r - mist_r).abs() < 2.0 && bayer4(x, y) < 0.35 * (1.0 - p) {
+                        img.entry((x, y)).or_insert(4);
+                    }
+                }
+            }
+            img
+        }
+
+        fn poison(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let ph = t as f32 / n as f32;
+            for y in 0..S {
+                for x in 0..S {
+                    let (dx, dy) = ((x as f32 - 31.5) / 22.0, (y as f32 - 53.5) / 6.0);
+                    let d = dx.hypot(dy);
+                    if d <= 1.0 {
+                        let ripple = ((d * 9.0 - ph * TAU).sin() > 0.8) as u8;
+                        img.insert((x, y), if y < 51 { 2 - ripple } else { 3 + (d > 0.85) as u8 });
+                    }
+                }
+            }
+            for i in 0..8 {
+                let p = (ph + i as f32 / 8.0).fract();
+                let x = 20.0 + ((i * 7) % 24) as f32 + (TAU * (p + i as f32 * 0.3)).sin() * 2.0;
+                let y = 52.0 - p * 44.0;
+                let r = 1.5 + p * 2.5;
+                if p > 0.88 {
+                    for k in 0..8 {
+                        let a = k as f32 * TAU / 8.0;
+                        put(&mut img, x + a.cos() * (r + 1.5), y + a.sin() * (r + 1.5), 1);
+                    }
+                } else {
+                    disc(&mut img, x, y, r, |dx, dy, d| {
+                        Some(if dx < -r * 0.3 && dy < -r * 0.3 {
+                            0
+                        } else if d > 0.75 {
+                            2
+                        } else {
+                            1
+                        })
+                    });
+                }
+                if i % 3 == 0 && p < 0.5 {
+                    put(&mut img, x + 3.0, y - 2.0, 5);
+                }
+            }
+            img
+        }
+
+        fn splash(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            if p < 0.15 {
+                let y = 10.0 + p / 0.15 * 36.0;
+                disc(&mut img, 32.0, y, 2.2, |dx, dy, _| Some(if dx < 0.0 && dy < 0.0 { 0 } else { 1 }));
+                return img;
+            }
+            let q = (p - 0.15) / 0.85;
+            let rx = 6.0 + 18.0 * ease_out(q);
+            let ry = rx * 0.3;
+            for y in 0..S {
+                for x in 0..S {
+                    let d = ((x as f32 - 31.5) / rx).hypot((y as f32 - 50.5) / ry);
+                    if (0.75..=1.0).contains(&d) && !(q > 0.6 && bayer4(x, y) < (q - 0.6) * 2.5) {
+                        img.insert((x, y), if y < 50 { 2 } else { 3 });
+                    }
+                }
+            }
+            let h = 10.0 * (std::f32::consts::PI * (q * 1.5).min(1.0)).sin();
+            for k in 0..8 {
+                let a = k as f32 * TAU / 8.0;
+                let (bx, by) = (31.5 + a.cos() * rx, 50.5 + a.sin() * ry);
+                if a.sin() > 0.2 {
+                    continue;
+                }
+                for s in 0..h as i32 {
+                    put(&mut img, bx, by - s as f32, if s as f32 > h - 2.0 { 0 } else { 1 });
+                }
+            }
+            let mut rng = Rng::new(9);
+            for _ in 0..12 {
+                let vx = rng.uniform(-1.2, 1.2);
+                let vy = rng.uniform(-2.6, -1.6);
+                let tt = q * 14.0;
+                let (x, y) = (32.0 + vx * tt * 1.6, 48.0 + vy * tt + 0.18 * tt * tt);
+                if y < 56.0 {
+                    disc(&mut img, x, y, 1.1, |_, _, _| Some(1));
+                }
+            }
+            img
+        }
+
+        fn dash(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            let mut rng = Rng::new(13);
+            for i in 0..9 {
+                let y = rng.uniform(14.0, 50.0) as i32;
+                let len = rng.uniform(18.0, 44.0);
+                let head = 60.0 - 70.0 * ease_out(p) + rng.uniform(-6.0, 6.0);
+                let tail = head + len * (std::f32::consts::PI * p).sin();
+                for x in head.max(0.0) as i32..tail.min(63.0) as i32 {
+                    let k = (x as f32 - head) / (tail - head).max(1.0);
+                    let c = if k < 0.15 {
+                        0
+                    } else if k < 0.4 {
+                        1
+                    } else if k < 0.75 {
+                        2
+                    } else {
+                        3
+                    };
+                    img.insert((x, y), c);
+                    if i % 3 == 0 && k < 0.6 {
+                        img.insert((x, y + 1), (c + 1).min(3));
+                    }
+                }
+            }
+            if p > 0.3 {
+                for k in 0..4 {
+                    let x = 50.0 - k as f32 * 7.0 + p * 6.0;
+                    let r = 2.0 + k as f32 * 0.6 + p * 1.5;
+                    disc(&mut img, x, 54.0 - p * 3.0, r, |_, dy, _| {
+                        if p > 0.7 && bayer4(x as i32, k) > 1.6 - p { None } else { Some(if dy < 0.0 { 2 } else { 3 }) }
+                    });
+                }
+            }
+            img
+        }
+
+        fn shield(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let ph = t as f32 / n as f32;
+            let big_r = 25.0;
+            for y in 0..S {
+                for x in 0..S {
+                    let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
+                    let r = dx.hypot(dy);
+                    if r > big_r + 0.5 {
+                        continue;
+                    }
+                    let c = if r > big_r - 1.5 {
+                        let a = dy.atan2(dx).to_degrees().rem_euclid(360.0);
+                        if (200.0..290.0).contains(&a) { 0 } else { 1 }
+                    } else if ((x + y) as f32 - ph * 128.0).rem_euclid(64.0) < 5.0 {
+                        2
+                    } else if (x.rem_euclid(8) == 0 || (x + 2 * y).rem_euclid(16) == 0 || (x - 2 * y).rem_euclid(16) == 0)
+                        && (x + y) % 2 == 0
+                    {
+                        3
+                    } else if bayer4(x, y) < 0.12 {
+                        4
+                    } else {
+                        continue;
+                    };
+                    img.insert((x, y), c);
+                }
+            }
+            img
+        }
+
+        fn levelup(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            for y in 0..S {
+                for x in 0..S {
+                    let d = ((x as f32 - 31.5) / 18.0).hypot((y as f32 - 56.5) / 4.0);
+                    if d <= 1.0 && bayer4(x, y) < 0.6 * (1.0 - d) {
+                        img.insert((x, y), if p > 0.7 { 4 } else { 3 });
+                    }
+                }
+            }
+            if p < 0.75 {
+                let w = 10.0 * (std::f32::consts::PI * (p / 0.75)).sin();
+                for y in 4..58 {
+                    let width = w * (1.0 - (58 - y) as f32 / 120.0);
+                    for x in 0..S {
+                        let k = (x as f32 - 31.5).abs() / width.max(0.1);
+                        if k <= 1.0 && !(y < 14 && bayer4(x, y) < (14 - y) as f32 / 10.0) {
+                            img.insert(
+                                (x, y),
+                                if k < 0.3 {
+                                    0
+                                } else if k < 0.6 {
+                                    1
+                                } else {
+                                    2
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+            for i in 0..3 {
+                let q = p * 1.3 - i as f32 * 0.25;
+                if !(0.0..=1.0).contains(&q) {
+                    continue;
+                }
+                let y = 56.0 - q * 48.0;
+                let rx = 16.0 * (1.0 - q * 0.4);
+                for k in 0..64 {
+                    let a = k as f32 * TAU / 64.0;
+                    put(&mut img, 32.0 + a.cos() * rx, y + a.sin() * 4.0, if a.sin() > 0.0 { 2 } else { 3 });
+                }
+            }
+            for i in 0..6 {
+                let q = (p * 1.5 + i as f32 / 6.0).fract();
+                let (x, y) = (32.0 + (i as f32 * 1.7).sin() * 14.0, 56.0 - q * 50.0);
+                put(&mut img, x, y, 0);
+                if q < 0.6 {
+                    for (ox, oy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                        put(&mut img, x + ox, y + oy, 1);
+                    }
+                }
+            }
+            img
+        }
+
+        fn pickup(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let ph = t as f32 / n as f32;
+            let ang = TAU * ph;
+            let bob = (TAU * ph).sin() * 1.5;
+            let (cx, cy) = (31.5, 29.5 + bob);
+            let rx = (9.0 * ang.cos().abs()).max(1.3);
+            for y in 0..S {
+                for x in 0..S {
+                    let d = ((x as f32 + 0.5 - cx - 0.5) / rx).hypot((y as f32 + 0.5 - cy - 0.5) / 10.0);
+                    if d > 1.0 {
+                        continue;
+                    }
+                    let front = ang.cos() > 0.0;
+                    let c = if d > 0.8 {
+                        3
+                    } else if (x as f32) < cx - rx * 0.35 {
+                        if front { 0 } else { 2 }
+                    } else if d < 0.5 && front {
+                        1
+                    } else if front {
+                        2
+                    } else {
+                        3
+                    };
+                    img.insert((x, y), c);
+                }
+            }
+            for y in 0..S {
+                for x in 0..S {
+                    let d = ((x as f32 - 31.5) / (7.0 - bob)).hypot((y as f32 - 46.5) / 1.6);
+                    if d <= 1.0 {
+                        img.entry((x, y)).or_insert(4);
+                    }
+                }
+            }
+            for (i, (sx, sy)) in [(18.0, 16.0), (46.0, 22.0), (40.0, 8.0)].iter().enumerate() {
+                let size = [0, 1, 2, 1][(t as usize + i * 2) % 4];
+                if size == 0 {
+                    continue;
+                }
+                put(&mut img, *sx, *sy, 0);
+                for s in 1..=size {
+                    for (ox, oy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                        put(&mut img, sx + ox * s as f32, sy + oy * s as f32, 1);
+                    }
+                }
+            }
+            img
+        }
+
+        fn dust(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            for side in [-1.0f32, 1.0] {
+                for k in 0..4 {
+                    let kf = k as f32;
+                    let x = 32.0 + side * (4.0 + p * 22.0 * (0.6 + 0.12 * kf) + kf * 2.0);
+                    let y = 50.0 - p * 2.0 * kf;
+                    let r = (1.5 + kf * 0.7) * (0.6 + p * 0.9);
+                    disc(&mut img, x, y, r, |dx, dy, d| {
+                        let px = (x + dx) as i32;
+                        let py = (y + dy) as i32;
+                        if p > 0.45 && bayer4(px, py) < (p - 0.45) * 1.8 {
+                            return None;
+                        }
+                        band(1.0 - d * 0.6 - (dy > 0.0) as u8 as f32 * 0.3 - p * 0.3, &[0.6, 0.4, 0.2, -1.0])
+                    });
+                }
+            }
+            img
+        }
+
+        fn holy(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            let env = if p < 0.2 { p / 0.2 } else { 1.0 - (p - 0.2) / 0.8 };
+            for y in 0..S {
+                for x in 0..S {
+                    let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
+                    let r = dx.hypot(dy);
+                    let ray = (12.0 * (dy.atan2(dx) - p * 0.4)).cos();
+                    if r < 30.0 * env.max(0.25) && ray > 0.86 && bayer4(x, y) < 1.2 - r / 30.0 {
+                        img.insert(
+                            (x, y),
+                            if r < 8.0 {
+                                0
+                            } else if ray > 0.96 {
+                                1
+                            } else {
+                                2
+                            },
+                        );
+                    }
+                }
+            }
+            let big_r = 10.0 + 12.0 * ease_out(p);
+            for k in 0..96 {
+                let a = k as f32 * TAU / 96.0;
+                if p < 0.85 {
+                    put(&mut img, 31.5 + a.cos() * big_r, 31.5 + a.sin() * big_r, if p < 0.5 { 1 } else { 3 });
+                }
+            }
+            let len = (6.0 + 10.0 * env) as i32;
+            for s in -len..=len {
+                put(&mut img, 31.5 + s as f32, 31.5, 0);
+                put(&mut img, 31.5, 31.5 + s as f32, 0);
+            }
+            disc(&mut img, 32.0, 32.0, 4.0 * env + 0.6, |_, _, _| Some(0));
+            img
+        }
+
+        fn shadow(t: u32, n: u32) -> Img {
+            let mut img = fire(t, n, false);
+            for c in img.values_mut() {
+                *c = [4, 4, 3, 2, 1, 0][*c as usize];
+            }
+            img
+        }
+
+        fn teleport(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = phase(t, n);
+            if p < 0.35 {
+                let q = p / 0.35;
+                let w = 12.0 * (1.0 - q) + 1.0;
+                for y in 6..58 {
+                    for x in 0..S {
+                        let k = (x as f32 - 31.5).abs() / w;
+                        if k <= 1.0 && !((y + t as i32) % 3 == 0 && k > 0.5) {
+                            img.insert(
+                                (x, y),
+                                if k < 0.25 {
+                                    0
+                                } else if k < 0.6 {
+                                    1
+                                } else {
+                                    2
+                                },
+                            );
+                        }
+                    }
+                }
+            } else if p < 0.5 {
+                let q = (p - 0.35) / 0.15;
+                let half = (26.0 * (1.0 - q)) as i32 + 2;
+                for y in 32 - half..32 + half {
+                    img.insert((32, y), 0);
+                    img.insert((31, y), 1);
+                }
+            } else {
+                let q = (p - 0.5) / 0.5;
+                let mut rng = Rng::new(17);
+                for _ in 0..14 {
+                    let vx = rng.uniform(-1.0, 1.0);
+                    let v = rng.uniform(0.5, 1.0);
+                    if hnoise(t as i32, (vx * 100.0) as i32, 0, 2) < q * 0.8 {
+                        continue;
+                    }
+                    put(
+                        &mut img,
+                        32.0 + vx * q * 20.0,
+                        32.0 - q * 28.0 * v,
+                        if q < 0.3 {
+                            1
+                        } else if q < 0.7 {
+                            2
+                        } else {
+                            3
+                        },
+                    );
+                }
+            }
+            for y in 0..S {
+                for x in 0..S {
+                    let d = ((x as f32 - 31.5) / 12.0).hypot((y as f32 - 58.5) / 3.0);
+                    if (0.7..=1.0).contains(&d) && bayer4(x, y) < 1.0 - p {
+                        img.insert((x, y), 3);
+                    }
+                }
+            }
+            img
+        }
+
         fn frame_image(kind: &str, t: u32, n: u32) -> Img {
             match kind {
                 "fire" => fire(t, n, false),
@@ -1807,77 +2476,488 @@ pub mod commands {
                 "smoke" => smoke(t, n),
                 "lightning" => lightning(t, n),
                 "heal" => heal(t, n),
+                "shockwave" => shockwave(t, n),
+                "beam" => beam(t, n),
+                "portal" => portal(t, n),
+                "ice" => ice(t, n),
+                "poison" => poison(t, n),
+                "splash" => splash(t, n),
+                "dash" => dash(t, n),
+                "shield" => shield(t, n),
+                "levelup" => levelup(t, n),
+                "pickup" => pickup(t, n),
+                "dust" => dust(t, n),
+                "holy" => holy(t, n),
+                "shadow" => shadow(t, n),
+                "teleport" => teleport(t, n),
                 _ => explosion(t, n),
             }
+        }
+
+        /// Adds frames until `start + n` exist (new frames get `ms`). New frames hold the other
+        /// layers of the previous frame (shared cels), so a still scene stays visible while the
+        /// effect layer animates.
+        fn ensure_frames(doc: &mut Document, start: usize, n: usize, ms: u32, except: u32) -> CmdResult<()> {
+            if start > doc.frames.len() {
+                return Err(CmdError::invalid(format!("'frame' {start} is past the last frame ({})", doc.frames.len())));
+            }
+            while doc.frames.len() < start + n {
+                if doc.frames.len() >= crate::project::MAX_FRAMES {
+                    return Err(CmdError::new("limit", "frame safety limit reached"));
+                }
+                let at = doc.frames.len();
+                let id = doc.insert_frame(at, ms);
+                if at > 0 {
+                    let prev = doc.frames[at - 1].id;
+                    let held: Vec<(u32, std::sync::Arc<crate::pixel::PixelGrid>)> =
+                        doc.cels.iter().filter(|((l, f), _)| *f == prev && *l != except).map(|((l, _), g)| (*l, g.clone())).collect();
+                    for (l, g) in held {
+                        doc.cels.insert((l, id), g);
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        fn add_tag(doc: &mut Document, a: &Json, start: usize, n: usize, looped: bool) -> CmdResult<()> {
+            if let Some(tag) = opt_str(a, "tag")? {
+                let name = tag.trim().to_string();
+                if !name.is_empty() && !doc.tags.iter().any(|t| t.name == name) {
+                    doc.tags.push(Tag {
+                        name,
+                        from_id: doc.frames[start].id,
+                        to_id: doc.frames[start + n - 1].id,
+                        direction: Direction::Forward,
+                        repeat: if looped { 0 } else { 1 },
+                    });
+                }
+            }
+            Ok(())
+        }
+
+        fn writable_layer(doc: &Document, a: &Json) -> CmdResult<usize> {
+            let li = layer_index(doc, a, "layer")?;
+            if doc.layers[li].locked {
+                return Err(CmdError::new("locked", format!("layer '{}' is locked", doc.layers[li].name)));
+            }
+            Ok(li)
+        }
+
+        /// Layer for the additive "lit" glow pass (created above the effect layer when missing).
+        fn glow_layer(doc: &mut Document, a: &Json, li: usize) -> CmdResult<u32> {
+            let name = opt_str(a, "glow_layer")?.map(str::to_string).unwrap_or_else(|| format!("{} Glow", doc.layers[li].name));
+            if let Some(l) = doc.layers.iter().find(|l| l.name == name) {
+                return Ok(l.id);
+            }
+            if doc.layers.len() >= crate::project::MAX_LAYERS {
+                return Err(CmdError::new("limit", "layer limit reached"));
+            }
+            let id = doc.insert_layer(&name, li + 1);
+            if let Some(l) = doc.layers.iter_mut().find(|l| l.id == id) {
+                l.blend = crate::layers::Blend::Add;
+            }
+            Ok(id)
+        }
+
+        /// Dithered halo around the opaque pixels of `mask` (w×h), at most `radius` px away.
+        fn halo(mask: &[bool], w: i64, h: i64, radius: i64) -> Vec<(i64, i64)> {
+            let mut out = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    if mask[(y * w + x) as usize] {
+                        continue;
+                    }
+                    let mut best = f32::MAX;
+                    for dy in -radius..=radius {
+                        for dx in -radius..=radius {
+                            let (nx, ny) = (x + dx, y + dy);
+                            if nx >= 0 && ny >= 0 && nx < w && ny < h && mask[(ny * w + nx) as usize] {
+                                best = best.min(((dx * dx + dy * dy) as f32).sqrt());
+                            }
+                        }
+                    }
+                    let level = 1.0 - best / (radius as f32 + 0.5);
+                    if level > 0.0 && level * 0.9 > bayer4(x as i32, y as i32) {
+                        out.push((x, y));
+                    }
+                }
+            }
+            out
         }
 
         /// Generates a complete animated effect into consecutive frames of a layer.
         pub fn fx_generate(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
             let kind = req_str(a, "kind")?;
-            let Some(&(_, default_frames, default_ms)) = KINDS.iter().find(|(k, _, _)| *k == kind) else {
+            let Some(&(_, default_frames, default_ms, looped)) = KINDS.iter().find(|(k, _, _, _)| *k == kind) else {
                 let names: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
                 return Err(CmdError::invalid(format!("unknown effect '{kind}' ({})", names.join(", "))));
             };
             let n = opt_i64(a, "frames")?.unwrap_or(default_frames as i64).clamp(1, 64) as u32;
             let ms = opt_i64(a, "frame_ms")?.unwrap_or(default_ms as i64).clamp(1, 60_000) as u32;
-            let size = opt_i64(a, "size")?.unwrap_or(doc.width.min(doc.height) as i64).clamp(4, 1024) as i64;
+            let size = opt_i64(a, "size")?.unwrap_or(doc.width.min(doc.height) as i64).clamp(4, 1024);
             let cx = opt_i64(a, "x")?.unwrap_or(doc.width as i64 / 2);
             let cy = opt_i64(a, "y")?.unwrap_or(doc.height as i64 / 2);
             let start = opt_i64(a, "frame")?.unwrap_or(0).max(0) as usize;
+            let timing = opt_str(a, "timing")?.unwrap_or("auto");
+            if !matches!(timing, "auto" | "uniform") {
+                return Err(CmdError::invalid("'timing' must be auto or uniform"));
+            }
             let mut colors: Vec<u32> = palette(kind).iter().map(|h| Rgba::parse_hex(h).expect("palette").to_pixel()).collect();
             if let Some(Json::Arr(list)) = a.get("colors") {
                 for (i, c) in list.iter().enumerate().take(colors.len()) {
                     colors[i] = color_value(doc, c, "colors")?;
                 }
             }
-            let li = layer_index(doc, a, "layer")?;
-            if doc.layers[li].locked {
-                return Err(CmdError::new("locked", format!("layer '{}' is locked", doc.layers[li].name)));
-            }
+            let glow = match a.get("glow") {
+                None | Some(Json::Null) | Some(Json::Bool(false)) => None,
+                Some(Json::Bool(true)) => Some(colors[colors.len().min(3) - 1]),
+                Some(v) => Some(color_value(doc, v, "glow")?),
+            };
+            let li = writable_layer(doc, a)?;
             let layer_id = doc.layers[li].id;
-            // Make sure enough frames exist after `start`.
-            if start > doc.frames.len() {
-                return Err(CmdError::invalid(format!("'frame' {start} is past the last frame ({})", doc.frames.len())));
-            }
-            while doc.frames.len() < start + n as usize {
-                if doc.frames.len() >= crate::project::MAX_FRAMES {
-                    return Err(CmdError::new("limit", "frame safety limit reached"));
+            let glow_id = match glow {
+                Some(_) => Some(glow_layer(doc, a, li)?),
+                None => None,
+            };
+            ensure_frames(doc, start, n as usize, ms, layer_id)?;
+            let images: Vec<Img> = (0..n).map(|t| frame_image(kind, t, n)).collect();
+            // Timing (slow-in/out, held peak): one-shots rush the anticipation, hold the peak
+            // frame and ease out of the last one; loops stay even so they never stutter.
+            let peak = images.iter().enumerate().max_by_key(|(_, img)| img.len()).map(|(i, _)| i).unwrap_or(0);
+            let duration = |t: usize| -> u32 {
+                if timing == "uniform" || looped || n < 3 {
+                    return ms;
                 }
-                let at = doc.frames.len();
-                doc.insert_frame(at, ms);
-            }
+                let f = if t == peak {
+                    1.7
+                } else if t < peak {
+                    0.8
+                } else if t + 1 == n as usize {
+                    1.3
+                } else {
+                    1.0
+                };
+                ((ms as f32 * f).round() as u32).max(1)
+            };
+            let (x0, y0) = (cx - size / 2, cy - size / 2);
             let mut changed = 0u64;
-            for t in 0..n {
-                let fi = start + t as usize;
-                doc.frames[fi].duration_ms = ms;
-                let img = frame_image(kind, t, n);
+            for (t, img) in images.iter().enumerate() {
+                let fi = start + t;
+                doc.frames[fi].duration_ms = duration(t);
                 let frame_id = doc.frames[fi].id;
+                let mut mask = vec![false; (size * size) as usize];
                 let grid = doc.cel_mut(layer_id, frame_id);
-                // Clear the target square, then sample the 64×64 design (nearest).
-                let (x0, y0) = (cx - size / 2, cy - size / 2);
                 for y in 0..size {
                     for x in 0..size {
                         let (sx, sy) = ((x * S as i64 / size) as i32, (y * S as i64 / size) as i32);
                         let v = img.get(&(sx, sy)).map(|&c| colors[c as usize]).unwrap_or(TRANSPARENT);
+                        mask[(y * size + x) as usize] = v != TRANSPARENT;
                         changed += grid.set(x0 + x, y0 + y, v) as u64;
                     }
                 }
-            }
-            if let Some(tag) = opt_str(a, "tag")? {
-                let name = tag.trim().to_string();
-                if !name.is_empty() && !doc.tags.iter().any(|t| t.name == name) {
-                    let looped = matches!(kind, "fire" | "campfire" | "heal" | "magic");
-                    doc.tags.push(Tag {
-                        name,
-                        from_id: doc.frames[start].id,
-                        to_id: doc.frames[start + n as usize - 1].id,
-                        direction: Direction::Forward,
-                        repeat: if looped { 0 } else { 1 },
-                    });
+                if let (Some(gid), Some(gc)) = (glow_id, glow) {
+                    let radius = (size / 16).clamp(2, 8);
+                    let grid = doc.cel_mut(gid, frame_id);
+                    grid.clear();
+                    for (x, y) in halo(&mask, size, size, radius) {
+                        changed += grid.set(x0 + x, y0 + y, gc) as u64;
+                    }
                 }
             }
+            add_tag(doc, a, start, n as usize, looped)?;
+            let durations: Vec<Json> = (0..n as usize).map(|t| Json::from(duration(t))).collect();
             Ok(Outcome::new(
-                Json::obj().with("kind", kind).with("frames", n).with("firstFrame", start).with("frameMs", ms).with("changed", changed),
+                Json::obj()
+                    .with("kind", kind)
+                    .with("frames", n)
+                    .with("firstFrame", start)
+                    .with("loop", looped)
+                    .with("durations", Json::Arr(durations))
+                    .with("glow", glow_id.is_some())
+                    .with("changed", changed),
+                changed,
+            ))
+        }
+
+        fn pair(a: &Json, key: &str, default: (f32, f32)) -> CmdResult<(f32, f32)> {
+            match a.get(key) {
+                None | Some(Json::Null) => Ok(default),
+                Some(Json::Arr(v)) if v.len() == 2 => match (v[0].as_f64(), v[1].as_f64()) {
+                    (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Ok((x as f32, y as f32)),
+                    _ => Err(CmdError::invalid(format!("'{key}' must be [a, b] numbers"))),
+                },
+                Some(v) => match v.as_f64() {
+                    Some(x) if x.is_finite() => Ok((x as f32, x as f32)),
+                    _ => Err(CmdError::invalid(format!("'{key}' must be a number or [a, b]"))),
+                },
+            }
+        }
+
+        /// General particle emitter for custom effects: sparks, debris, dust, embers, rain,
+        /// snow, confetti, bubbles. Physics per frame (speed, gravity, drag), a color ramp over
+        /// each particle's life, size over life, five shapes, burst or looping stream.
+        pub fn fx_particles(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let n = opt_i64(a, "frames")?.unwrap_or(8).clamp(1, 64) as usize;
+            let ms = opt_i64(a, "frame_ms")?.unwrap_or(60).clamp(1, 60_000) as u32;
+            let count = opt_i64(a, "count")?.unwrap_or(24).clamp(1, 2000) as usize;
+            let origin = pair(a, "origin", (doc.width as f32 / 2.0, doc.height as f32 / 2.0))?;
+            let area = pair(a, "area", (0.0, 0.0))?;
+            let angle = super::args::opt_f64(a, "angle")?.unwrap_or(-90.0) as f32;
+            let spread = super::args::opt_f64(a, "spread")?.unwrap_or(360.0).clamp(0.0, 360.0) as f32;
+            let speed = pair(a, "speed", (1.0, 3.0))?;
+            let gravity = super::args::opt_f64(a, "gravity")?.unwrap_or(0.15) as f32;
+            let drag = super::args::opt_f64(a, "drag")?.unwrap_or(0.02).clamp(0.0, 0.95) as f32;
+            let life = pair(a, "life", (n as f32 * 0.6, n as f32))?;
+            let size = pair(a, "size", (2.0, 1.0))?;
+            let shape = opt_str(a, "shape")?.unwrap_or("dot");
+            if !matches!(shape, "dot" | "square" | "plus" | "star" | "streak") {
+                return Err(CmdError::invalid("'shape' must be dot, square, plus, star or streak"));
+            }
+            let emit = opt_str(a, "emit")?.unwrap_or("burst");
+            if !matches!(emit, "burst" | "stream") {
+                return Err(CmdError::invalid("'emit' must be burst or stream"));
+            }
+            let looped = super::args::opt_bool(a, "loop")?.unwrap_or(emit == "stream");
+            let seed = opt_i64(a, "seed")?.unwrap_or(1) as u64;
+            let colors: Vec<u32> = match a.get("colors") {
+                Some(Json::Arr(list)) if !list.is_empty() => {
+                    list.iter().map(|c| color_value(doc, c, "colors")).collect::<CmdResult<_>>()?
+                }
+                _ => ["#FFFFFF", "#FFE9A0", "#FFB040", "#C04020"].iter().map(|h| Rgba::parse_hex(h).expect("ramp").to_pixel()).collect(),
+            };
+            let clear = super::args::opt_bool(a, "clear")?.unwrap_or(true);
+            let start = opt_i64(a, "frame")?.unwrap_or(0).max(0) as usize;
+            let li = writable_layer(doc, a)?;
+            let layer_id = doc.layers[li].id;
+            ensure_frames(doc, start, n, ms, layer_id)?;
+            let mut rng = Rng::new(seed);
+            struct P {
+                spawn: f32,
+                x: f32,
+                y: f32,
+                vx: f32,
+                vy: f32,
+                life: f32,
+            }
+            let parts: Vec<P> = (0..count)
+                .map(|i| {
+                    let a0 = (angle + rng.uniform(-spread / 2.0, spread / 2.0)).to_radians();
+                    let v = rng.uniform(speed.0, speed.1);
+                    P {
+                        spawn: if emit == "burst" { 0.0 } else { i as f32 * n as f32 / count as f32 },
+                        x: origin.0 + rng.uniform(-area.0, area.0),
+                        y: origin.1 + rng.uniform(-area.1, area.1),
+                        vx: a0.cos() * v,
+                        vy: a0.sin() * v,
+                        life: rng.uniform(life.0, life.1).max(1.0),
+                    }
+                })
+                .collect();
+            let mut changed = 0u64;
+            for t in 0..n {
+                let frame_id = doc.frames[start + t].id;
+                doc.frames[start + t].duration_ms = ms;
+                let grid = doc.cel_mut(layer_id, frame_id);
+                if clear {
+                    grid.clear();
+                }
+                for p in &parts {
+                    let mut age = t as f32 - p.spawn;
+                    if looped {
+                        age = age.rem_euclid(n as f32);
+                    }
+                    if age < 0.0 || age > p.life {
+                        continue;
+                    }
+                    let (mut x, mut y, mut vx, mut vy) = (p.x, p.y, p.vx, p.vy);
+                    for _ in 0..age as u32 {
+                        x += vx;
+                        y += vy;
+                        vx *= 1.0 - drag;
+                        vy = vy * (1.0 - drag) + gravity;
+                    }
+                    let q = (age / p.life).clamp(0.0, 0.999);
+                    let c = colors[(q * colors.len() as f32) as usize];
+                    let s = (size.0 + (size.1 - size.0) * q).round().max(1.0) as i64;
+                    let (ix, iy) = (x.round() as i64, y.round() as i64);
+                    let mut plot = |px: i64, py: i64| changed += grid.set(px, py, c) as u64;
+                    match shape {
+                        "square" => {
+                            for oy in 0..s {
+                                for ox in 0..s {
+                                    plot(ix + ox - s / 2, iy + oy - s / 2);
+                                }
+                            }
+                        }
+                        "plus" => {
+                            plot(ix, iy);
+                            for k in 1..s {
+                                plot(ix + k, iy);
+                                plot(ix - k, iy);
+                                plot(ix, iy + k);
+                                plot(ix, iy - k);
+                            }
+                        }
+                        "star" => {
+                            for (dx, dy, _) in crate::pixelart::charart::sparkle_shape(s as u32, "star4") {
+                                plot(ix + dx as i64, iy + dy as i64);
+                            }
+                        }
+                        "streak" => {
+                            let len = (vx.hypot(vy) * s as f32).max(1.0);
+                            let steps = len.ceil() as i64;
+                            for k in 0..=steps {
+                                let f = k as f32 / steps as f32;
+                                plot(
+                                    (x - vx / vx.hypot(vy).max(0.01) * len * f).round() as i64,
+                                    (y - vy / vx.hypot(vy).max(0.01) * len * f).round() as i64,
+                                );
+                            }
+                        }
+                        _ => {
+                            let r = s as f32 / 2.0;
+                            for oy in -(s / 2)..=(s / 2) {
+                                for ox in -(s / 2)..=(s / 2) {
+                                    if ((ox * ox + oy * oy) as f32) <= r * r + 0.5 {
+                                        plot(ix + ox, iy + oy);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            add_tag(doc, a, start, n, looped)?;
+            Ok(Outcome::new(Json::obj().with("frames", n).with("particles", count).with("loop", looped).with("changed", changed), changed))
+        }
+
+        /// Turns a still sprite into an animation (secondary motion): breathe, bob, float, sway
+        /// (follow-through: the top lags), squash (area-preserving), shake, pulse (glow) or hurt
+        /// (white hit-flash, then a decaying shake). Frame 0 stays the original pose; extremes
+        /// are held longer (slow-in/out). Every layer with content moves together unless
+        /// `layer` restricts it, so multi-layer sprites stay aligned.
+        pub fn anim_generate(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            const KINDS: [(&str, u32, f32); 8] = [
+                ("breathe", 140, 1.0),
+                ("bob", 120, 1.0),
+                ("float", 110, 2.0),
+                ("sway", 120, 2.0),
+                ("squash", 90, 0.12),
+                ("shake", 50, 1.0),
+                ("pulse", 100, 0.35),
+                ("hurt", 60, 1.0),
+            ];
+            let kind = req_str(a, "kind")?;
+            let Some(&(_, default_ms, default_amount)) = KINDS.iter().find(|k| k.0 == kind) else {
+                let names: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
+                return Err(CmdError::invalid(format!("unknown motion '{kind}' ({})", names.join(", "))));
+            };
+            let n = opt_i64(a, "frames")?.unwrap_or(8).clamp(2, 64) as usize;
+            let ms = opt_i64(a, "frame_ms")?.unwrap_or(default_ms as i64).clamp(1, 60_000) as u32;
+            let amount = super::args::opt_f64(a, "amount")?.map(|v| v as f32).unwrap_or(default_amount).clamp(-64.0, 64.0);
+            let start = opt_i64(a, "frame")?.unwrap_or(0).max(0) as usize;
+            if start >= doc.frames.len() {
+                return Err(CmdError::not_found("'frame' (the source pose) does not exist"));
+            }
+            let source = doc.frames[start].id;
+            let only = match a.get("layer") {
+                Some(v) if !v.is_null() => Some(doc.layers[layer_index(doc, a, "layer")?].id),
+                _ => None,
+            };
+            let layers: Vec<(u32, bool)> = doc
+                .layers
+                .iter()
+                .filter(|l| doc.cel(l.id, source).is_some_and(|g| !g.is_empty()))
+                .map(|l| (l.id, only.is_none_or(|o| o == l.id) && !l.locked))
+                .collect();
+            if layers.iter().all(|(_, m)| !m) {
+                return Err(CmdError::invalid("nothing to animate: the source frame has no unlocked pixels"));
+            }
+            // Pivot: bottom-center of the moving content.
+            let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+            for (id, moving) in &layers {
+                if let (true, Some(g)) = (*moving, doc.cel(*id, source))
+                    && let Some((bx, by, bw, bh)) = g.bounds()
+                {
+                    (x0, y0) = (x0.min(bx as i64), y0.min(by as i64));
+                    (x1, y1) = (x1.max((bx + bw) as i64 - 1), y1.max((by + bh) as i64 - 1));
+                }
+            }
+            let (pivot, cx, height) = (y1 as f32 + 0.5, (x0 + x1) as f32 / 2.0 + 0.5, (y1 - y0 + 1).max(1) as f32);
+            ensure_frames(doc, start, n, ms, u32::MAX)?;
+            let (w, h) = (doc.width as i64, doc.height as i64);
+            let mut changed = 0u64;
+            for k in 0..n {
+                let phi = TAU * k as f32 / n as f32;
+                let hold = match kind {
+                    "breathe" => phi.cos().abs(),
+                    "shake" | "hurt" => 0.0,
+                    _ => phi.sin().abs(),
+                };
+                doc.frames[start + k].duration_ms = ((ms as f32 * (1.0 + 0.4 * hold)).round() as u32).max(1);
+                if k == 0 {
+                    continue;
+                }
+                let target = doc.frames[start + k].id;
+                let decay = 1.0 - k as f32 / n as f32;
+                let jitter = |s: u32| -> f32 { ((hnoise(k as i32, s as i32, 0, 11) * 3.0).floor() - 1.0) * amount * decay };
+                for &(id, moving) in &layers {
+                    let src = doc.cels[&(id, source)].clone();
+                    if !moving {
+                        doc.cels.insert((id, target), src);
+                        continue;
+                    }
+                    let mut out = crate::pixel::PixelGrid::new(w as u32, h as u32);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let (xf, yf) = (x as f32 + 0.5, y as f32 + 0.5);
+                            let (sx, sy) = match kind {
+                                "bob" => (xf, yf + (amount * phi.sin().abs()).round()),
+                                "float" => (xf, yf + (amount * phi.sin()).round()),
+                                "breathe" => {
+                                    let s = 1.0 + amount / height * (1.0 - phi.cos()) / 2.0;
+                                    (xf, if yf <= pivot { pivot - (pivot - yf) / s } else { yf })
+                                }
+                                "squash" => {
+                                    let q = (phi.sin() * amount).clamp(-0.6, 0.6);
+                                    (cx + (xf - cx) * (1.0 - q), if yf <= pivot { pivot - (pivot - yf) / (1.0 - q) } else { yf })
+                                }
+                                "sway" => {
+                                    let hh = ((pivot - yf) / height).clamp(0.0, 1.0);
+                                    (xf - (amount * hh.powf(1.5) * (phi - 1.2 * hh).sin()).round(), yf)
+                                }
+                                "shake" => (xf - jitter(1).round(), yf - jitter(2).round()),
+                                "hurt" if k >= 3 => (xf - if k % 2 == 0 { amount } else { -amount } * decay * 2.0, yf),
+                                _ => (xf, yf),
+                            };
+                            let v = src.get(sx.floor() as i64, sy.floor() as i64);
+                            if v == TRANSPARENT {
+                                continue;
+                            }
+                            let v = match kind {
+                                "pulse" => {
+                                    let f = amount * (1.0 - phi.cos()) / 2.0;
+                                    let c = Rgba::from_u32(v);
+                                    let up = |ch: u8| (ch as f32 + (255.0 - ch as f32) * f).round() as u8;
+                                    Rgba::new(up(c.r), up(c.g), up(c.b), c.a).to_pixel()
+                                }
+                                "hurt" if k <= 2 => Rgba::new(255, 255, 255, Rgba::from_u32(v).a).to_pixel(),
+                                _ => v,
+                            };
+                            out.set(x, y, v);
+                        }
+                    }
+                    changed += 1;
+                    doc.cels.insert((id, target), std::sync::Arc::new(out));
+                }
+            }
+            add_tag(doc, a, start, n, !matches!(kind, "hurt" | "shake"))?;
+            Ok(Outcome::new(
+                Json::obj()
+                    .with("kind", kind)
+                    .with("frames", n)
+                    .with("layers", layers.iter().filter(|l| l.1).count())
+                    .with("changed", changed),
                 changed,
             ))
         }
@@ -5404,6 +6484,8 @@ pub mod commands {
         ("draw_polygon", Kind::Mutate),
         ("pattern_fill", Kind::Mutate),
         ("fx_generate", Kind::Mutate),
+        ("fx_particles", Kind::Mutate),
+        ("anim_generate", Kind::Mutate),
         ("fill_region", Kind::Mutate),
         ("replace_color", Kind::Mutate),
         ("flip_horizontal", Kind::Mutate),
@@ -5546,6 +6628,8 @@ pub mod commands {
             "draw_polygon" => draw::draw_polygon(doc, a),
             "pattern_fill" => draw::pattern_fill(doc, a),
             "fx_generate" => fx::fx_generate(doc, a),
+            "fx_particles" => fx::fx_particles(doc, a),
+            "anim_generate" => fx::anim_generate(doc, a),
             "fill_region" => draw::fill_region(doc, a),
             "replace_color" => draw::replace_color(doc, a),
             "flip_horizontal" => draw::flip(doc, a, true),

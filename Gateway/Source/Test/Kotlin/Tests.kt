@@ -536,4 +536,24 @@ class GatewayTest {
         val gif = call("animation_preview", mapOf("tag" to "boom"))
         assertEquals("image", (gif.list("content")!!.first() as Map<*, *>)["type"])
     }
+
+    @Test
+    fun vfxPackAndMotionOverMcp() {
+        fun call(tool: String, args: Map<String, Any?>): Map<String, Any?> {
+            val r = callLegacy(tool, args)
+            assertEquals(false, r["isError"], "$tool failed: ${Json.write(r)}")
+            return r
+        }
+        val portal = call("fx_generate", mapOf("kind" to "portal", "glow" to true, "tag" to "portal"))
+        assertEquals(true, portal.obj("structuredContent")!!.obj("result")!!["loop"])
+        call("layer_create", mapOf("name" to "Snow"))
+        call("fx_particles", mapOf("layer" to "Snow", "frames" to 12, "emit" to "stream", "count" to 20, "origin" to listOf(16, 0),
+            "area" to listOf(16, 0), "angle" to 95, "speed" to listOf(1, 2), "colors" to listOf("#FFFFFF", "#DDEBFF")))
+        call("layer_create", mapOf("name" to "Hero"))
+        call("draw_rectangle", mapOf("layer" to "Hero", "frame" to 0, "x" to 12, "y" to 10, "width" to 8, "height" to 16, "color" to "#4E8B4F", "filled" to true))
+        call("anim_generate", mapOf("kind" to "breathe", "layer" to "Hero", "tag" to "idle"))
+        assertTrue(engine.execute("canvas_inspect").result.list("frames")!!.size >= 12)
+        val gif = call("animation_preview", mapOf("tag" to "portal"))
+        assertEquals("image", (gif.list("content")!!.first() as Map<*, *>)["type"])
+    }
 }

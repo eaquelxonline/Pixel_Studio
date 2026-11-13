@@ -505,6 +505,86 @@ mod engine {
     }
 
     #[test]
+    fn advanced_vfx_particles_and_secondary_motion() {
+        // Every effect kind: at least 8 frames, held peak timing for one-shots, glow pass.
+        let kinds = [
+            "fire",
+            "campfire",
+            "slash",
+            "hit",
+            "magic",
+            "smoke",
+            "lightning",
+            "heal",
+            "explosion",
+            "shockwave",
+            "beam",
+            "portal",
+            "ice",
+            "poison",
+            "splash",
+            "dash",
+            "shield",
+            "levelup",
+            "pickup",
+            "dust",
+            "holy",
+            "shadow",
+            "teleport",
+        ];
+        for kind in kinds {
+            let mut e = Engine::new(64, 64);
+            let r = ok(&mut e, &format!(r#"{{"op":"fx_generate","kind":"{kind}","glow":true}}"#));
+            let res = r.get("result").unwrap();
+            assert!(res.get("frames").unwrap().as_i64().unwrap() >= 8, "{kind} has at least 8 frames");
+            assert!(res.get("changed").unwrap().as_i64().unwrap() > 40, "{kind} draws");
+            assert!(e.document().layers.iter().any(|l| l.name == "Layer 1 Glow" && l.blend == crate::layers::Blend::Add));
+            let d: Vec<i64> = res.get("durations").unwrap().as_array().unwrap().iter().map(|v| v.as_i64().unwrap()).collect();
+            if res.get("loop") == Some(&Json::Bool(false)) {
+                assert!(d.iter().max() > d.iter().min(), "{kind}: one-shots hold the peak frame");
+            } else {
+                assert!(d.iter().all(|&x| x == d[0]), "{kind}: loops keep even timing");
+            }
+        }
+
+        // Particles: a looping stream returns to its start; a burst falls under gravity.
+        let mut e = Engine::new(64, 64);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":0,"y":56,"width":64,"height":8,"color":"#446644","filled":true}"##);
+        ok(&mut e, r#"{"op":"layer_create","name":"Rain"}"#);
+        ok(
+            &mut e,
+            r##"{"op":"fx_particles","layer":"Rain","frames":8,"emit":"stream","count":30,"origin":[32,0],"area":[30,0],"angle":95,"spread":5,"speed":[4,5],"gravity":0.1,"shape":"streak","colors":["#C9E6FF","#8FB8E8"],"tag":"rain"}"##,
+        );
+        assert_eq!(e.document().frames.len(), 8);
+        let ground_kept = e.execute(br#"{"op":"render_frame","frame":5}"#, &[]).binary;
+        assert_eq!(&ground_kept[(60 * 64 + 2) * 4..(60 * 64 + 2) * 4 + 3], &[0x44, 0x66, 0x44], "new frames hold the other layers");
+        let burst = ok(
+            &mut e,
+            r##"{"op":"fx_particles","layer":"Rain","frames":8,"count":20,"origin":[32,20],"gravity":0.4,"shape":"star","clear":true}"##,
+        );
+        assert_eq!(burst.get("result").unwrap().get("loop"), Some(&Json::Bool(false)));
+        assert_eq!(err_code(&mut e, r#"{"op":"fx_particles","shape":"heart"}"#), "invalid_argument");
+
+        // Secondary motion: frame 0 untouched, others move, all layers stay aligned.
+        let mut m = Engine::new(32, 32);
+        ok(&mut m, r##"{"op":"draw_rectangle","x":12,"y":8,"width":8,"height":20,"color":"#7FD07A","filled":true}"##);
+        ok(&mut m, r#"{"op":"layer_create","name":"Eyes"}"#);
+        ok(&mut m, r##"{"op":"set_pixels","layer":"Eyes","pixels":[[14,12,"#000000"],[17,12,"#000000"]]}"##);
+        let before = m.execute(br#"{"op":"render_frame","frame":0}"#, &[]).binary;
+        for kind in ["breathe", "bob", "float", "sway", "squash", "shake", "pulse", "hurt"] {
+            let r = ok(&mut m, &format!(r#"{{"op":"anim_generate","kind":"{kind}","frames":8}}"#));
+            assert_eq!(r.get("result").unwrap().get("layers").unwrap().as_i64(), Some(2));
+            assert_eq!(m.execute(br#"{"op":"render_frame","frame":0}"#, &[]).binary, before, "{kind}: frame 0 is the original pose");
+            let moved = (1..8).any(|f| m.execute(format!(r#"{{"op":"render_frame","frame":{f}}}"#).as_bytes(), &[]).binary != before);
+            assert!(moved, "{kind} animates");
+        }
+        assert_eq!(m.document().frames.len(), 8);
+        let flash = m.execute(br#"{"op":"render_frame","frame":1}"#, &[]).binary;
+        assert_eq!(&flash[(10 * 32 + 15) * 4..(10 * 32 + 15) * 4 + 3], &[255, 255, 255], "hurt starts with a white hit-flash");
+        assert_eq!(err_code(&mut m, r#"{"op":"anim_generate","kind":"dance"}"#), "invalid_argument");
+    }
+
+    #[test]
     fn character_art_finishing_tools() {
         let mut e = Engine::new(48, 48);
         ok(&mut e, r##"{"op":"layer_rename","layer":0,"name":"Face"}"##);

@@ -1938,16 +1938,54 @@ internal fun MutableList<ToolDef>.addCharTools() {
             "layer" to layerRef, "frame" to integer("Frame.", min = 0),
         ),
         listOf("pattern", "color"))
+    val fxKinds = listOf(
+        "fire", "campfire", "slash", "hit", "magic", "smoke", "lightning", "heal", "explosion", "shockwave", "beam", "portal", "ice",
+        "poison", "splash", "dash", "shield", "levelup", "pickup", "dust", "holy", "shadow", "teleport",
+    )
+    val pairOf: (String) -> Schema = { d -> linkedMapOf<String, Any?>("type" to listOf("array", "number"), "description" to d) }
     tool("fx_generate", "Generate animated effect", Access.WRITE,
-        "Creates a complete animated pixel-art effect in ONE call: fire (loop), campfire (loop, with logs), slash, hit, magic, smoke, lightning, heal (loop), explosion. " +
-            "Frames are added as needed from 'frame' on, durations set, and an optional tag created. Any size and frame count; 'colors' recolors the ramp (hot → cold).",
+        "Creates a complete animated pixel-art effect in ONE call (8-16 frames, anticipation → peak → decay, banded hot→cold ramps): " +
+            "fire/campfire/shadow/poison/portal/shield/heal/pickup (loops), slash, hit, magic, smoke, lightning, explosion, shockwave, beam, ice, " +
+            "splash, dash, levelup, dust, holy, teleport. Timing 'auto' rushes the anticipation, holds the peak frame and eases out (loops stay even). " +
+            "glow=true (or a color) adds the 'lit' tier: a dithered additive halo on its own Add-blend layer. Frames are added as needed; other layers are held.",
         linkedMapOf<String, Schema>(
-            "kind" to string("Effect.", listOf("fire", "campfire", "slash", "hit", "magic", "smoke", "lightning", "heal", "explosion")),
-            "frames" to integer("Frame count (default per effect).", 1, 64), "frame_ms" to integer("ms per frame.", 1, 60000),
+            "kind" to string("Effect.", fxKinds),
+            "frames" to integer("Frame count (default per effect, 8-16).", 1, 64), "frame_ms" to integer("Base ms per frame.", 1, 60000),
+            "timing" to string("auto (held peak, slow-out) or uniform.", listOf("auto", "uniform")),
             "size" to integer("Effect size in px (default: canvas).", 4, 1024), "x" to integer("Center x."), "y" to integer("Center y."),
             "frame" to integer("First frame index (default 0).", min = 0), "tag" to string("Animation tag to create."),
             "colors" to linkedMapOf<String, Any?>("type" to "array", "items" to color(), "description" to "Replacement ramp colors, brightest first."),
+            "glow" to linkedMapOf<String, Any?>("type" to listOf("boolean", "string"), "description" to "Additive glow halo: true or a color."),
+            "glow_layer" to string("Glow layer name (default '<layer> Glow')."),
             "layer" to layerRef,
+        ),
+        listOf("kind"))
+    tool("fx_particles", "Particle effect", Access.WRITE,
+        "General particle emitter for custom effects (rain, snow, embers, sparks, debris, dust, confetti, coins, bubbles): burst or looping stream, " +
+            "speed/gravity/drag physics, a color ramp over each particle's life, size over life, shapes dot/square/plus/star/streak. Frames are added as needed.",
+        linkedMapOf<String, Schema>(
+            "frames" to integer("Frames (default 8).", 1, 64), "frame_ms" to integer("ms per frame (default 60).", 1, 60000),
+            "count" to integer("Particles (default 24).", 1, 2000), "origin" to pairOf("[x, y] emitter (default canvas center)."),
+            "area" to pairOf("[half-width, half-height] of the emitter area (default point)."), "angle" to num("Direction in degrees (-90 = up, default)."),
+            "spread" to num("Cone in degrees (default 360)."), "speed" to pairOf("[min, max] px per frame (default [1, 3])."),
+            "gravity" to num("px/frame² (negative rises; default 0.15)."), "drag" to num("0-0.95 velocity loss per frame (default 0.02)."),
+            "life" to pairOf("[min, max] frames each particle lives."), "size" to pairOf("[start, end] size over life (default [2, 1])."),
+            "shape" to string("Particle shape.", listOf("dot", "square", "plus", "star", "streak")),
+            "emit" to string("burst (default) or stream.", listOf("burst", "stream")), "loop" to boolean("Seamless loop (default true for streams)."),
+            "colors" to linkedMapOf<String, Any?>("type" to "array", "items" to color(), "description" to "Color ramp over life."),
+            "seed" to integer("Random seed."), "clear" to boolean("Clear the layer in those frames first (default true)."),
+            "frame" to integer("First frame (default 0).", min = 0), "tag" to string("Animation tag to create."), "layer" to layerRef,
+        ))
+    tool("anim_generate", "Animate a still sprite", Access.WRITE,
+        "Turns a still sprite into an 8+ frame loop with secondary motion: breathe (1-px chest/head rise), bob, float, sway (top lags: follow-through for " +
+            "trees, hair, capes), squash (area-preserving), shake, pulse (glow), hurt (white hit-flash, then decaying shake). Frame 0 stays the original " +
+            "pose, extremes are held longer (slow-in/out) and every layer with content moves together unless 'layer' restricts it.",
+        linkedMapOf<String, Schema>(
+            "kind" to string("Motion.", listOf("breathe", "bob", "float", "sway", "squash", "shake", "pulse", "hurt")),
+            "frames" to integer("Frames (default 8).", 2, 64), "frame_ms" to integer("Base ms per frame.", 1, 60000),
+            "amount" to num("Strength: px for breathe/bob/float/sway/shake/hurt, fraction for squash, brightness for pulse."),
+            "frame" to integer("Source pose frame (default 0).", min = 0), "tag" to string("Animation tag to create."),
+            "layer" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Only this layer moves (others are held)."),
         ),
         listOf("kind"))
 }
