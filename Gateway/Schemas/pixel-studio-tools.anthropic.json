@@ -3317,6 +3317,210 @@
     }
   },
   {
+    "name": "draw_polygon",
+    "description": "Draws a filled (default) or outlined polygon: roofs, gables, crystals, banners, blades, terrain slopes. Points are pixel coordinates.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array"
+          },
+          "description": "[[x, y], …] (3-4096 points)."
+        },
+        "color": {
+          "type": "string",
+          "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "filled": {
+          "type": "boolean",
+          "description": "Fill the inside (default true)."
+        },
+        "layer": {
+          "type": ["integer","string"],
+          "description": "Layer (default active)."
+        },
+        "frame": {
+          "type": "integer",
+          "description": "Frame.",
+          "minimum": 0
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["points","color"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "pattern_fill",
+    "description": "Textures a surface for buildings and terrain: brick, shingle (roof tiles), plank (wood), stone (cobbles), tile, grass, wave, checker. By default it only touches existing pixels, so draw the shape flat first, then pattern it, then auto_shade. color = seams (mortar, grout, joints); color2 = cell fill (optional); accent = some cells vary.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "description": "Surface.",
+          "enum": ["brick","shingle","plank","stone","tile","grass","wave","checker"]
+        },
+        "color": {
+          "type": "string",
+          "description": "Seam color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "color2": {
+          "type": "string",
+          "description": "Cell fill (optional).",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "accent": {
+          "type": "string",
+          "description": "Variation color for some cells.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "size": {
+          "type": "integer",
+          "description": "Pattern scale 2-64 (default 4).",
+          "minimum": 2,
+          "maximum": 64
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Variation seed."
+        },
+        "x": {
+          "type": "integer",
+          "description": "Region left."
+        },
+        "y": {
+          "type": "integer",
+          "description": "Region top."
+        },
+        "width": {
+          "type": "integer",
+          "description": "Region width.",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "description": "Region height.",
+          "minimum": 1
+        },
+        "only_opaque": {
+          "type": "boolean",
+          "description": "Only over existing pixels (default true)."
+        },
+        "only_color": {
+          "type": "string",
+          "description": "Only over pixels of this color.",
+          "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+        },
+        "layer": {
+          "type": ["integer","string"],
+          "description": "Layer (default active)."
+        },
+        "frame": {
+          "type": "integer",
+          "description": "Frame.",
+          "minimum": 0
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["pattern","color"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "fx_generate",
+    "description": "Creates a complete animated pixel-art effect in ONE call: fire (loop), campfire (loop, with logs), slash, hit, magic, smoke, lightning, heal (loop), explosion. Frames are added as needed from 'frame' on, durations set, and an optional tag created. Any size and frame count; 'colors' recolors the ramp (hot → cold).",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Effect.",
+          "enum": ["fire","campfire","slash","hit","magic","smoke","lightning","heal","explosion"]
+        },
+        "frames": {
+          "type": "integer",
+          "description": "Frame count (default per effect).",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "frame_ms": {
+          "type": "integer",
+          "description": "ms per frame.",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "size": {
+          "type": "integer",
+          "description": "Effect size in px (default: canvas).",
+          "minimum": 4,
+          "maximum": 1024
+        },
+        "x": {
+          "type": "integer",
+          "description": "Center x."
+        },
+        "y": {
+          "type": "integer",
+          "description": "Center y."
+        },
+        "frame": {
+          "type": "integer",
+          "description": "First frame index (default 0).",
+          "minimum": 0
+        },
+        "tag": {
+          "type": "string",
+          "description": "Animation tag to create."
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "True color as #RRGGBB or #RRGGBBAA (any of 16.7M colors + 8-bit alpha), or 'transparent'.",
+            "pattern": "^(#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|transparent)$"
+          },
+          "description": "Replacement ramp colors, brightest first."
+        },
+        "layer": {
+          "type": ["integer","string"],
+          "description": "Layer (default active)."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "image_import",
     "description": "Pastes a PNG (base64) into a layer/frame at x,y — reference art, imported sprites.",
     "input_schema": {

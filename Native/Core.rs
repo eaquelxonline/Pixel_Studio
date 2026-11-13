@@ -1031,6 +1031,189 @@ pub mod commands {
             shape(doc, a, true)
         }
 
+        fn points(a: &Json) -> CmdResult<Vec<(f64, f64)>> {
+            let list = a.get("points").and_then(Json::as_array).ok_or_else(|| CmdError::invalid("'points' must be [[x, y], …]"))?;
+            if list.len() < 3 || list.len() > 4096 {
+                return Err(CmdError::invalid("a polygon needs 3-4096 points"));
+            }
+            list.iter()
+                .map(|p| match p.as_array() {
+                    Some([x, y]) => match (x.as_f64(), y.as_f64()) {
+                        (Some(x), Some(y)) if x.abs() <= 1e6 && y.abs() <= 1e6 => Ok((x, y)),
+                        _ => Err(CmdError::invalid("polygon points must be numbers")),
+                    },
+                    _ => Err(CmdError::invalid("each point must be [x, y]")),
+                })
+                .collect()
+        }
+
+        /// Polygon (roofs, gables, crystals, banners): filled by pixel centers + crisp edges.
+        pub fn draw_polygon(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let pts = points(a)?;
+            let filled = opt_bool(a, "filled")?.unwrap_or(true);
+            let (l, f) = target(doc, a)?;
+            let v = color(doc, a, "color")?;
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            if filled {
+                let (ymin, ymax) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.1), hi.max(p.1)));
+                for y in (ymin.floor() as i64).max(0)..=(ymax.ceil() as i64).min(grid.height() as i64 - 1) {
+                    let cy = y as f64 + 0.5;
+                    let mut xs: Vec<f64> = Vec::new();
+                    for i in 0..pts.len() {
+                        let (a0, b0) = (pts[i], pts[(i + 1) % pts.len()]);
+                        if (a0.1 > cy) != (b0.1 > cy) {
+                            xs.push(a0.0 + (cy - a0.1) * (b0.0 - a0.0) / (b0.1 - a0.1));
+                        }
+                    }
+                    xs.sort_by(|p, q| p.total_cmp(q));
+                    for pair in xs.chunks(2) {
+                        if let [x0, x1] = pair {
+                            let (from, to) = ((x0 - 0.5).ceil() as i64, (x1 - 0.5).floor() as i64);
+                            for x in from.max(0)..=to.min(grid.width() as i64 - 1) {
+                                changed += grid.set(x, y, v) as u64;
+                            }
+                        }
+                    }
+                }
+            }
+            for i in 0..pts.len() {
+                let (p, q) = (pts[i], pts[(i + 1) % pts.len()]);
+                let r = |v: f64| v.floor() as i64;
+                changed += raster::line(grid, r(p.0), r(p.1), r(q.0), r(q.1), v) as u64;
+            }
+            Ok(Outcome::new(Json::obj().with("changed", changed), changed))
+        }
+
+        fn phash(x: i64, y: i64, seed: i64) -> u32 {
+            let mut h =
+                (x as u32).wrapping_mul(0x8DA6_B343) ^ (y as u32).wrapping_mul(0xD816_3841) ^ (seed as u32).wrapping_mul(0xCB1A_B31F);
+            h ^= h >> 13;
+            h = h.wrapping_mul(0x5BD1_E995);
+            h ^ (h >> 15)
+        }
+
+        /// Pixel-art surface textures for buildings and terrain, applied inside a region
+        /// (by default only over existing pixels, so you draw the shape flat first):
+        /// brick, shingle, plank, stone, tile, grass, wave, checker. `color` draws the seams
+        /// (mortar, grout, plank joints); `color2` fills the cells (optional); `accent` varies
+        /// some cells; `size` scales the pattern.
+        pub fn pattern_fill(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let pattern = opt_str(a, "pattern")?.ok_or_else(|| CmdError::invalid("missing 'pattern'"))?;
+            const KINDS: [&str; 8] = ["brick", "shingle", "plank", "stone", "tile", "grass", "wave", "checker"];
+            if !KINDS.contains(&pattern) {
+                return Err(CmdError::invalid(format!("unknown pattern '{pattern}' ({})", KINDS.join(", "))));
+            }
+            let r = region(doc, a)?;
+            let line = color(doc, a, "color")?;
+            let fill = match a.get("color2") {
+                None | Some(Json::Null) => None,
+                Some(v) => Some(color_value(doc, v, "color2")?),
+            };
+            let accent = match a.get("accent") {
+                None | Some(Json::Null) => None,
+                Some(v) => Some(color_value(doc, v, "accent")?),
+            };
+            let size = opt_i64(a, "size")?.unwrap_or(4).clamp(2, 64);
+            let seed = opt_i64(a, "seed")?.unwrap_or(1);
+            let only_opaque = opt_bool(a, "only_opaque")?.unwrap_or(true);
+            let only = match a.get("only_color") {
+                None | Some(Json::Null) => None,
+                Some(v) => Some(color_value(doc, v, "only_color")?),
+            };
+            let (l, f) = target(doc, a)?;
+            let grid = doc.cel_mut(l, f);
+            let mut changed = 0u64;
+            for y in r.y..r.y + r.h {
+                for x in r.x..r.x + r.w {
+                    if !grid.in_bounds(x, y) {
+                        continue;
+                    }
+                    let cur = grid.get(x, y);
+                    if (only_opaque && cur == TRANSPARENT) || only.is_some_and(|o| o != cur) {
+                        continue;
+                    }
+                    let (lx, ly) = (x - r.x, y - r.y);
+                    let s = size;
+                    // Each pattern answers: seam? and which cell (for accents).
+                    let (seam, cell): (bool, (i64, i64)) = match pattern {
+                        "brick" => {
+                            let row = ly.div_euclid(s);
+                            let w = s * 2;
+                            let ox = lx + if row % 2 == 1 { s } else { 0 };
+                            (ly.rem_euclid(s) == s - 1 || ox.rem_euclid(w) == w - 1, (ox.div_euclid(w), row))
+                        }
+                        "shingle" => {
+                            let row = ly.div_euclid(s);
+                            let w = s + s / 2;
+                            let ox = lx + if row % 2 == 1 { w / 2 } else { 0 };
+                            let u = ox.rem_euclid(w);
+                            let v = ly.rem_euclid(s);
+                            // Rounded shingle tips: the seam curves up at both tile edges.
+                            let edge = u == w - 1 || (v == s - 1) || (v == s - 2 && (u == 0 || u == w - 2));
+                            (edge, (ox.div_euclid(w), row))
+                        }
+                        "plank" => {
+                            let row = ly.div_euclid(s);
+                            let len = s * 4 + (phash(row, 0, seed) % (s as u32 * 3)) as i64;
+                            let off = (phash(row, 1, seed) % len as u32) as i64;
+                            (ly.rem_euclid(s) == s - 1 || (lx + off).rem_euclid(len) == len - 1, ((lx + off).div_euclid(len), row))
+                        }
+                        "stone" => {
+                            // Voronoi cobbles: seam where the two nearest seeds are almost equidistant.
+                            let cs = s * 2;
+                            let (cx, cy) = (lx.div_euclid(cs), ly.div_euclid(cs));
+                            let mut best = [(i64::MAX, (0, 0)); 2];
+                            for dy in -1..=1 {
+                                for dx in -1..=1 {
+                                    let (gx, gy) = (cx + dx, cy + dy);
+                                    let h = phash(gx, gy, seed);
+                                    let sx = gx * cs + (h % cs as u32) as i64;
+                                    let sy = gy * cs + ((h >> 8) % cs as u32) as i64;
+                                    let d = (sx - lx).pow(2) + (sy - ly).pow(2);
+                                    if d < best[0].0 {
+                                        best[1] = best[0];
+                                        best[0] = (d, (gx, gy));
+                                    } else if d < best[1].0 {
+                                        best[1] = (d, (gx, gy));
+                                    }
+                                }
+                            }
+                            let gap = ((best[1].0 as f64).sqrt() - (best[0].0 as f64).sqrt()).abs();
+                            (gap < 1.0, best[0].1)
+                        }
+                        "tile" => (lx.rem_euclid(s) == s - 1 || ly.rem_euclid(s) == s - 1, (lx.div_euclid(s), ly.div_euclid(s))),
+                        "grass" => {
+                            let h = phash(lx, ly, seed);
+                            let blade = h % 100 < 9 || (phash(lx, ly + 1, seed) % 100 < 9 && h.is_multiple_of(3));
+                            (blade, (lx, ly))
+                        }
+                        "wave" => {
+                            let row = ly.div_euclid(s);
+                            let phase = ((lx as f64 / s as f64 * 1.3 + row as f64 * 1.7).sin() * 1.2).round() as i64;
+                            let on = ly.rem_euclid(s) == (s / 2 + phase).rem_euclid(s) && (lx + row * 3).rem_euclid(s * 3) < s * 2;
+                            (on, (lx.div_euclid(s * 3), row))
+                        }
+                        _ => {
+                            let c = (lx.div_euclid(s) + ly.div_euclid(s)).rem_euclid(2) == 1;
+                            (c, (lx.div_euclid(s), ly.div_euclid(s)))
+                        }
+                    };
+                    let v = if seam {
+                        line
+                    } else if let Some(acc) = accent.filter(|_| phash(cell.0, cell.1, seed + 7).is_multiple_of(5)) {
+                        acc
+                    } else if let Some(fl) = fill {
+                        fl
+                    } else {
+                        continue;
+                    };
+                    changed += grid.set(x, y, v) as u64;
+                }
+            }
+            Ok(Outcome::new(Json::obj().with("changed", changed).with("pattern", pattern), changed))
+        }
+
         pub fn fill_region(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
             let (x, y) = (coord(a, "x")?, coord(a, "y")?);
             let contiguous = opt_bool(a, "contiguous")?.unwrap_or(true);
@@ -1142,6 +1325,564 @@ pub mod commands {
             Ok(Outcome::new(Json::obj().with("changed", changed), changed))
         }
     }
+    mod fx {
+        //! One-call 2D effect generator: fire, campfire, slash, hit, magic, smoke, lightning,
+        //! heal and explosion — banded pixel-art palettes, seamless loops where the effect loops,
+        //! any size, frame count and palette. Effects are designed on a 64×64 grid and sampled
+        //! to the requested size.
+
+        use std::collections::HashMap;
+        use std::f32::consts::TAU;
+
+        use super::args::{color_value, layer_index, opt_i64, opt_str, req_str};
+        use super::json::Json;
+        use super::{CmdError, CmdResult, Outcome};
+        use crate::animation::{Direction, Tag};
+        use crate::pixel::{Rgba, TRANSPARENT};
+        use crate::project::Document;
+
+        const S: i32 = 64;
+        type Img = HashMap<(i32, i32), u8>;
+
+        pub const KINDS: [(&str, u32, u32); 9] = [
+            ("fire", 16, 70),
+            ("campfire", 16, 70),
+            ("slash", 8, 45),
+            ("hit", 6, 50),
+            ("magic", 12, 60),
+            ("smoke", 8, 80),
+            ("lightning", 8, 50),
+            ("heal", 12, 60),
+            ("explosion", 12, 60),
+        ];
+
+        fn palette(kind: &str) -> &'static [&'static str] {
+            match kind {
+                "fire" => &["#FFF9D6", "#FFE066", "#FFA431", "#F2581F", "#B72727", "#5E1A2A"],
+                "campfire" => &["#FFF9D6", "#FFE066", "#FFA431", "#F2581F", "#B72727", "#5E1A2A", "#6E4128", "#4A2A1C", "#3A1F16"],
+                "slash" => &["#FFFFFF", "#D9FBFF", "#7FE3FF", "#3A8FE0", "#26407A"],
+                "hit" => &["#FFFFFF", "#FFF2A6", "#FFC53D", "#F2742B", "#9C2F2F"],
+                "magic" => &["#FFFFFF", "#E7C9FF", "#B57BFF", "#7A3FE0", "#3D2690", "#7FF3FF"],
+                "smoke" => &["#E9E4E6", "#C5BDC2", "#9A9098", "#6E6470", "#4A4250"],
+                "lightning" => &["#FFFFFF", "#E3F6FF", "#8FD8FF", "#3F8CFF", "#2A3FA0"],
+                "heal" => &["#FFFFFF", "#D9FFC9", "#8BF07A", "#3FBF5A", "#1F7A4A"],
+                _ => &["#FFFFFF", "#FFF0A6", "#FFB53D", "#F25F22", "#A52A2A", "#5A4A4E", "#3A3036"],
+            }
+        }
+
+        fn hnoise(x: i32, y: i32, z: i32, seed: i32) -> f32 {
+            let mut n = (x as u32).wrapping_mul(374_761_393)
+                ^ (y as u32).wrapping_mul(668_265_263)
+                ^ (z as u32).wrapping_mul(2_147_483_647)
+                ^ (seed as u32).wrapping_mul(1_013_904_223);
+            n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
+            ((n ^ (n >> 16)) & 0xFFFF) as f32 / 65535.0
+        }
+
+        fn vnoise(x: f32, y: f32, z: f32, seed: i32) -> f32 {
+            let (xi, yi, zi) = (x.floor(), y.floor(), z.floor());
+            let f = |t: f32| t * t * (3.0 - 2.0 * t);
+            let (sx, sy, sz) = (f(x - xi), f(y - yi), f(z - zi));
+            let mut acc = 0.0;
+            for dz in 0..2 {
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let w = (if dx == 1 { sx } else { 1.0 - sx })
+                            * (if dy == 1 { sy } else { 1.0 - sy })
+                            * (if dz == 1 { sz } else { 1.0 - sz });
+                        acc += w * hnoise(xi as i32 + dx, yi as i32 + dy, zi as i32 + dz, seed);
+                    }
+                }
+            }
+            acc
+        }
+
+        /// Noise that loops over `period` frames (time on a circle).
+        fn loop_noise(x: f32, y: f32, t: f32, period: f32, seed: i32, r: f32) -> f32 {
+            let a = TAU * t / period;
+            vnoise(x + r * a.cos(), y + r * a.sin(), 0.0, seed)
+        }
+
+        fn band(v: f32, thresholds: &[f32]) -> Option<u8> {
+            thresholds.iter().position(|&th| v >= th).map(|i| i as u8)
+        }
+
+        struct Rng(u64);
+        impl Rng {
+            fn new(seed: u64) -> Rng {
+                Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+            }
+            fn next(&mut self) -> f32 {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                (self.0 >> 40) as f32 / (1u64 << 24) as f32
+            }
+            fn uniform(&mut self, a: f32, b: f32) -> f32 {
+                a + (b - a) * self.next()
+            }
+        }
+
+        fn put(img: &mut Img, x: f32, y: f32, c: u8) {
+            img.insert((x.round() as i32, y.round() as i32), c);
+        }
+
+        /// Maps frame t of n onto a table designed for `len` steps.
+        fn step(t: u32, n: u32, len: usize) -> usize {
+            if n <= 1 { 0 } else { ((t as f32 / (n - 1) as f32) * (len - 1) as f32).round() as usize }
+        }
+
+        fn fire(t: u32, n: u32, logs: bool) -> Img {
+            let (t, nf) = (t as f32, n as f32);
+            let mut img = Img::new();
+            for y in 0..S {
+                for x in 0..S {
+                    let dx = (x as f32 - 32.0) / 16.0;
+                    let h = (58.0 - y as f32) / 44.0;
+                    if !(0.0..=1.15).contains(&h) {
+                        continue;
+                    }
+                    let width = (1.0 - h).max(0.0).powf(0.8) * (1.0 - 0.15 * (h * 6.0 + TAU * t / nf).sin());
+                    let sway = 0.25 * (TAU * t / nf + h * 3.5).sin() * h;
+                    let body = 1.0 - (dx - sway).abs() / width.max(0.01);
+                    let turb = loop_noise(x as f32 * 0.18, y as f32 * 0.16 + t * 0.9, t, nf, 3, 1.2) * 0.55
+                        + loop_noise(x as f32 * 0.45, y as f32 * 0.4 + t * 1.6, t, nf, 9, 1.2) * 0.3;
+                    let v = body * 0.95 + turb * 0.55 - h * 0.55;
+                    if let Some(c) = band(v, &[0.95, 0.78, 0.6, 0.42, 0.28, 0.18]) {
+                        img.insert((x, y), c);
+                    }
+                }
+            }
+            for i in 0..10 {
+                let p = (t / nf + i as f32 * 0.137).fract();
+                let ex = 32.0 + (TAU * (p + i as f32 * 0.31)).sin() * (4 + i % 5) as f32;
+                put(&mut img, ex, 46.0 - p * 44.0, if p < 0.5 { 1 } else { 3 });
+            }
+            if logs {
+                for x in 18..47 {
+                    for y in 57..61 {
+                        if (x - 32i32).abs() + (y - 57) * 3 < 16 {
+                            img.insert((x, y), if (x + y) % 5 != 0 { 6 } else { 7 });
+                        }
+                    }
+                }
+                for x in 20..45 {
+                    img.insert((x, 61), 8);
+                }
+            }
+            img
+        }
+
+        fn slash(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = t as f32 / (n.max(2) - 1) as f32;
+            let (start, span) = (200f32.to_radians(), 220f32.to_radians());
+            let head = start + span * (0.25 + p * 1.5).min(1.0);
+            let tail = start + span * ((p - 0.2) * 1.3).clamp(0.0, 0.9);
+            let fade = ((p - 0.55) / 0.45).max(0.0);
+            for y in 0..S {
+                for x in 0..S {
+                    let (dx, dy) = (x as f32 - 31.5, y as f32 - 33.5);
+                    let r = dx.hypot(dy);
+                    let mut a = (-dy).atan2(dx).rem_euclid(TAU);
+                    if a < TAU / 4.0 {
+                        a += TAU;
+                    }
+                    if !(tail..=head).contains(&a) {
+                        continue;
+                    }
+                    let u = (a - tail) / (head - tail).max(1e-3);
+                    let thick = 1.5 + 7.0 * u * (1.0 - 0.7 * fade);
+                    let d = (r - 22.0).abs();
+                    if d > thick {
+                        continue;
+                    }
+                    let k = d / thick;
+                    let mut c = if k < 0.25 && u > 0.4 {
+                        0
+                    } else if k < 0.5 {
+                        1
+                    } else if k < 0.75 {
+                        2
+                    } else {
+                        3
+                    };
+                    if fade > 0.5 && k > 0.4 {
+                        c = 4;
+                    }
+                    img.insert((x, y), c);
+                }
+            }
+            img
+        }
+
+        fn hit(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let mut rng = Rng::new(4);
+            let rays: Vec<(f32, f32)> = (0..8).map(|_| (rng.uniform(0.0, TAU), rng.uniform(14.0, 26.0))).collect();
+            let i = step(t, n, 6);
+            let grow = [0.45, 0.9, 1.0, 0.85, 0.6, 0.3][i];
+            for (ang, ln) in rays {
+                let l = ln * grow;
+                for s in 0..l as i32 {
+                    let w = (2.6 * (1.0 - s as f32 / l.max(1.0)) * (1.2 - i as f32 * 0.18)).max(0.0);
+                    for o in -(w as i32)..=(w as i32) {
+                        let x = 32.0 + ang.cos() * s as f32 - ang.sin() * o as f32 * 0.6;
+                        let y = 32.0 + ang.sin() * s as f32 + ang.cos() * o as f32 * 0.6;
+                        let k = s as f32 / l.max(1.0);
+                        put(
+                            &mut img,
+                            x,
+                            y,
+                            if k < 0.3 && i < 3 {
+                                0
+                            } else if k < 0.55 {
+                                1
+                            } else if k < 0.8 {
+                                2
+                            } else {
+                                3
+                            },
+                        );
+                    }
+                }
+            }
+            let core = [6, 9, 7, 4, 2, 0][i];
+            for y in 32 - core..33 + core {
+                for x in 32 - core..33 + core {
+                    let d = (x - 32i32).abs() + (y - 32i32).abs();
+                    if d <= core {
+                        img.insert((x, y), if (d as f32) < core as f32 * 0.6 { 0 } else { 1 });
+                    }
+                }
+            }
+            if i >= 3 {
+                for k in 0..10 {
+                    let a = TAU * k as f32 / 10.0 + 0.3;
+                    let r = 12.0 + i as f32 * 4.0;
+                    put(&mut img, 32.0 + a.cos() * r, 32.0 + a.sin() * r, if i > 4 { 4 } else { 3 });
+                }
+            }
+            img
+        }
+
+        fn magic(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = t as f32 / (n.max(2) - 1) as f32;
+            let big_r = 6.0 + 22.0 * (1.0 - (1.0 - p).powi(2));
+            let thick = 4.0 * (1.0 - p) + 1.0;
+            for y in 0..S {
+                for x in 0..S {
+                    let r = (x as f32 - 31.5).hypot(y as f32 - 31.5);
+                    let d = (r - big_r).abs();
+                    if d <= thick {
+                        let k = d / thick;
+                        img.insert(
+                            (x, y),
+                            if k < 0.35 {
+                                1
+                            } else if k < 0.7 {
+                                2
+                            } else {
+                                3
+                            },
+                        );
+                    } else if r < big_r * 0.55 && p < 0.5 {
+                        img.insert((x, y), if r < big_r * 0.25 { 0 } else { 1 });
+                    }
+                }
+            }
+            for i in 0..6 {
+                let a = TAU * i as f32 / 6.0 + p * 2.2;
+                for s in (big_r * 0.6) as i32..(big_r * 0.85) as i32 {
+                    put(&mut img, 32.0 + a.cos() * s as f32, 32.0 + a.sin() * s as f32, 5);
+                }
+            }
+            let mut rng = Rng::new(8);
+            for i in 0..18 {
+                let a = rng.uniform(0.0, TAU);
+                let r = big_r * (0.8 + rng.uniform(0.0, 0.6)) + p * 6.0;
+                let (x, y) = ((32.0 + a.cos() * r).round(), (32.0 + a.sin() * r).round());
+                if !(t + i).is_multiple_of(3) {
+                    put(&mut img, x, y, 0);
+                    if p < 0.7 {
+                        for (ox, oy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                            put(&mut img, x + ox, y + oy, 2);
+                        }
+                    }
+                }
+            }
+            img
+        }
+
+        fn smoke(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = t as f32 / (n.max(2) - 1) as f32;
+            let mut rng = Rng::new(12);
+            let puffs: Vec<(f32, f32, f32)> =
+                (0..7).map(|_| (rng.uniform(-10.0, 10.0), rng.uniform(-6.0, 6.0), rng.uniform(5.0, 9.0))).collect();
+            for (ox, oy, r0) in puffs {
+                let (cx, cy) = (32.0 + ox * (1.0 + p), 40.0 + oy - p * 14.0);
+                let r = r0 * (0.6 + p * 0.9);
+                for y in (cy - r - 1.0) as i32..(cy + r + 2.0) as i32 {
+                    for x in (cx - r - 1.0) as i32..(cx + r + 2.0) as i32 {
+                        let d = (x as f32 - cx).hypot(y as f32 - cy) / r;
+                        if d > 1.0 {
+                            continue;
+                        }
+                        let shade = d * 0.6 + (y as f32 - cy + r) / (2.0 * r) * 0.5 + p * 0.5;
+                        if p > 0.55 && (((x + y * 2).rem_euclid(4)) as f32) < (p - 0.55) * 9.0 {
+                            continue;
+                        }
+                        if let Some(c) = band(1.0 - shade, &[0.75, 0.55, 0.35, 0.15, -0.2]) {
+                            img.insert((x, y), c);
+                        }
+                    }
+                }
+            }
+            img
+        }
+
+        fn lightning(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let i = step(t, n, 8);
+            let mut rng = Rng::new(if i >= 6 { 77 } else { 30 + i as u64 / 2 });
+            let mut pts = vec![(32.0f32, 0.0f32)];
+            let mut x = 32.0f32;
+            for y in (4..62).step_by(4) {
+                x = (x + rng.uniform(-5.0, 5.0)).clamp(10.0, 54.0);
+                pts.push((x, y as f32));
+            }
+            let mut branches = Vec::new();
+            for _ in 0..3 {
+                let k = 2 + (rng.next() * (pts.len() - 5) as f32) as usize;
+                let (mut bx, mut by) = pts[k];
+                let mut b = vec![(bx, by)];
+                for _ in 0..4 {
+                    bx += if rng.next() < 0.5 { -1.0 } else { 1.0 } * rng.uniform(2.0, 5.0);
+                    by += 4.0;
+                    b.push((bx, by));
+                }
+                branches.push(b);
+            }
+            let intensity = [1.0, 0.6, 1.0, 0.8, 0.5, 0.9, 0.3, 0.15][i];
+            let stroke = |path: &[(f32, f32)], width: i32, img: &mut Img| {
+                for w in path.windows(2) {
+                    let ((x0, y0), (x1, y1)) = (w[0], w[1]);
+                    let steps = (x1 - x0).abs().max((y1 - y0).abs()) as i32 + 1;
+                    for s in 0..=steps {
+                        let u = s as f32 / steps as f32;
+                        let (x, y) = (x0 + (x1 - x0) * u, y0 + (y1 - y0) * u);
+                        for o in -width..=width {
+                            let c = if o == 0 {
+                                0
+                            } else if o.abs() == 1 {
+                                2
+                            } else {
+                                3
+                            };
+                            let key = (x.round() as i32 + o, y.round() as i32);
+                            if !img.contains_key(&key) || c == 0 {
+                                img.insert(key, c);
+                            }
+                        }
+                    }
+                }
+            };
+            stroke(&pts, if intensity > 0.7 { 2 } else { 1 }, &mut img);
+            for b in &branches {
+                stroke(b, if intensity > 0.5 { 1 } else { 0 }, &mut img);
+            }
+            if intensity < 0.4 {
+                for ((kx, ky), c) in img.iter_mut() {
+                    if *c != 0 && (kx + ky) % 2 != 0 {
+                        *c = 4;
+                    }
+                }
+            }
+            for y in 56..64 {
+                for x in 20..45 {
+                    let d = ((x as f32 - 32.0) / 1.8).hypot(y as f32 - 62.0);
+                    if d < 7.0 * intensity {
+                        img.entry((x, y)).or_insert(if d < 3.0 { 2 } else { 3 });
+                    }
+                }
+            }
+            img
+        }
+
+        fn heal(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let (tf, nf) = (t as f32, n as f32);
+            for i in 0..9 {
+                let p = (tf / nf + i as f32 / 9.0).fract();
+                let x = 32.0 + (TAU * (p * 0.8 + i as f32 * 0.37)).sin() * (6 + (i % 4) * 4) as f32;
+                let y = 58.0 - p * 50.0;
+                let size = if p < 0.75 { 2 } else { 1 };
+                let col = if p < 0.4 {
+                    0
+                } else if p < 0.75 {
+                    2
+                } else {
+                    3
+                };
+                for o in -size..=size {
+                    put(&mut img, x + o as f32, y, col);
+                    put(&mut img, x, y + o as f32, col);
+                }
+            }
+            for y in 14..58 {
+                for x in 26..39 {
+                    let k = (x as f32 - 32.0).abs() / 6.5 + (58 - y) as f32 / 70.0;
+                    let on = if k > 0.55 { (x + y + t as i32) % 3 == 0 } else { (x + y) % 2 == 0 };
+                    if k < 1.0 && on {
+                        img.entry((x, y)).or_insert(if k > 0.55 { 3 } else { 2 });
+                    }
+                }
+            }
+            for k in 0..80 {
+                let a = TAU * k as f32 / 80.0 + TAU * tf / nf;
+                if (3.0 * a - TAU * tf / nf).sin() > 0.0 {
+                    put(&mut img, 32.0 + a.cos() * 18.0, 56.0 + a.sin() * 5.0, if a.sin() > 0.0 { 2 } else { 4 });
+                }
+            }
+            img
+        }
+
+        fn explosion(t: u32, n: u32) -> Img {
+            let mut img = Img::new();
+            let p = t as f32 / (n.max(2) - 1) as f32;
+            let first = (n as f32 * 0.17).round().max(1.0) as u32;
+            if t < first {
+                let r = 6.0 + t as f32 * 8.0 * 2.0 / first as f32;
+                for y in 0..S {
+                    for x in 0..S {
+                        let d = (x as f32 - 32.0).hypot(y as f32 - 34.0);
+                        if d < r {
+                            img.insert((x, y), if d < r * 0.6 { 0 } else { 1 });
+                        }
+                    }
+                }
+                return img;
+            }
+            let big_r = 10.0 + 18.0 * (p * 1.6).min(1.0);
+            for y in 0..S {
+                for x in 0..S {
+                    let d = (x as f32 - 32.0).hypot((y as f32 - 34.0) * 1.1);
+                    let nz = loop_noise(x as f32 * 0.22, y as f32 * 0.22, t as f32, n as f32, 5, 0.3);
+                    let edge = big_r * (0.82 + 0.3 * nz);
+                    if d > edge {
+                        continue;
+                    }
+                    let heat = (1.0 - d / edge) * (1.0 - p) * 1.4 + nz * 0.3 - p * 0.35;
+                    let c = if p > 0.45 && d > edge * 0.55 - (p - 0.45) * 20.0 {
+                        if p > 0.8 && (x + y) % 2 != 0 {
+                            continue;
+                        }
+                        Some(if nz > 0.45 { 5 } else { 6 })
+                    } else {
+                        band(heat, &[0.95, 0.7, 0.45, 0.22, -1.0])
+                    };
+                    if let Some(c) = c {
+                        img.insert((x, y), c);
+                    }
+                }
+            }
+            let mut rng = Rng::new(3);
+            for _ in 0..12 {
+                let a = rng.uniform(0.0, TAU);
+                let r = big_r + 4.0 + p * 14.0;
+                put(&mut img, 32.0 + a.cos() * r, 34.0 + a.sin() * r * 0.9, if p < 0.66 { 2 } else { 4 });
+            }
+            img
+        }
+
+        fn frame_image(kind: &str, t: u32, n: u32) -> Img {
+            match kind {
+                "fire" => fire(t, n, false),
+                "campfire" => fire(t, n, true),
+                "slash" => slash(t, n),
+                "hit" => hit(t, n),
+                "magic" => magic(t, n),
+                "smoke" => smoke(t, n),
+                "lightning" => lightning(t, n),
+                "heal" => heal(t, n),
+                _ => explosion(t, n),
+            }
+        }
+
+        /// Generates a complete animated effect into consecutive frames of a layer.
+        pub fn fx_generate(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let kind = req_str(a, "kind")?;
+            let Some(&(_, default_frames, default_ms)) = KINDS.iter().find(|(k, _, _)| *k == kind) else {
+                let names: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
+                return Err(CmdError::invalid(format!("unknown effect '{kind}' ({})", names.join(", "))));
+            };
+            let n = opt_i64(a, "frames")?.unwrap_or(default_frames as i64).clamp(1, 64) as u32;
+            let ms = opt_i64(a, "frame_ms")?.unwrap_or(default_ms as i64).clamp(1, 60_000) as u32;
+            let size = opt_i64(a, "size")?.unwrap_or(doc.width.min(doc.height) as i64).clamp(4, 1024) as i64;
+            let cx = opt_i64(a, "x")?.unwrap_or(doc.width as i64 / 2);
+            let cy = opt_i64(a, "y")?.unwrap_or(doc.height as i64 / 2);
+            let start = opt_i64(a, "frame")?.unwrap_or(0).max(0) as usize;
+            let mut colors: Vec<u32> = palette(kind).iter().map(|h| Rgba::parse_hex(h).expect("palette").to_pixel()).collect();
+            if let Some(Json::Arr(list)) = a.get("colors") {
+                for (i, c) in list.iter().enumerate().take(colors.len()) {
+                    colors[i] = color_value(doc, c, "colors")?;
+                }
+            }
+            let li = layer_index(doc, a, "layer")?;
+            if doc.layers[li].locked {
+                return Err(CmdError::new("locked", format!("layer '{}' is locked", doc.layers[li].name)));
+            }
+            let layer_id = doc.layers[li].id;
+            // Make sure enough frames exist after `start`.
+            if start > doc.frames.len() {
+                return Err(CmdError::invalid(format!("'frame' {start} is past the last frame ({})", doc.frames.len())));
+            }
+            while doc.frames.len() < start + n as usize {
+                if doc.frames.len() >= crate::project::MAX_FRAMES {
+                    return Err(CmdError::new("limit", "frame safety limit reached"));
+                }
+                let at = doc.frames.len();
+                doc.insert_frame(at, ms);
+            }
+            let mut changed = 0u64;
+            for t in 0..n {
+                let fi = start + t as usize;
+                doc.frames[fi].duration_ms = ms;
+                let img = frame_image(kind, t, n);
+                let frame_id = doc.frames[fi].id;
+                let grid = doc.cel_mut(layer_id, frame_id);
+                // Clear the target square, then sample the 64×64 design (nearest).
+                let (x0, y0) = (cx - size / 2, cy - size / 2);
+                for y in 0..size {
+                    for x in 0..size {
+                        let (sx, sy) = ((x * S as i64 / size) as i32, (y * S as i64 / size) as i32);
+                        let v = img.get(&(sx, sy)).map(|&c| colors[c as usize]).unwrap_or(TRANSPARENT);
+                        changed += grid.set(x0 + x, y0 + y, v) as u64;
+                    }
+                }
+            }
+            if let Some(tag) = opt_str(a, "tag")? {
+                let name = tag.trim().to_string();
+                if !name.is_empty() && !doc.tags.iter().any(|t| t.name == name) {
+                    let looped = matches!(kind, "fire" | "campfire" | "heal" | "magic");
+                    doc.tags.push(Tag {
+                        name,
+                        from_id: doc.frames[start].id,
+                        to_id: doc.frames[start + n as usize - 1].id,
+                        direction: Direction::Forward,
+                        repeat: if looped { 0 } else { 1 },
+                    });
+                }
+            }
+            Ok(Outcome::new(
+                Json::obj().with("kind", kind).with("frames", n).with("firstFrame", start).with("frameMs", ms).with("changed", changed),
+                changed,
+            ))
+        }
+    }
+
     pub mod gamedev {
         //! Game-production commands: blend modes, slices (hitbox/hurtbox/pivot), palette swaps,
         //! RotSprite, tilesets/tilemaps with blob autotiling, normal-mapped 2D light previews and
@@ -4660,6 +5401,9 @@ pub mod commands {
         ("draw_line", Kind::Mutate),
         ("draw_rectangle", Kind::Mutate),
         ("draw_ellipse", Kind::Mutate),
+        ("draw_polygon", Kind::Mutate),
+        ("pattern_fill", Kind::Mutate),
+        ("fx_generate", Kind::Mutate),
         ("fill_region", Kind::Mutate),
         ("replace_color", Kind::Mutate),
         ("flip_horizontal", Kind::Mutate),
@@ -4799,6 +5543,9 @@ pub mod commands {
             "draw_line" => draw::draw_line(doc, a),
             "draw_rectangle" => draw::draw_rectangle(doc, a),
             "draw_ellipse" => draw::draw_ellipse(doc, a),
+            "draw_polygon" => draw::draw_polygon(doc, a),
+            "pattern_fill" => draw::pattern_fill(doc, a),
+            "fx_generate" => fx::fx_generate(doc, a),
             "fill_region" => draw::fill_region(doc, a),
             "replace_color" => draw::replace_color(doc, a),
             "flip_horizontal" => draw::flip(doc, a, true),

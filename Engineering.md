@@ -29,6 +29,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 9. [Oyun üretimi](#9-oyun-üretimi)
 10. [.pxs proje formatı](#10-pxs-proje-formatı)
 11. [Bağımlılık politikası](#11-bağımlılık-politikası)
+12. [Karşılaştırmalı asset üretim testleri](#12-karşılaştırmalı-asset-üretim-testleri)
 
 ---
 
@@ -38,7 +39,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 68 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 69 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -51,7 +52,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **108 araç** | ✅ | 13 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **111 araç** | ✅ | 14 uçtan uca gateway testi |
 | Masaüstü editör: **2D Pixel + 3D Voxel** sekmeleri | ✅ | derleniyor; Xvfb altında çalıştırıldı |
 | Android: 2D editör + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint temiz; **cihazda henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
@@ -89,7 +90,7 @@ Pixel_Studio/
 │   ├── Source/Main/              AndroidManifest.xml, Kotlin/Core.kt, Resources/
 │   └── build.gradle.kts          NDK ile Native/ derlemesi, APK
 ├── Assets/                       Varlık üreticileri ve galeri
-│   ├── Voxel.py  Sprites.py  Scene.py
+│   ├── Voxel.py  Sprites.py  Scene.py  Bench.py
 │   ├── Knight.jsonl              uygulamaların paketlediği 3D şövalye demosu
 │   ├── Icon.png
 │   └── Gallery/                  README görselleri, örnek Godot/Tiled/Aseprite çıktıları
@@ -132,7 +133,7 @@ Freedom Network düzeni: her platform tek kaynak dosyası (`Core.kt` / `Core.rs`
 ### Hızlı başlangıç
 
 ```bash
-cd Native && cargo test                     # Rust motoru: 68 test (golden render dahil)
+cd Native && cargo test                     # Rust motoru: 69 test (golden render dahil)
 ./gradlew test                              # JVM: JSON, JNI köprüsü, gateway (Rust'ı otomatik derler)
 ./gradlew :Windows:run                      # masaüstü editörü
 ./gradlew :Gateway:run --args="--size 64x64 --port 38471 --workspace ./workspace [--token T] [--allow-destructive]"
@@ -310,16 +311,17 @@ Sunucu "dual-era"dır ve iki dönemi aynı endpoint'te sunar:
 
 Yanıtlar her zaman `application/json` olarak döner. Bildirimler `202` alır. `GET /mcp` isteği `405` döner.
 
-### Araçlar (108)
+### Araçlar (111)
 
 Tam şemalar `Gateway/Schemas/pixel-studio-tools.mcp.json` dosyasındadır.
 
 | Grup | Araçlar |
 | --- | --- |
-| Tuval | `canvas_inspect`, `canvas_snapshot` (PNG + özet), `get_pixel`, `read_region` (ascii/hex), `set_pixel`, `set_pixels`, `erase_pixel`, `draw_line`, `draw_rectangle`, `draw_ellipse`, `fill_region`, `replace_color`, `flip_horizontal`, `flip_vertical`, `rotate`, `move_region`, `copy_region`, `clear`, `canvas_resize`* |
+| Tuval | `canvas_inspect`, `canvas_snapshot` (PNG + özet), `get_pixel`, `read_region` (ascii/hex), `set_pixel`, `set_pixels`, `erase_pixel`, `draw_line`, `draw_rectangle`, `draw_ellipse`, `draw_polygon`, `pattern_fill` (tuğla/kiremit/tahta/taş/karo/çim/dalga/dama), `fill_region`, `replace_color`, `flip_horizontal`, `flip_vertical`, `rotate`, `move_region`, `copy_region`, `clear`, `canvas_resize`* |
 | Animasyon | `frame_add`, `frame_duplicate`, `frame_delete`*, `frame_move`, `frame_get`, `frame_set_duration`, `frame_select`, `animation_tag_create`, `animation_tag_delete`, `animation_set_loop`, `animation_info`, `animation_preview` (GIF) |
 | Katman | `layer_create`, `layer_delete`*, `layer_rename`, `layer_visibility`, `layer_lock`, `layer_opacity`, `layer_move`, `layer_select` |
 | Palet | `palette_get`, `palette_set`, `palette_add` |
+| Efekt | `fx_generate` — ateş, kamp ateşi, kılıç izi, vuruş, büyü, duman, yıldırım, iyileşme, patlama; tek çağrıda animasyonlu kareler |
 | Piksel art | `draw_ascii`, `outline` (selective/selout/solid), `auto_shade`, `gradient_map`, `draw_sparkle`, `pixel_cleanup`, `color_ramp`, `palette_list`, `palette_load`, `quantize`, `dither_fill`, `export_normal_map` |
 | 3D Voxel | `voxel_model_create`, `voxel_model_clone`, `voxel_model_delete`*, `voxel_model_set`, `voxel_inspect`, `voxel_get`, `voxel_set`, `voxel_set_many`, `voxel_shape`, `voxel_mirror`, `material_set`, `texture_import`, `texture_generate`, `rig_bone_add`, `rig_clear`*, `rig_bind`, `anim3d_create`, `anim3d_key`, `anim3d_generate`, `voxel_render` (PNG), `voxel_render_sheet` (PNG), `voxel_render_to_frames`, `voxel_pick` |
 | Oyun üretimi | `layer_blend`, `slice_set`, `slice_delete`, `palette_swap`, `rotsprite`, `tileset_create`, `tileset_add_tiles`, `tileset_generate_blob`, `tileset_delete`*, `tilemap_create`, `tilemap_delete`*, `tilemap_set`, `tilemap_terrain`, `tilemap_bake`, `tilemap_render` (PNG), `export_tileset` (PNG), `render_lit` (PNG), `export_atlas`, `export_godot_spriteframes`, `export_tiled`, `gamedev_inspect` — bkz. [Oyun üretimi](#9-oyun-üretimi) |
@@ -637,3 +639,87 @@ chunk* : tag[4] | length u32 | payload
 ## 11. Bağımlılık politikası
 
 Çalışma zamanında üçüncü taraf kütüphane yoktur. Rust tarafı yalnızca `std` kullanır. Kotlin tarafında tek çalışma zamanı bağımlılığı dilin kendi `kotlin-stdlib`'idir; UI için platform API'leri kullanılır (Android `View`/`Canvas`, JDK Swing). Derleme araçları (Gradle, AGP, NDK, JDK) ve yalnızca test kapsamındaki `kotlin-test` bu politikanın dışındadır.
+
+---
+
+## 12. Karşılaştırmalı asset üretim testleri
+
+Soru: Pixel Studio ile ev, karakter, eşya, ağaç ve efekt gibi herhangi bir piksel asset'i kolayca ve oyun kalitesinde yapabiliyor muyuz? `Assets/Bench.py` aynı özgün tasarımları, ajanların MCP üzerinden çağırdığı araçlarla dört yoldan üretir. Ardından her sonucu ölçer:
+
+| Yol | Ne kullanır |
+| --- | --- |
+| **A** ham | Yalnızca düz şekiller (dikdörtgen, elips, poligon). Sıradan bir ajanın ilk denemesi |
+| **B** zanaat | Aynı şekiller + `pattern_fill`, `auto_shade`, `outline mode=selout`, `draw_sparkle`, `dither_fill`, `layer_blend`, `quantize` (palet kilidi) |
+| **C** voxel | 3D voxel model → `voxel_render_to_frames` (piksel paleti + outline) |
+| **G** üretici | Tek `fx_generate` çağrısı (animasyonlu efektler) |
+
+Ölçülenler:
+- **Çağrı sayısı:** proje kurulumu ve dışa aktarma hariç.
+- **Komut boyutu** ve **motorun süresi**.
+- **Renk sayısı:** palet disiplini.
+- **Ton derinliği:** her ana renk ailesindeki ton sayısı.
+- **Siluet tanımı:** kenar pikselinin iç dolgudan ayrı bir tonda olması. Işık tarafında açık tutulan sel-out kenarlar da sayılır.
+
+Ölçüm ayrı bir sprite olarak yapılır; zemin gölgesi katmanı gizlenir.
+
+Kalite eşikleri:
+- **B ve C:** ton derinliği ≥ 3, renk ≤ 64, siluet ≥ %80.
+- **Efektler:** 3–24 parlaklık bandı.
+- **G:** tam olarak 1 çağrı.
+
+A yolu karşılaştırma tabanıdır, değerlendirmeye girmez.
+
+![Karşılaştırma](Assets/Gallery/asset_benchmark.png)
+
+| Asset | Path | Calls | Payload KB | ms | Colors | Shade depth | Outline % | Result |
+|---|---|---|---|---|---|---|---|---|
+| Cottage (house) | A | 7 | 0.9 | 5 | 6 | 2.0 | 0 | ✅ |
+| Cottage (house) | B | 41 | 4.1 | 8 | 40 | 11.7 | 97 | ✅ |
+| Cottage (house) | C | 22 | 2.3 | 24 | 24 | 6.7 | 98 | ✅ |
+| Ranger (character) | A | 15 | 1.8 | 4 | 8 | 2.0 | 10 | ✅ |
+| Ranger (character) | B | 24 | 2.4 | 4 | 50 | 8.4 | 97 | ✅ |
+| Ranger (character) | C | 10 | 1.0 | 6 | 16 | 3.2 | 88 | ✅ |
+| Slime (monster) | A | 3 | 0.5 | 3 | 3 | 1.0 | 0 | ✅ |
+| Slime (monster) | B | 7 | 0.9 | 3 | 18 | 4.2 | 100 | ✅ |
+| Treasure chest | A | 7 | 0.9 | 3 | 4 | 4.0 | 3 | ✅ |
+| Treasure chest | B | 15 | 1.5 | 4 | 37 | 17.5 | 99 | ✅ |
+| Potion | A | 4 | 0.6 | 3 | 3 | 1.0 | 36 | ✅ |
+| Potion | B | 11 | 1.2 | 3 | 21 | 5.7 | 100 | ✅ |
+| Oak tree | A | 8 | 1.0 | 3 | 2 | 1.0 | 0 | ✅ |
+| Oak tree | B | 16 | 1.5 | 5 | 35 | 6.5 | 99 | ✅ |
+| Oak tree | C | 8 | 0.9 | 14 | 16 | 5.0 | 100 | ✅ |
+| Explosion (8f) | A | 8 | 1.1 | 11 | 1 | 1.0 | 0 | ✅ |
+| Explosion (8f) | B | 88 | 29.4 | 12 | 14 | 3.5 | 52 | ✅ |
+| Explosion (8f) | G | 1 | 0.2 | 10 | 5 | 2.0 | 16 | ✅ |
+| Magic circle (8f) | A | 8 | 1.0 | 8 | 1 | 1.0 | 55 | ✅ |
+| Magic circle (8f) | B | 50 | 5.9 | 15 | 9 | 3.0 | 76 | ✅ |
+| Magic circle (8f) | G | 1 | 0.2 | 9 | 5 | 3.0 | 88 | ✅ |
+| Fire loop | G | 1 | 0.2 | 19 | 6 | 2.0 | 54 | ✅ |
+| Sword slash | G | 1 | 0.2 | 8 | 4 | 1.3 | 82 | ✅ |
+| Hit spark | G | 1 | 0.2 | 6 | 4 | 1.3 | 38 | ✅ |
+| Lightning | G | 1 | 0.2 | 8 | 3 | 1.5 | 26 | ✅ |
+| Heal | G | 1 | 0.2 | 10 | 4 | 1.3 | 43 | ✅ |
+| Smoke puff | G | 1 | 0.2 | 8 | 3 | 3.0 | 14 | ✅ |
+
+| Tek çağrılık efektler (G) | | | |
+| --- | --- | --- | --- |
+| ![fire](Assets/Gallery/fx_fire_G.gif) | ![explosion](Assets/Gallery/fx_explosion_G.gif) | ![magic](Assets/Gallery/fx_magic_G.gif) | ![slash](Assets/Gallery/fx_slash_G.gif) |
+
+**Sonuçlar:**
+- **Yapılar, eşyalar, karakterler:** B yolu 7–41 çağrıyla oyuna hazır sonuç veriyor. Siluet tanımı %97–100, ton derinliği 4–17. A ise düz kalıyor (siluet %0–36, ton derinliği 1–2).
+- **Büyük ve hacimli asset'ler:** Ev ve ağaç gibi asset'lerde C yolu en az çağrıyla (8–22) en temiz silueti veriyor. 32 px karakterde ise detay kaybı var (ton derinliği 3.2); küçük karakterlerde B daha iyi.
+- **Efektler:** Elle yapılan B patlaması 88 çağrı ve 29 KB komut tutuyordu; `fx_generate` aynı işi 1 çağrı ve 0.2 KB ile yapıyor. Dokuz efekt türünün hepsi tek çağrıda, istenen boyut, kare sayısı ve palette üretiliyor.
+- **Kapanan eksikler:** Ölçümler üç araç eksiğini ortaya çıkardı ve hepsi eklendi:
+  - Çatı ve eğimli formlar için `draw_polygon`.
+  - Tuğla, kiremit, tahta ve taş yüzeyler için `pattern_fill`.
+  - Efektlerin elle kare kare çizilmesi yerine `fx_generate`.
+- **Palet disiplini:** Ev ilk denemede 94 renge çıktı. Bitirme hattının sonuna `quantize scope=all colors=32` eklenince 40 renge indi (32 renklik palet + katman karışımlarının ürettiği tonlar).
+
+Tekrar çalıştırmak için:
+
+```bash
+python3 Assets/Bench.py        # komut betikleri, görseller, Assets/Build/bench/report.md
+```
+
+Eşiklerin altında kalan bir sonuç olursa betik hata koduyla çıkar, bu yüzden CI'da da çalıştırılabilir.
+

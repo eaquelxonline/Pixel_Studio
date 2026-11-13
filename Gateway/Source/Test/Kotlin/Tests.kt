@@ -512,4 +512,28 @@ class GatewayTest {
         call("gradient_map", mapOf("colors" to listOf("#141C3A", "#8EA6D8", "#E6EEFF"), "scope" to "frame", "strength" to 0.4))
         call("pixel_cleanup", mapOf("layer" to "Bangs"))
     }
+
+    @Test
+    fun anyAssetInAFewCalls() {
+        fun call(tool: String, args: Map<String, Any?>): Map<String, Any?> {
+            val r = callLegacy(tool, args)
+            assertEquals(false, r["isError"], "$tool failed: ${Json.write(r)}")
+            return r
+        }
+        // House: wall, roof, textures, shading, outline.
+        call("draw_rectangle", mapOf("x" to 6, "y" to 16, "width" to 20, "height" to 14, "color" to "#E9DCC2", "filled" to true))
+        call("layer_create", mapOf("name" to "Roof"))
+        call("draw_polygon", mapOf("layer" to "Roof", "points" to listOf(listOf(3, 17), listOf(16, 4), listOf(29, 17)), "color" to "#B9573D"))
+        call("pattern_fill", mapOf("layer" to "Roof", "pattern" to "shingle", "size" to 3, "color" to "#7A3329"))
+        call("pattern_fill", mapOf("layer" to 0, "pattern" to "brick", "size" to 2, "color" to "#8A6A52"))
+        call("auto_shade", mapOf("layer" to 0, "cast_shadow" to 2))
+        call("outline", mapOf("layer" to "Roof", "mode" to "selout"))
+        // Effect: a whole animation in one call.
+        call("layer_create", mapOf("name" to "FX"))
+        val fx = call("fx_generate", mapOf("kind" to "explosion", "layer" to "FX", "frames" to 6, "size" to 24, "x" to 16, "y" to 16, "tag" to "boom"))
+        assertEquals(6L, fx.obj("structuredContent")!!.obj("result")!!.long("frames"))
+        assertEquals(6, engine.execute("canvas_inspect").result.list("frames")!!.size)
+        val gif = call("animation_preview", mapOf("tag" to "boom"))
+        assertEquals("image", (gif.list("content")!!.first() as Map<*, *>)["type"])
+    }
 }

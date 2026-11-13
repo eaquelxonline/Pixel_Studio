@@ -460,6 +460,51 @@ mod engine {
     }
 
     #[test]
+    fn asset_building_blocks_polygon_patterns_and_effects() {
+        let mut e = Engine::new(64, 64);
+        // A gable roof in one call, then shingles only where the roof is.
+        let roof = ok(&mut e, r##"{"op":"draw_polygon","points":[[4,30],[32,8],[60,30]],"color":"#B9573D"}"##);
+        assert!(roof.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 500);
+        let px = |e: &mut Engine, x: usize, y: usize| {
+            let b = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+            [b[(y * 64 + x) * 4], b[(y * 64 + x) * 4 + 1], b[(y * 64 + x) * 4 + 2], b[(y * 64 + x) * 4 + 3]]
+        };
+        assert_eq!(px(&mut e, 32, 20)[3], 255, "inside the triangle");
+        assert_eq!(px(&mut e, 4, 10)[3], 0, "outside stays empty");
+        let tiles = ok(&mut e, r##"{"op":"pattern_fill","pattern":"shingle","size":4,"color":"#7A3329"}"##);
+        assert!(tiles.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 50);
+        assert_eq!(px(&mut e, 4, 10)[3], 0, "patterns respect the shape (only_opaque)");
+        for p in ["brick", "plank", "stone", "tile", "grass", "wave", "checker"] {
+            let req = format!(
+                r##"{{"op":"pattern_fill","pattern":"{p}","x":10,"y":20,"width":40,"height":10,"color":"#402020","color2":"#C08060"}}"##
+            );
+            ok(&mut e, &req);
+        }
+        assert_eq!(err_code(&mut e, r##"{"op":"pattern_fill","pattern":"lava","color":"#000000"}"##), "invalid_argument");
+        assert_eq!(err_code(&mut e, r##"{"op":"draw_polygon","points":[[0,0],[5,5]],"color":"#000000"}"##), "invalid_argument");
+
+        // Every effect kind in one call: frames are created, tagged and filled.
+        let mut fx = Engine::new(48, 48);
+        for (i, kind) in ["fire", "campfire", "slash", "hit", "magic", "smoke", "lightning", "heal", "explosion"].iter().enumerate() {
+            let start = fx.document().frames.len() - if i == 0 { 1 } else { 0 };
+            let req = format!(r#"{{"op":"fx_generate","kind":"{kind}","frame":{start},"tag":"{kind}"}}"#);
+            let r = ok(&mut fx, &req);
+            let frames = r.get("result").unwrap().get("frames").unwrap().as_i64().unwrap() as usize;
+            assert!(r.get("result").unwrap().get("changed").unwrap().as_i64().unwrap() > 20, "{kind} draws pixels");
+            assert_eq!(fx.document().frames.len(), start + frames);
+        }
+        assert_eq!(fx.document().tags.len(), 9);
+        let custom = ok(
+            &mut fx,
+            r##"{"op":"fx_generate","kind":"explosion","frames":6,"size":24,"x":12,"y":12,"colors":["#FFFFFF","#C8F0FF","#5AB4FF"],"frame":0}"##,
+        );
+        assert_eq!(custom.get("result").unwrap().get("frames").unwrap().as_i64(), Some(6));
+        assert_eq!(err_code(&mut fx, r#"{"op":"fx_generate","kind":"rainbow"}"#), "invalid_argument");
+        let gif = fx.execute(br#"{"op":"export_gif","tag":"fire"}"#, &[]);
+        assert!(gif.binary.starts_with(b"GIF89a"));
+    }
+
+    #[test]
     fn character_art_finishing_tools() {
         let mut e = Engine::new(48, 48);
         ok(&mut e, r##"{"op":"layer_rename","layer":0,"name":"Face"}"##);

@@ -1916,6 +1916,40 @@ internal fun MutableList<ToolDef>.addCharTools() {
         "Removes L-shaped corner doubles from 1-px lines (the 'pixel perfect' pass) so outlines and strands read clean.",
         linkedMapOf<String, Schema>("color" to color("Only lines of this color."), "passes" to integer("1-4.", 1, 4), "scope" to scope,
             "layer" to linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Layer."), "frame" to integer("Frame.", min = 0)))
+
+    val layerRef: Schema = linkedMapOf<String, Any?>("type" to listOf("integer", "string"), "description" to "Layer (default active).")
+    tool("draw_polygon", "Draw polygon", Access.WRITE,
+        "Draws a filled (default) or outlined polygon: roofs, gables, crystals, banners, blades, terrain slopes. Points are pixel coordinates.",
+        linkedMapOf<String, Schema>(
+            "points" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf<String, Any?>("type" to "array"), "description" to "[[x, y], …] (3-4096 points)."),
+            "color" to color(), "filled" to boolean("Fill the inside (default true)."), "layer" to layerRef, "frame" to integer("Frame.", min = 0),
+        ),
+        listOf("points", "color"))
+    tool("pattern_fill", "Surface pattern", Access.WRITE,
+        "Textures a surface for buildings and terrain: brick, shingle (roof tiles), plank (wood), stone (cobbles), tile, grass, wave, checker. " +
+            "By default it only touches existing pixels, so draw the shape flat first, then pattern it, then auto_shade. " +
+            "color = seams (mortar, grout, joints); color2 = cell fill (optional); accent = some cells vary.",
+        linkedMapOf<String, Schema>(
+            "pattern" to string("Surface.", listOf("brick", "shingle", "plank", "stone", "tile", "grass", "wave", "checker")),
+            "color" to color("Seam color."), "color2" to color("Cell fill (optional)."), "accent" to color("Variation color for some cells."),
+            "size" to integer("Pattern scale 2-64 (default 4).", 2, 64), "seed" to integer("Variation seed."),
+            "x" to integer("Region left."), "y" to integer("Region top."), "width" to integer("Region width.", 1), "height" to integer("Region height.", 1),
+            "only_opaque" to boolean("Only over existing pixels (default true)."), "only_color" to color("Only over pixels of this color."),
+            "layer" to layerRef, "frame" to integer("Frame.", min = 0),
+        ),
+        listOf("pattern", "color"))
+    tool("fx_generate", "Generate animated effect", Access.WRITE,
+        "Creates a complete animated pixel-art effect in ONE call: fire (loop), campfire (loop, with logs), slash, hit, magic, smoke, lightning, heal (loop), explosion. " +
+            "Frames are added as needed from 'frame' on, durations set, and an optional tag created. Any size and frame count; 'colors' recolors the ramp (hot → cold).",
+        linkedMapOf<String, Schema>(
+            "kind" to string("Effect.", listOf("fire", "campfire", "slash", "hit", "magic", "smoke", "lightning", "heal", "explosion")),
+            "frames" to integer("Frame count (default per effect).", 1, 64), "frame_ms" to integer("ms per frame.", 1, 60000),
+            "size" to integer("Effect size in px (default: canvas).", 4, 1024), "x" to integer("Center x."), "y" to integer("Center y."),
+            "frame" to integer("First frame index (default 0).", min = 0), "tag" to string("Animation tag to create."),
+            "colors" to linkedMapOf<String, Any?>("type" to "array", "items" to color(), "description" to "Replacement ramp colors, brightest first."),
+            "layer" to layerRef,
+        ),
+        listOf("kind"))
 }
 
 // ═══ FunctionSchemas ═════════════════════════════════════════════════════════════════════════════
