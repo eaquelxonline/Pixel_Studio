@@ -616,6 +616,32 @@ def main():
         print(f"VFX {title:16} frames {t['frames']:2}  colors {m['colors']:2}  motion {t['motion']:.3f}  seam {t['seam']:.3f}  "
               f"peak {t['peak']:2} end {t['end']:.2f}  {'loop' if s.looped else 'once'}  {'PASS' if ok else 'FAIL'}")
 
+    # Character animation set: the warrior from Sprites.py, judged per animation tag.
+    sys.path.insert(0, HERE)
+    import Sprites
+
+    Sprites.build_warrior(OUT)
+    script = os.path.join(OUT, "warrior_showcase.jsonl")
+    t0 = time.perf_counter()
+    r = subprocess.run([RUNNER, script, OUT], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(r.stdout, r.stderr)
+        raise SystemExit("warrior failed")
+    with open(os.path.join(OUT, "warrior.jsonl")) as fh:
+        wlines = [json.loads(l) for l in fh if l.strip()]
+    anim_tags = [(l["name"], l["from"], l["to"], l.get("repeat", 0) == 0) for l in wlines if l["op"] == "animation_tag_create"]
+    durations = {l["frame"]: l["duration"] for l in wlines if l["op"] == "frame_set_duration"}
+    character = []
+    for name, a, b, loop in anim_tags:
+        frames = [Image.open(os.path.join(OUT, "warrior", "frames", f"f{k:03d}.png")).convert("RGBA") for k in range(a, b + 1)]
+        t = temporal(frames)
+        ms = [durations[k] for k in range(a, b + 1)]
+        varied = loop or max(ms) > min(ms)  # one-shots must hold some frames (anticipation / impact / settle)
+        ok = motion_ok(t, loop, True) and varied
+        character.append(dict(anim=name, loop=loop, ms=sum(ms), timing="/".join(str(m) for m in ms), ok=ok, **t))
+        print(f"Warrior {name:13} frames {t['frames']:2}  {sum(ms):5} ms  motion {t['motion']:.3f}  seam {t['seam']:.3f}  "
+              f"peak {t['peak']:2}  {'loop' if loop else 'once'}  {'PASS' if ok else 'FAIL'}")
+
     # Comparison sheet: one row per asset, columns A / B / C / G at 4× (middle frame).
     titles = [t for t, _, _ in SUITE]
     cw, ch, sc = 64 * 4 + 16, 64 * 4 + 28, 4
@@ -662,7 +688,11 @@ def main():
         for v in vfx:
             fh.write(f"| {v['asset']} | {v['calls']} | {v['frames']} | {v['colors']} | {'loop' if v['loop'] else 'one-shot'} | {v['motion']} | "
                      f"{v['seam']} | {v['peak']} | {v['end']} | {'✅' if v['ok'] else '❌'} |\n")
-    failed = [r for r in rows if not r["ok"]] + [v for v in vfx if not v["ok"]]
+        fh.write("\n| Warrior animation | Frames | Type | Total ms | Frame timing (ms) | Motion | Loop seam | Result |\n|---|---|---|---|---|---|---|---|\n")
+        for c in character:
+            fh.write(f"| {c['anim']} | {c['frames']} | {'loop' if c['loop'] else 'one-shot'} | {c['ms']} | {c['timing']} | {c['motion']} | "
+                     f"{c['seam']} | {'✅' if c['ok'] else '❌'} |\n")
+    failed = [r for r in rows if not r["ok"]] + [v for v in vfx if not v["ok"]] + [c for c in character if not c["ok"]]
     print(f"\n{len(rows)} asset builds + {len(vfx)} VFX, {len(failed)} below the bars → {os.path.join(OUT, 'report.md')}")
     return 1 if failed else 0
 

@@ -31,6 +31,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 11. [Bağımlılık politikası](#11-bağımlılık-politikası)
 12. [Karşılaştırmalı asset üretim testleri](#12-karşılaştırmalı-asset-üretim-testleri)
 13. [Gelişmiş VFX paketi ve ikincil hareket](#13-gelişmiş-vfx-paketi-ve-ikincil-hareket)
+14. [Savaşçı karakter: 9 animasyon](#14-savaşçı-karakter-9-animasyon)
 
 ---
 
@@ -814,3 +815,66 @@ Motor testi 23 efekt türünün hepsini kontrol eder:
 
 Ayrıca parçacık döngüsünü ve 8 hareket türünü doğrular: kare 0 orijinal poz olarak kalır ve katmanlar birlikte hareket eder.
 
+---
+
+## 14. Savaşçı karakter: 9 animasyon
+
+**Bram, bronz bekçi** özgün bir tasarımdır. Çelik zırhı ve bronz süsleri, teal tabardı, kırmızı atkısı ve tüylüğü, kılıcı ve yuvarlak kalkanı vardır. Kare boyutu 128×110, karakter yaklaşık 60 piksel boyundadır ve yandan, sağa bakar. Dokuz animasyon tek komut betiğinde birlikte üretilir: `python3 Assets/Sprites.py warrior`, toplam 84 kare.
+
+![Savaşçı animasyonları](Assets/Gallery/warrior_animations.png)
+
+| idle | walk | run |
+| --- | --- | --- |
+| ![idle](Assets/Gallery/warrior_idle.gif) | ![walk](Assets/Gallery/warrior_walk.gif) | ![run](Assets/Gallery/warrior_run.gif) |
+| **attack_slash** | **attack_heavy** | **block** |
+| ![slash](Assets/Gallery/warrior_attack_slash.gif) | ![heavy](Assets/Gallery/warrior_attack_heavy.gif) | ![block](Assets/Gallery/warrior_block.gif) |
+| **jump** | **hurt** | **death** |
+| ![jump](Assets/Gallery/warrior_jump.gif) | ![hurt](Assets/Gallery/warrior_hurt.gif) | ![death](Assets/Gallery/warrior_death.gif) |
+
+### Nasıl yapılıyor
+
+- **2D iskelet:**
+  - Omurga, iki kol, iki bacak, kılıç ve kalkandan oluşur.
+  - Her kare, anahtar pozlar arasında smoothstep geçişle hesaplanır. Yürüme ve koşu döngüleri faz fonksiyonlarıyla üretilir.
+  - Parçalar kapsül ve poligon olarak motorun `draw_polygon` aracıyla çizilir.
+- **Ayak oturtma:** Her karede en alçak ayak ya da diz zemine indirilir. Bu sayede yürüyüşte gövdenin inip kalkması kendiliğinden oluşur.
+- **Derinlik:** Uzak kol, bacak ve kalkan bir ton koyu ve daha az doygun renkle çizilir. Blokta kalkan ön katmana geçer.
+- **Gecikmeli hareket (follow-through):**
+  - Atkı ve tüylük Verlet zinciriyle gövdenin gerisinden gelir; rüzgâr animasyonun hızına göre ayarlanır.
+  - Döngülerde fizik iki tur önceden çalıştırılır, böylece kaydedilen tur dikişsiz kapanır.
+- **Motorun bitirme adımları:** `auto_shade` (üstteki katmanların gölgesiyle), `outline mode=selout`, gölge katmanı için `layer_blend multiply`.
+- **Efektler:**
+  - Savuruşlarda 3 renkli smear yayı.
+  - Ağır vuruşta `fx_generate shockwave`, blokta `fx_generate hit` kıvılcımı.
+  - Zıplamada, inişte ve koşuda toz.
+  - Hasar ve ölümün ilk karelerinde `gradient_map` ile tam beyaz vuruş flaşı.
+- **Zamanlama:**
+  - Idle 140–180 ms, walk 100 ms, run 70 ms.
+  - Saldırıda hazırlık 80–100 ms, smear karesi 40 ms, darbe karesi 130–140 ms tutulur, toparlanma 90–120 ms.
+  - Ölümün son karesi 600 ms bekler.
+- **Oyun verisi:**
+  - Darbe karelerinde `hitbox_attack_slash` ve `hitbox_attack_heavy` slice'ları, tüm animasyonda `hurtbox`.
+  - Her animasyon bir etiket olarak gelir; döngüler sonsuz, tek seferlikler bir kez oynar.
+  - Godot SpriteFrames, Aseprite atlas JSON ve `.pxs` dosyaları `Assets/Build/` altına yazılır.
+
+### Test
+
+`Assets/Bench.py` her animasyonu ayrı ayrı değerlendirir:
+
+- en az 8 kare,
+- hareket var,
+- döngüler dikişsiz kapanır,
+- tek seferliklerde doruk ilk ya da son karede değildir,
+- tek seferliklerde kare süreleri çeşitlidir.
+
+| Warrior animation| Frames | Type | Total ms | Frame timing (ms) | Motion | Loop seam | Result |
+|---|---|---|---|---|---|---|---|
+| idle | 8 | loop | 1260 | 180/150/140/160/180/150/140/160 | 0.191 | 0.143 | ✅ |
+| walk | 8 | loop | 800 | 100/100/100/100/100/100/100/100 | 0.653 | 0.714 | ✅ |
+| run | 8 | loop | 560 | 70/70/70/70/70/70/70/70 | 0.782 | 0.842 | ✅ |
+| attack_slash | 10 | one-shot | 950 | 100/90/80/40/130/110/90/90/100/120 | 0.688 | 0.098 | ✅ |
+| attack_heavy | 12 | one-shot | 1140 | 100/110/90/70/40/140/100/90/90/90/100/120 | 0.763 | 0.113 | ✅ |
+| block | 8 | one-shot | 830 | 100/80/140/140/60/90/100/120 | 0.584 | 0.12 | ✅ |
+| jump | 10 | one-shot | 930 | 120/60/70/80/120/100/80/70/110/120 | 0.847 | 0.879 | ✅ |
+| hurt | 8 | one-shot | 710 | 60/60/90/100/90/90/100/120 | 0.631 | 0.974 | ✅ |
+| death | 12 | one-shot | 1790 | 60/100/100/120/160/90/80/70/90/120/200/600 | 0.728 | 0.999 | ✅ |

@@ -1716,12 +1716,435 @@ def build_portraits(out):
         print(kind, len(ls), "commands")
 
 
+# ════ Bram, the Bronze Warden — skeletal 2D warrior with 9 animations ═════════════════════════
+
+
+def build_warrior(out):
+    """Original warrior "Bram, the Bronze Warden": 128×110 frames (~60 px tall), side view facing right.
+
+    A 2D skeleton (spine, two arms, two legs, sword, shield) is posed per frame from keyframes
+    (smoothstep in-betweens), feet are planted on the ground every frame, the scarf and the helmet
+    plume follow the body with Verlet physics (follow-through), and the far limbs use one step
+    darker colors for depth. The engine then shades every layer (auto_shade with cast shadows),
+    draws sel-out outlines, and adds the effects (smears, dust, shockwave, hit sparks, hit-flash).
+
+    Animations (all ≥ 8 frames, varied timing): idle, walk, run, attack_slash, attack_heavy,
+    block, jump, hurt, death. Hitboxes are exported as slices.
+    """
+    W, H = 128, 110
+    GROUND = 90  # skeleton space; S() maps it to the canvas at 1.3× scale
+    K, OX, GY = 1.3, 52, 104
+    lines = []
+
+    def S(pt):
+        return (OX + (pt[0] - 40) * K, GY + (pt[1] - GROUND) * K)
+
+    def cmd(op, **a):
+        lines.append(json.dumps({"op": op, "actor": "warrior-builder", **a}, separators=(",", ":")))
+
+    C = dict(steel="#8E9CB4", trim="#C8923A", tabard="#2F7A72", cloth="#3E4A6A", skin="#E2A57A", beard="#7A4A2E", leather="#6E4A32",
+             boot="#4A3A34", scarf="#C83C3C", blade="#D6E0EC", grip="#5A3A28", face="#2F7A72", boss="#E0B85A")
+    BACK = {k: adjust(v, -0.09, -0.03) for k, v in C.items()}  # far side: one step darker, less saturated
+    LAYERS = ["Shadow", "Scarf", "ShieldBack", "BackArm", "BackLeg", "Body", "FrontLeg", "Head", "Weapon", "FrontArm", "ShieldFront",
+              "Details", "FX", "Impact"]
+
+    def d(a):
+        r = math.radians(a)
+        return (math.sin(r), math.cos(r))  # 0 = down, 90 = forward (+x), 180 = up
+
+    def at(p, v, s=1.0):
+        return (p[0] + v[0] * s, p[1] + v[1] * s)
+
+    def capsule(a, b, ra, rb, n=5):
+        ang = math.atan2(b[1] - a[1], b[0] - a[0])
+        pts = [(b[0] + math.cos(ang - math.pi / 2 + math.pi * i / n) * rb, b[1] + math.sin(ang - math.pi / 2 + math.pi * i / n) * rb) for i in range(n + 1)]
+        pts += [(a[0] + math.cos(ang + math.pi / 2 + math.pi * i / n) * ra, a[1] + math.sin(ang + math.pi / 2 + math.pi * i / n) * ra) for i in range(n + 1)]
+        return pts
+
+    def oval(c, rx, ry, rot=0.0, n=18):
+        cr, sr = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+        return [(c[0] + math.cos(t) * rx * cr - math.sin(t) * ry * sr, c[1] + math.cos(t) * rx * sr + math.sin(t) * ry * cr)
+                for t in (i / n * math.tau for i in range(n))]
+
+    # ---------------------------------------------------------------- poses
+    BASE = dict(px=40.0, lean=5.0, tilt=0.0, chest=0.0, f_sh=20.0, f_el=35.0, sword=80.0, b_sh=-10.0, b_el=30.0,
+                f_hip=12.0, f_knee=10.0, b_hip=-14.0, b_knee=8.0, lift=0.0, rot=0.0, shield_front=0.0)
+
+    def keyed(n, keys):
+        """Smoothstep in-betweens between keyframes {frame: overrides}."""
+        idx = sorted(keys)
+        poses = []
+        for f in range(n):
+            lo = max(k for k in idx if k <= f)
+            hi = min((k for k in idx if k >= f), default=lo)
+            a, b = {**BASE, **keys[lo]}, {**BASE, **keys[hi]}
+            t = 0 if hi == lo else (f - lo) / (hi - lo)
+            t = t * t * (3 - 2 * t)
+            poses.append({k: a[k] + (b[k] - a[k]) * t for k in BASE})
+        return poses
+
+    READY = {}
+
+    def cyc(n, fn):
+        return [{**BASE, **fn(math.tau * k / n)} for k in range(n)]
+
+    ANIMS = []  # (name, poses, durations, wind, loop, events)
+    ANIMS.append(("idle", cyc(8, lambda p: dict(chest=-(1 - math.cos(p)) / 2 * 1.2, f_el=35 + 5 * (1 - math.cos(p)) / 2,
+                                                b_el=30 + 5 * (1 - math.cos(p)) / 2, tilt=-2 * (1 - math.cos(p)) / 2)),
+                  [180, 150, 140, 160, 180, 150, 140, 160], 0.25, True, {}))
+    ANIMS.append(("walk", cyc(8, lambda p: dict(lean=7, f_hip=4 + 24 * math.sin(p), b_hip=4 - 24 * math.sin(p),
+                                                f_knee=6 + 34 * max(0, math.cos(p)) ** 1.3, b_knee=6 + 34 * max(0, -math.cos(p)) ** 1.3,
+                                                f_sh=16 - 16 * math.sin(p), b_sh=-6 + 16 * math.sin(p), tilt=1.5 * math.sin(2 * p))),
+                  [100] * 8, 0.7, True, {}))
+    ANIMS.append(("run", cyc(8, lambda p: dict(lean=17, f_hip=8 + 38 * math.sin(p), b_hip=8 - 38 * math.sin(p),
+                                               f_knee=10 + 72 * max(0, math.cos(p)) ** 1.2, b_knee=10 + 72 * max(0, -math.cos(p)) ** 1.2,
+                                               f_sh=24 - 32 * math.sin(p), f_el=70, sword=60, b_sh=4 + 32 * math.sin(p), b_el=70,
+                                               lift=2.5 * max(0, -math.cos(2 * p)), chest=-0.6 * abs(math.sin(p)))),
+                  [70] * 8, 1.6, True, {"dust": [2, 6]}))
+    ANIMS.append(("attack_slash", keyed(10, {
+        0: READY,
+        1: dict(lean=-3, f_sh=-45, f_el=60, sword=165, b_sh=20, b_el=40, f_hip=18, b_hip=-18, chest=-1),
+        2: dict(lean=-8, f_sh=-70, f_el=80, sword=195, b_sh=30, b_el=40, f_hip=20, b_hip=-20, chest=-1),
+        3: dict(lean=10, px=43, f_sh=70, f_el=20, sword=10, b_sh=-20, f_hip=26, f_knee=18, b_hip=-24),
+        4: dict(lean=16, px=45, f_sh=95, f_el=5, sword=0, b_sh=-30, b_el=40, f_hip=32, f_knee=26, b_hip=-26, b_knee=6),
+        5: dict(lean=16, px=45, f_sh=93, f_el=7, sword=0, b_sh=-30, b_el=40, f_hip=32, f_knee=26, b_hip=-26, b_knee=6),
+        6: dict(lean=11, px=44, f_sh=60, f_el=30, sword=40, f_hip=24, f_knee=18, b_hip=-20),
+        7: dict(lean=7, px=42, f_sh=35, f_el=35, sword=70),
+        8: dict(px=41),
+        9: READY}), [100, 90, 80, 40, 130, 110, 90, 90, 100, 120], 0.5, False,
+        {"smear": {3: (205, 100)}, "hitbox": [4, 5]}))
+    ANIMS.append(("attack_heavy", keyed(12, {
+        0: READY,
+        1: dict(chest=1.5, f_knee=30, b_knee=30, lean=2, f_sh=120, f_el=40, sword=30, b_sh=-25, b_el=40),
+        2: dict(lean=-10, f_sh=170, f_el=20, sword=25, b_sh=-40, f_hip=15, b_hip=-20, lift=3),
+        3: dict(lean=-6, f_sh=175, f_el=15, sword=25, b_sh=-40, f_hip=25, f_knee=30, b_hip=-10, b_knee=30, lift=7),
+        4: dict(lean=14, px=43, f_sh=100, f_el=10, sword=-10, b_sh=-30, f_hip=30, f_knee=20, b_hip=-20, lift=3),
+        5: dict(lean=28, px=46, f_sh=58, f_el=5, sword=-3, b_sh=-35, b_el=50, f_hip=42, f_knee=55, b_hip=-30, b_knee=30, chest=1),
+        6: dict(lean=28, px=46, f_sh=58, f_el=5, sword=-3, b_sh=-35, b_el=50, f_hip=42, f_knee=55, b_hip=-30, b_knee=30, chest=1),
+        7: dict(lean=26, px=46, f_sh=60, f_el=8, sword=-3, b_sh=-30, b_el=45, f_hip=40, f_knee=50, b_hip=-28, b_knee=28, chest=1),
+        8: dict(lean=18, px=45, f_sh=65, f_el=20, sword=20, f_hip=30, f_knee=30, b_hip=-22, b_knee=15),
+        9: dict(lean=10, px=43, f_sh=40, f_el=30, sword=60),
+        10: dict(px=41),
+        11: READY}), [100, 110, 90, 70, 40, 140, 100, 90, 90, 90, 100, 120], 0.5, False,
+        {"smear": {4: (225, 70)}, "shockwave": 5, "hitbox": [5, 6], "dust": [5]}))
+    ANIMS.append(("block", keyed(8, {
+        0: READY,
+        1: dict(shield_front=1, b_sh=80, b_el=45, lean=6, chest=1, f_knee=20, b_knee=18, f_sh=10, f_el=50, sword=95),
+        2: dict(shield_front=1, b_sh=85, b_el=45, lean=7, chest=1.5, f_knee=24, b_knee=20, f_sh=8, f_el=50, sword=95),
+        3: dict(shield_front=1, b_sh=85, b_el=45, lean=7, chest=1.5, f_knee=24, b_knee=20, f_sh=8, f_el=50, sword=95),
+        4: dict(shield_front=1, b_sh=85, b_el=50, lean=2, px=38, chest=2, f_knee=28, b_knee=24, f_sh=5, f_el=50, sword=95),
+        5: dict(shield_front=1, b_sh=85, b_el=48, lean=4, px=39, chest=1.5, f_knee=24, b_knee=20, f_sh=8, f_el=50, sword=95),
+        6: dict(shield_front=1, b_sh=45, b_el=40, lean=5, px=39.5),
+        7: READY}), [100, 80, 140, 140, 60, 90, 100, 120], 0.3, False, {"spark": 4}))
+    ANIMS.append(("jump", keyed(10, {
+        0: dict(chest=2, f_knee=45, b_knee=40, f_hip=30, b_hip=5, lean=12, f_sh=-30, f_el=40, b_sh=-30),
+        1: dict(f_knee=4, b_knee=6, f_hip=8, b_hip=-25, lift=8, f_sh=120, f_el=20, sword=60, b_sh=60, lean=6),
+        2: dict(f_knee=30, b_knee=35, f_hip=30, b_hip=-10, lift=20, f_sh=100, f_el=30, sword=70, b_sh=40, lean=4),
+        3: dict(f_knee=60, b_knee=65, f_hip=50, b_hip=10, lift=27, f_sh=80, f_el=40, sword=80, b_sh=30),
+        4: dict(f_knee=62, b_knee=66, f_hip=52, b_hip=12, lift=29, f_sh=75, f_el=40, sword=80, b_sh=25),
+        5: dict(f_knee=55, b_knee=60, f_hip=45, b_hip=8, lift=28, f_sh=80, f_el=40, sword=80, b_sh=30),
+        6: dict(f_knee=20, b_knee=25, f_hip=15, b_hip=-15, lift=22, f_sh=100, f_el=30, sword=70, b_sh=60, lean=2),
+        7: dict(f_knee=8, b_knee=10, f_hip=10, b_hip=-12, lift=10, f_sh=90, f_el=30, sword=70, b_sh=50, lean=4),
+        8: dict(chest=2.5, f_knee=50, b_knee=45, f_hip=35, b_hip=10, lean=14, f_sh=40, f_el=45, b_sh=-10, b_el=50),
+        9: READY}), [120, 60, 70, 80, 120, 100, 80, 70, 110, 120], 0.4, False, {"dust": [8], "launch_dust": [1]}))
+    HURT = dict(lean=-12, px=38, tilt=-10, f_sh=-20, f_el=50, sword=110, b_sh=-30, b_el=40, f_knee=15, b_knee=12)
+    ANIMS.append(("hurt", keyed(8, {
+        0: HURT, 1: dict(HURT, px=37, lean=-16),
+        2: dict(lean=-18, px=36, tilt=-14, f_sh=-35, f_el=55, sword=120, b_sh=-40, b_el=40, f_knee=18, b_knee=14),
+        3: dict(lean=-17, px=36, tilt=-13, f_sh=-33, f_el=55, sword=120, b_sh=-38, b_el=40, f_knee=18, b_knee=14),
+        4: dict(lean=-10, px=37, tilt=-6, f_sh=-10), 5: dict(lean=-2, px=38), 6: dict(px=39), 7: READY}),
+        [60, 60, 90, 100, 90, 90, 100, 120], 0.5, False, {"flash": [0, 1]}))
+    ANIMS.append(("death", keyed(12, {
+        0: HURT,
+        1: dict(lean=-20, px=37, tilt=-16, f_sh=-30, f_el=50, sword=120, b_sh=-35, f_knee=20, b_knee=18),
+        2: dict(chest=2, f_knee=60, b_knee=70, f_hip=50, b_hip=20, lean=5, tilt=10, f_sh=5, f_el=20, b_sh=0, b_el=20),
+        3: dict(chest=2, f_hip=85, f_knee=120, b_hip=70, b_knee=125, lean=10, tilt=18, f_sh=0, f_el=15, b_sh=-5, b_el=15),
+        4: dict(chest=2.5, f_hip=86, f_knee=122, b_hip=72, b_knee=126, lean=12, tilt=22, f_sh=0, f_el=15, b_sh=-5, b_el=15),
+        5: dict(f_hip=86, f_knee=122, b_hip=72, b_knee=126, lean=14, tilt=22, f_sh=10, f_el=15, b_sh=0, b_el=15, rot=20),
+        6: dict(f_hip=80, f_knee=110, b_hip=66, b_knee=110, lean=10, tilt=15, f_sh=40, f_el=20, b_sh=30, b_el=20, rot=50),
+        7: dict(f_hip=60, f_knee=60, b_hip=50, b_knee=55, lean=4, tilt=5, f_sh=80, f_el=10, b_sh=70, b_el=10, rot=82),
+        8: dict(f_hip=55, f_knee=50, b_hip=45, b_knee=50, lean=4, tilt=5, f_sh=85, f_el=10, b_sh=75, b_el=10, rot=78, lift=1.5),
+        9: dict(f_hip=50, f_knee=45, b_hip=40, b_knee=45, lean=3, tilt=4, f_sh=88, f_el=8, b_sh=78, b_el=8, rot=84),
+        10: dict(f_hip=50, f_knee=45, b_hip=40, b_knee=45, lean=3, tilt=4, f_sh=88, f_el=8, b_sh=78, b_el=8, rot=85),
+        11: dict(f_hip=50, f_knee=45, b_hip=40, b_knee=45, lean=3, tilt=4, f_sh=88, f_el=8, b_sh=78, b_el=8, rot=85)}),
+        [60, 100, 100, 120, 160, 90, 80, 70, 90, 120, 200, 600], 0.3, False, {"flash": [0], "drop_sword": 2, "dust": [7]}))
+
+    # ---------------------------------------------------------------- skeleton → polygons
+    def skeleton(p):
+        P = (p["px"], 50.0)
+        lean = math.radians(p["lean"])
+        u = (math.sin(lean), -math.cos(lean))  # up the spine
+        fw = (math.cos(lean), math.sin(lean))  # forward, perpendicular to the spine
+        N = at(at(P, u, 15), (0, p["chest"]))
+        Hc = at(N, u, 5.8)
+        F, B = at(at(N, u, -2), fw, 1.2), at(at(N, u, -2), fw, -1.6)
+        j = dict(P=P, N=N, Hc=Hc, F=F, B=B, u=u, fw=fw)
+        j["fe"] = at(F, d(p["f_sh"]), 8.5)
+        j["fh"] = at(j["fe"], d(p["f_sh"] + p["f_el"]), 7.5)
+        j["be"] = at(B, d(p["b_sh"]), 8.5)
+        j["bh"] = at(j["be"], d(p["b_sh"] + p["b_el"]), 7.5)
+        for s, hipx in (("f", 1.2), ("b", -1.0)):
+            hip = at(P, fw, hipx)
+            knee = at(hip, d(p[s + "_hip"]), 11)
+            ankle = at(knee, d(p[s + "_hip"] - p[s + "_knee"]), 11)
+            j[s + "hip"], j[s + "knee"], j[s + "ankle"] = hip, knee, ankle
+        j["blade_dir"] = p["f_sh"] + p["f_el"] + p["sword"]
+        return j
+
+    def parts(p, j, sword_free=None):
+        """[(layer, color, points)] back to front within each layer."""
+        out = []
+        u, fw = j["u"], j["fw"]
+        for s, lay, pal in (("b", "BackLeg", BACK), ("f", "FrontLeg", C)):
+            hip, knee, ankle = j[s + "hip"], j[s + "knee"], j[s + "ankle"]
+            out.append((lay, pal["cloth"], capsule(hip, knee, 3.3, 2.7)))
+            out.append((lay, pal["steel"], capsule(knee, ankle, 2.8, 2.2)))
+            out.append((lay, pal["trim"], oval(knee, 2.3, 2.0)))
+            tilt = (p[s + "_hip"] - p[s + "_knee"]) * 0.25
+            toe = at(ankle, d(90 + tilt), 6.0)
+            heel = at(ankle, d(270 + tilt), 2.0)
+            sole = d(tilt)
+            out.append((lay, pal["boot"], [at(heel, sole, -1.5), at(ankle, sole, -2.5), at(toe, sole, -1.0), at(toe, sole, 2.2), at(heel, sole, 2.2)]))
+        # back arm + shield
+        out.append(("BackArm", BACK["cloth"], capsule(j["B"], j["be"], 2.6, 2.2)))
+        out.append(("BackArm", BACK["steel"], capsule(j["be"], j["bh"], 2.4, 2.3)))
+        out.append(("BackArm", BACK["leather"], oval(j["bh"], 2.2, 2.2)))
+        sl = "ShieldFront" if p["shield_front"] > 0.5 else "ShieldBack"
+        sc = at(j["bh"], fw, 1.5)
+        srot = (p["b_sh"] + p["b_el"]) * 0.15
+        pal = C if sl == "ShieldFront" else BACK
+        out.append((sl, pal["trim"], oval(sc, 5.2 if sl == "ShieldFront" else 4.4, 10.5, srot)))
+        out.append((sl, pal["face"], oval(sc, 3.9 if sl == "ShieldFront" else 3.2, 9.0, srot)))
+        out.append((sl, pal["boss"], oval(at(sc, (1, 0), 0.6), 1.6, 2.0, srot)))
+        # body: breastplate, belt, tabard
+        P, N = j["P"], j["N"]
+        tab_swing = (p["f_hip"] + p["b_hip"]) * 0.5
+        tb = at(P, d(tab_swing), 10)
+        out.append(("Body", C["tabard"], [at(at(P, u, 4), fw, 4.6), at(tb, fw, 4.2), at(at(tb, d(tab_swing), 1.5), fw, 0), at(tb, fw, -4.4), at(at(P, u, 4), fw, -4.4)]))
+        out.append(("Body", C["steel"], [at(P, fw, -4.3), at(at(P, u, 7), fw, -5.0), at(at(N, u, -1), fw, -5.2), at(N, fw, -3.0), at(N, fw, 3.4),
+                                         at(at(N, u, -2.5), fw, 6.2), at(at(P, u, 8), fw, 5.4), at(P, fw, 4.5)]))
+        out.append(("Body", C["leather"], [at(at(P, u, 1), fw, -4.6), at(at(P, u, 3.4), fw, -4.6), at(at(P, u, 3.4), fw, 4.8), at(at(P, u, 1), fw, 4.8)]))
+        out.append(("Body", C["steel"], oval(at(N, u, 0.5), 3.4, 2.4, p["lean"])))
+        # head: helmet, face, beard, crest
+        Hc = j["Hc"]
+        ht = p["lean"] + p["tilt"]
+        hu, hf = d(180 + ht), d(90 + ht)
+        out.append(("Head", C["steel"], oval(Hc, 6.3, 6.6, ht)))
+        face = [at(at(Hc, hf, 1.0), hu, 0.5), at(at(Hc, hf, 6.4), hu, 0.8), at(at(Hc, hf, 6.8), hu, -3.0),
+                at(at(Hc, hf, 4.6), hu, -6.2), at(at(Hc, hf, 1.2), hu, -5.4)]
+        out.append(("Head", C["skin"], face))
+        out.append(("Head", C["beard"], [at(at(Hc, hf, 1.0), hu, -3.2), at(at(Hc, hf, 6.6), hu, -2.6), at(at(Hc, hf, 5.0), hu, -7.2),
+                                        at(at(Hc, hf, 2.4), hu, -7.6), at(at(Hc, hf, 0.6), hu, -5.0)]))
+        out.append(("Head", C["steel"], capsule(at(at(Hc, hf, 5.6), hu, 2.6), at(at(Hc, hf, 6.0), hu, -1.6), 0.8, 0.7, 3)))
+        out.append(("Head", C["trim"], capsule(at(at(Hc, hf, 4.5), hu, 5.6), at(at(Hc, hf, -4.5), hu, 5.0), 1.3, 1.1, 4)))
+        # sword (in hand, or fallen)
+        if sword_free:
+            hand, bd = sword_free
+        else:
+            hand, bd = j["fh"], j["blade_dir"]
+        bdir, bperp = d(bd), d(bd + 90)
+        guard = at(hand, bdir, 2.5)
+        tip = at(guard, bdir, 23)
+        out.append(("Weapon", C["grip"], capsule(at(hand, bdir, -3.5), guard, 1.1, 1.1, 3)))
+        out.append(("Weapon", C["trim"], oval(at(hand, bdir, -4.2), 1.5, 1.5)))
+        out.append(("Weapon", C["blade"], [at(guard, bperp, 1.6), at(at(tip, bdir, -4), bperp, 1.3), tip, at(at(tip, bdir, -4), bperp, -1.3), at(guard, bperp, -1.6)]))
+        out.append(("Weapon", C["trim"], capsule(at(guard, bperp, 3.4), at(guard, bperp, -3.4), 1.0, 1.0, 3)))
+        # front arm with pauldron
+        if not sword_free or True:
+            out.append(("FrontArm", C["cloth"], capsule(j["F"], j["fe"], 2.7, 2.3)))
+            out.append(("FrontArm", C["steel"], capsule(j["fe"], j["fh"], 2.5, 2.4)))
+            out.append(("FrontArm", C["leather"], oval(j["fh"], 2.3, 2.3)))
+            out.append(("FrontArm", C["steel"], oval(at(j["F"], d(p["f_sh"]), 1.2), 4.4, 3.6, p["f_sh"] * 0.4)))
+            out.append(("FrontArm", C["trim"], capsule(at(at(j["F"], d(p["f_sh"]), 3.6), d(p["f_sh"] + 90), 3.6),
+                                                      at(at(j["F"], d(p["f_sh"]), 3.6), d(p["f_sh"] + 90), -3.6), 0.8, 0.8, 3)))
+        return out, (tip, guard)
+
+    def transform(pt, rot, pivot, dx, dy):
+        if rot:
+            r = math.radians(rot)
+            x, y = pt[0] - pivot[0], pt[1] - pivot[1]
+            pt = (pivot[0] + x * math.cos(r) - y * math.sin(r), pivot[1] + x * math.sin(r) + y * math.cos(r))
+        return (pt[0] + dx, pt[1] + dy)
+
+    # ---------------------------------------------------------------- secondary motion (Verlet chains)
+    class Chain:
+        def __init__(self, n, seg, grav):
+            self.n, self.seg, self.grav = n, seg, grav
+            self.pts = None
+
+        def step(self, anchor, wind, sub=3):
+            if self.pts is None:
+                self.pts = [(anchor[0] - i * self.seg, anchor[1] + i * 0.5) for i in range(self.n)]
+                self.prev = list(self.pts)
+            for _ in range(sub):
+                new = [anchor]
+                for i in range(1, self.n):
+                    x, y = self.pts[i]
+                    px, py = self.prev[i]
+                    vx, vy = (x - px) * 0.86, (y - py) * 0.86
+                    new.append((x + vx - wind * 0.35, y + vy + self.grav))
+                for _ in range(4):
+                    new[0] = anchor
+                    for i in range(1, self.n):
+                        ax, ay = new[i - 1]
+                        bx, by = new[i]
+                        dd = math.hypot(bx - ax, by - ay) or 1e-3
+                        k = self.seg / dd
+                        new[i] = (ax + (bx - ax) * k, ay + (by - ay) * k)
+                self.prev, self.pts = self.pts, new
+            return list(self.pts)
+
+    # ---------------------------------------------------------------- document
+    total = sum(len(a[1]) for a in ANIMS)
+    cmd("project_new", width=W, height=H, name="Bram - the Bronze Warden")
+    cmd("layer_rename", layer=0, name=LAYERS[0])
+    for name in LAYERS[1:]:
+        cmd("layer_create", name=name)
+    cmd("frame_add", count=total - 1)
+
+    frame = 0
+    durations, tags, fx_jobs, flash_frames, slices = [], [], [], [], []
+    for name, poses, durs, wind, loop, ev in ANIMS:
+        start = frame
+        scarf, plume = Chain(6, 3.2, 0.32), Chain(4, 2.6, 0.12)
+        geo = []
+        for k, p in enumerate(poses):
+            j = skeleton(p)
+            # Plant: the lowest foot/knee touches the ground.
+            pts_low = [j["fankle"][1] + 2.4, j["bankle"][1] + 2.4, j["fknee"][1] + 2.4, j["bknee"][1] + 2.4]
+            dy = GROUND - max(pts_low)
+            pivot = (j["fknee"][0], j["fknee"][1] + dy) if p["rot"] else (0, 0)
+            sword_free = None
+            if "drop_sword" in ev and k >= ev["drop_sword"]:
+                q = min(1.0, (k - ev["drop_sword"]) / 3)
+                sword_free = ((p["px"] + 22 + 4 * q, 60 + (GROUND - 2.5 - 60) * q * q), 150 - 60 * q)
+            plist, (tip, guard) = parts(p, j, None)
+            moved = [(lay, col, [transform(pt, p["rot"], pivot, 0, dy) for pt in poly]) for lay, col, poly in plist
+                     if not (sword_free and lay == "Weapon")]
+            if p["rot"]:
+                low = max(pt[1] for _, _, poly in moved for pt in poly)
+                moved = [(lay, col, [(x, y + GROUND - low) for x, y in poly]) for lay, col, poly in moved]
+            moved = [(lay, col, [(x, y - p["lift"]) for x, y in poly]) for lay, col, poly in moved]
+            if sword_free:
+                fp, _ = parts(p, j, sword_free)
+                moved += [(lay, col, poly) for lay, col, poly in fp if lay == "Weapon"]
+            anchor_off = (0, dy - p["lift"])
+            nb = transform(at(j["N"], j["fw"], -3.0), p["rot"], pivot, *anchor_off)
+            pl = transform(at(at(j["Hc"], j["u"], 5.5), j["fw"], -2.5), p["rot"], pivot, *anchor_off)
+            geo.append((p, j, moved, nb, pl, transform(tip, p["rot"], pivot, *anchor_off)))
+        # Physics: loops pre-roll two cycles so the recorded cycle closes seamlessly.
+        rolls = 3 if loop else 1
+        for r in range(rolls):
+            for k, (p, j, moved, nb, pl, tip) in enumerate(geo):
+                w = wind * (1 + 0.3 * math.sin(math.tau * k / len(geo))) if name == "idle" else wind
+                sc, pc = scarf.step(nb, w), plume.step(pl, w * 0.8)
+                if r == rolls - 1:
+                    geo[k] = (p, j, moved, nb, pl, tip, sc, pc)
+        for k, (p, j, moved, nb, pl, tip, sc, pc) in enumerate(geo):
+            f = start + k
+            for i in range(len(sc) - 1):
+                moved.insert(0, ("Scarf", C["scarf"], capsule(sc[i], sc[i + 1], 2.2 - i * 0.18, 2.0 - i * 0.18, 3)))
+            for i in range(len(pc) - 1):
+                moved.insert(0, ("Scarf", adjust(C["scarf"], 0.06), capsule(pc[i], pc[i + 1], 1.6 - i * 0.25, 1.3 - i * 0.25, 3)))
+            feet_x = (min(pt[0] for lay, _, poly in moved if lay in ("FrontLeg", "BackLeg") for pt in poly) +
+                      max(pt[0] for lay, _, poly in moved if lay in ("FrontLeg", "BackLeg") for pt in poly)) / 2
+            sw = 15 * K * (1 - min(p["lift"], 28) / 40)
+            fx_s = S((feet_x, GROUND))[0]
+            cmd("draw_ellipse", layer="Shadow", frame=f, x=round(fx_s - sw), y=GY - 2, width=round(sw * 2), height=5, color="#5C6088", filled=True)
+            for lay, col, poly in moved:
+                cmd("draw_polygon", layer=lay, frame=f, color=col, points=[[round(x, 1), round(y, 1)] for x, y in map(S, poly)])
+            # Details: eye, buckle, visor shine (hand-placed after shading, see below).
+            rot, piv = p["rot"], None
+            eye = (j["Hc"][0], j["Hc"][1])
+            ht = p["lean"] + p["tilt"]
+            ex, ey = at(at(eye, d(90 + ht), 3.6), d(180 + ht), -0.6)
+            if not rot:
+                epx = S((ex, ey + (GROUND - max(j[s][1] + 2.4 for s in ("fankle", "bankle", "fknee", "bknee"))) - p["lift"]))
+                fx_jobs.append(("details", f, [[round(epx[0]), round(epx[1]), "#1E1A2A"]]))
+            if k in ev.get("smear", {}):
+                fx_jobs.append(("smear", f, (j, p, ev["smear"][k], GROUND - max(j[s][1] + 2.4 for s in ("fankle", "bankle", "fknee", "bknee")) - p["lift"])))
+            if k in ev.get("dust", []) or k in ev.get("launch_dust", []):
+                fx_jobs.append(("dust", f, fx_s))
+            if ev.get("shockwave") == k:
+                fx_jobs.append(("shock", f, S(tip)))
+            if ev.get("spark") == k:
+                sx = max(pt[0] for lay, _, poly in moved if lay == "ShieldFront" for pt in poly)
+                fx_jobs.append(("spark", f, S((sx, 60))))
+            if k in ev.get("flash", []):
+                flash_frames.append(f)
+            if k in ev.get("hitbox", []):
+                slices.append((f"hitbox_{name}", f, S(tip)))
+        for k, ms in enumerate(durs):
+            durations.append((start + k, ms))
+        tags.append((name, start, start + len(poses) - 1, loop))
+        frame += len(poses)
+
+    # ---------------------------------------------------------------- engine finishing passes
+    cmd("layer_blend", layer="Shadow", mode="multiply")
+    cmd("layer_opacity", layer="Shadow", opacity=170)
+    shade = dict(Scarf=dict(tones=3, bevel=1.5, contrast=0.5), ShieldBack=dict(tones=3, bevel=2, contrast=0.5), BackArm=dict(tones=3, bevel=1.5),
+                 BackLeg=dict(tones=3, bevel=1.5), Body=dict(tones=4, bevel=2.5, contrast=0.6), FrontLeg=dict(tones=3, bevel=1.5),
+                 Head=dict(tones=3, bevel=2, contrast=0.5), Weapon=dict(tones=3, bevel=1, contrast=0.7), FrontArm=dict(tones=4, bevel=1.5, contrast=0.6),
+                 ShieldFront=dict(tones=3, bevel=2, contrast=0.55))
+    for lay, a in shade.items():
+        cmd("auto_shade", layer=lay, scope="layer", cast_shadow=2, min_region=3, **a)
+    for f in range(total):
+        for lay in shade:
+            cmd("outline", layer=lay, frame=f, mode="selout", darkness=0.62)
+    for kind, f, data in fx_jobs:
+        if kind == "details":
+            cmd("set_pixels", layer="Details", frame=f, pixels=data + [[data[0][0], data[0][1] - 1, "#1E1A2A"]])
+        elif kind == "smear":
+            j, p, (a0, a1), dy = data
+            sh = S((j["F"][0], j["F"][1] + dy))
+            for r_in, r_out, col in ((20 * K, 37 * K, "#7FA8D8"), (25 * K, 36 * K, "#CFE6FF"), (31 * K, 35.5 * K, "#FFFFFF")):
+                steps = 16
+                outer = [at(sh, d(a0 + (a1 - a0) * i / steps), r_out) for i in range(steps + 1)]
+                inner = [at(sh, d(a0 + (a1 - a0) * i / steps), r_in + (r_out - r_in) * (1 - i / steps) * 0.85) for i in range(steps, -1, -1)]
+                cmd("draw_polygon", layer="FX", frame=f, color=col, points=[[round(x, 1), round(y, 1)] for x, y in outer + inner])
+        elif kind == "dust":
+            for side in (-1, 1):
+                for i in range(3):
+                    x = data + side * (8 + i * 5)
+                    cmd("draw_ellipse", layer="FX", frame=f, x=round(x - 3 - i), y=GY - 4 - i, width=5 + i * 3, height=4 + i, color="#D8CBB8", filled=True)
+            cmd("dither_fill", layer="FX", frame=f, color="#D8CBB8", color2="#A8957E", level=6, only_opaque=True)
+        elif kind == "shock":
+            cmd("fx_generate", kind="shockwave", layer="Impact", frame=f, frames=4, size=64, x=round(data[0]), y=GY - 8, timing="uniform")
+        elif kind == "spark":
+            cmd("fx_generate", kind="hit", layer="Impact", frame=f, frames=3, size=36, x=round(data[0]) + 3, y=round(data[1]), timing="uniform")
+    for f in flash_frames:  # hit-flash: the whole body turns white for a frame
+        for lay in shade:
+            cmd("gradient_map", layer=lay, frame=f, colors=["#FFFFFF", "#FFFFFF"], strength=1.0)
+    for name, f, tip in slices:
+        cmd("slice_set", name=name, frame=f, x=round(tip[0]) - 14, y=round(tip[1]) - 10, width=24, height=20, color="#FF4040")
+    cmd("slice_set", name="hurtbox", x=38, y=40, width=30, height=64, color="#40A0FF")
+    for f, ms in durations:
+        cmd("frame_set_duration", frame=f, duration=ms)
+    for name, a, b, loop in tags:
+        cmd("animation_tag_create", name=name, **{"from": a, "to": b}, direction="forward", repeat=0 if loop else 1)
+
+    with open(os.path.join(out, "warrior.jsonl"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    show = list(lines)
+    for name, a, b, loop in tags:
+        show.append(json.dumps({"op": "export_gif", "tag": name, "scale": 3, "_save": f"warrior/{name}.gif"}))
+        show.append(json.dumps({"op": "export_spritesheet", "tag": name, "scale": 1, "padding": 0, "_save": f"warrior/{name}_sheet.png"}))
+    for f in range(total):
+        show.append(json.dumps({"op": "export_png", "frame": f, "scale": 1, "_save": f"warrior/frames/f{f:03d}.png"}))
+    show.append(json.dumps({"op": "export_atlas", "padding": 1, "extrude": 1, "image": "warrior_atlas.png", "_save": "warrior/warrior_atlas.png", "_json": True}))
+    show.append(json.dumps({"op": "export_godot_spriteframes", "texture_path": "res://warrior.png", "_save": "warrior/warrior.png", "_json": True}))
+    show.append(json.dumps({"op": "project_save", "_save": "warrior/warrior.pxs"}))
+    with open(os.path.join(out, "warrior_showcase.jsonl"), "w") as fh:
+        fh.write("\n".join(show) + "\n")
+    print(f"{len(ANIMS)} animations, {total} frames, {len(lines)} commands")
+
+
 def main(argv):
-    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|all]   → command scripts in Assets/Build/."""
+    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|all]   → command scripts in Assets/Build/."""
     import os
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Build")
     os.makedirs(out, exist_ok=True)
-    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits}
+    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior}
     wanted = argv[1:] or ["all"]
     for name, fn in targets.items():
         if "all" in wanted or name in wanted:
