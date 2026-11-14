@@ -923,6 +923,56 @@ mod artkit_tools {
         assert_eq!(num(&ok(&mut t, r#"{"op":"antialias","allow_new_colors":true}"#), "changed"), 0.0);
     }
 
+    const JPEG_QUADS: &str = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAQABADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD53r3iviev6KK/M/pJ8Gf8QE/sr9/9c+ue3+z7Hk9j7H+9V5ub2v8Adty9b6fQeMGc/wDEz/1L93/Z/wDZ/tevt/ae39n5UeTk9j/e5ubpbX//2Q==";
+    const JPEG_CONCEPT: &str = "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";
+
+    #[test]
+    fn baseline_jpeg_decodes() {
+        let bytes = crate::commands::voxel::base64_decode(JPEG_QUADS).unwrap();
+        let img = crate::export::decode_image(&bytes).unwrap();
+        assert_eq!((img.width, img.height), (16, 16));
+        let close = |x: u32, y: u32, c: [i32; 3]| {
+            let p = img.get(x, y);
+            assert!(
+                (p.r as i32 - c[0]).abs() < 24 && (p.g as i32 - c[1]).abs() < 24 && (p.b as i32 - c[2]).abs() < 24,
+                "({x},{y}) = {p:?} vs {c:?}"
+            );
+        };
+        close(3, 3, [220, 40, 40]);
+        close(12, 3, [40, 180, 60]);
+        close(3, 12, [40, 60, 200]);
+        close(12, 12, [240, 220, 60]);
+        assert!(crate::export::decode_image(b"\xFF\xD8\xFF\xC2junk").is_err());
+    }
+
+    #[test]
+    fn ai_concept_becomes_true_pixel_art() {
+        // 12×10 sprite on magenta, upscaled 7× with noise and saved as a 4:2:0 JPEG (q85).
+        let mut e = Engine::new(64, 64);
+        let r = ok(&mut e, &format!(r#"{{"op":"concept_import","data_base64":"{JPEG_CONCEPT}","colors":12,"margin":0}}"#));
+        assert!((num(&r, "cell") - 7.0).abs() < 0.15, "{}", r.to_json_string());
+        let sprite = r.get("sprite").unwrap();
+        assert_eq!((num(sprite, "width"), num(sprite, "height")), (8.0, 9.0), "{}", r.to_json_string());
+        assert!(num(&r, "backgroundPixels") > 40.0);
+        // The canvas fits the sprite; the eye pixels came through dark, the skin light.
+        let insp = ok(&mut e, r#"{"op":"canvas_inspect"}"#);
+        assert_eq!((num(&insp, "width"), num(&insp, "height")), (8.0, 9.0));
+        let px = |e: &mut Engine, x: i32, y: i32| {
+            let c = ok(e, &format!(r#"{{"op":"get_pixel","layer":"Concept","x":{x},"y":{y}}}"#));
+            c.get("color").and_then(Json::as_str).map(|s| s.to_string())
+        };
+        // The crop starts at the body row's left edge (sprite column 2): eye at x 3, skin at x 2.
+        let eye = px(&mut e, 3, 2).unwrap();
+        let skin = px(&mut e, 2, 2).unwrap();
+        let lum = |h: &str| {
+            u32::from_str_radix(&h[1..3], 16).unwrap()
+                + u32::from_str_radix(&h[3..5], 16).unwrap()
+                + u32::from_str_radix(&h[5..7], 16).unwrap()
+        };
+        assert!(lum(&eye) < 150 && lum(&skin) > 450, "eye {eye} skin {skin}");
+        assert_eq!(px(&mut e, 0, 0), None, "magenta background keyed out");
+    }
+
     #[test]
     fn mannequin_is_posed_lit_and_reports_joints() {
         let mut e = Engine::new(128, 128);

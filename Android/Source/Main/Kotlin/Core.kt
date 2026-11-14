@@ -222,6 +222,7 @@ class MainActivity : Activity() {
         const val REQ_EXPORT_GIF = 4
         const val REQ_IMPORT = 5
         const val REQ_REFERENCE = 6
+        const val REQ_CONCEPT = 7
     }
 
     private val app get() = application as PixelStudioApplication
@@ -657,7 +658,7 @@ class MainActivity : Activity() {
         val items = listOf(
             "New 32 × 32", "New 64 × 64", "New 128 × 128", "Open .pxs…", "Save .pxs…", "Import image…", "Import reference…",
             "Export PNG…", "Export GIF…", "Outline (primary color)", "Outline (selective)", "Auto shade layer", "Pixel-perfect cleanup",
-            "Review art…", "Form light layer", "Fix banding", "Selective anti-alias",
+            "Review art…", "Form light layer", "Fix banding", "Selective anti-alias", "Import AI concept…",
         )
         items.forEachIndexed { i, s -> menu.menu.add(0, i, i, s) }
         menu.setOnMenuItemClickListener { item ->
@@ -679,6 +680,7 @@ class MainActivity : Activity() {
                 14 -> engine.execute("shade_form", mapOf("light" to "top-left", "shadow_steps" to 2, "light_steps" to 2)).let { if (!it.ok) toast(it.errorMessage ?: "") }
                 15 -> engine.execute("fix_banding")
                 16 -> engine.execute("antialias", mapOf("amount" to 0.5))
+                17 -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"), REQ_CONCEPT)
             }
             true
         }
@@ -729,6 +731,18 @@ class MainActivity : Activity() {
                     if (r.ok) {
                         val n = r.result["native"] as? Map<*, *>
                         toast("Imported ${n?.get("width")}×${n?.get("height")}, ${r.result["colors"]} colors")
+                    } else toast(r.errorMessage ?: "cannot import")
+                }
+                REQ_CONCEPT -> {
+                    // Decode any format Android knows (JPEG, PNG, WebP, HEIF) and hand the engine a PNG.
+                    val raw = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                    val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: error("not an image")
+                    val png = java.io.ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                    val r = engine.execute("concept_import", mapOf("colors" to 32, "layer" to "Concept"), payload = png)
+                    if (r.ok) {
+                        val sp = r.result["sprite"] as? Map<*, *>
+                        canvas.post { canvas.fit() }
+                        toast("Concept: ${sp?.get("width")}×${sp?.get("height")} px, source pixel ${r.result["cell"]} px")
                     } else toast(r.errorMessage ?: "cannot import")
                 }
                 REQ_SAVE -> write(uri, engine.execute("project_save").binary)

@@ -2834,6 +2834,88 @@
     }
   },
   {
+    "name": "concept_import",
+    "description": "Turns an image from an AI image model (PNG or baseline JPEG, any size) into true, editable pixel art: finds the pseudo-pixel grid by Fourier analysis (also noisy, blurred, JPEG-compressed upscales), takes each cell's dominant colour, keys out the flat background, removes compression speckle, reduces the palette, builds material ramps, crops to the sprite and fits the canvas. Returns the detected cell size, confidence and sprite size.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "data_base64": {
+          "type": "string",
+          "description": "The image file (PNG or JPEG) as base64."
+        },
+        "cell": {
+          "type": "number",
+          "description": "Force the source pixel size (default: detect)."
+        },
+        "colors": {
+          "type": "integer",
+          "description": "Palette size after reduction (default 32).",
+          "minimum": 2,
+          "maximum": 256
+        },
+        "background": {
+          "type": "string",
+          "description": "auto (key out the border colour) or keep.",
+          "enum": ["auto","keep"]
+        },
+        "background_tolerance": {
+          "type": "number",
+          "description": "Perceptual distance keyed as background (default 0.1)."
+        },
+        "clean": {
+          "type": "number",
+          "description": "Speckle clean-up strength 0-0.3 (default 0.07, 0 = off)."
+        },
+        "ramps": {
+          "type": "boolean",
+          "description": "Build material ramps from the colours (default true)."
+        },
+        "fit_canvas": {
+          "type": "boolean",
+          "description": "Resize the canvas to the sprite (default true)."
+        },
+        "margin": {
+          "type": "integer",
+          "description": "Transparent margin around the sprite (default 2).",
+          "minimum": 0,
+          "maximum": 64
+        },
+        "sample": {
+          "type": "number",
+          "description": "Fraction of each cell sampled (default 0.5)."
+        },
+        "layer": {
+          "type": ["integer","string"],
+          "description": "Layer (default active)."
+        },
+        "x": {
+          "type": "integer",
+          "description": "Left."
+        },
+        "y": {
+          "type": "integer",
+          "description": "Top."
+        },
+        "frame": {
+          "type": "integer",
+          "description": "Frame (default active).",
+          "minimum": 0
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+          "minimum": 0
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Idempotency key: retrying with the same id never applies the change twice."
+        }
+      },
+      "required": ["data_base64"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "draw_figure",
     "description": "Draws a proportioned, posed and form-lit body (head, neck, torso, arms, hands, legs, feet) with a skin ramp — the base to dress with draw_path shapes. Returns the joints (head, neck, shoulders, elbows, wrists, waist, pelvis, hips, knees, ankles, toes) to place clothes. layers 5 puts far arm, far leg, body, near leg and near arm on separate layers so sleeves and skirts stack correctly.",
     "input_schema": {

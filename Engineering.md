@@ -38,6 +38,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 18. [Kalite araçları: eleştirmen, form ışığı, eğriler, manken](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)
 19. [Şelale: 256×256, 30 karelik döngü](#19-şelale-256256-30-karelik-döngü)
 20. [Korku aurası: 256×256, 30 karelik döngü](#20-korku-aurası-256256-30-karelik-döngü)
+21. [Hibrit hat: AI konsept görselinden gerçek pixel art'a](#21-hibrit-hat-ai-konsept-görselinden-gerçek-pixel-arta)
 
 ---
 
@@ -47,7 +48,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 80 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 82 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -60,7 +61,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **99 araç** | ✅ | 15 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **100 araç** | ✅ | 15 uçtan uca gateway testi |
 | Masaüstü editör (Windows 10/11 tarzı): **Pixel + Voxel 3D** sekmeleri, 11 araç, rampa paneli, katman yoğunluğu | ✅ | derleniyor; Xvfb altında çalıştırıldı, ekran görüntüleri [bölüm 17](#17-editör-arayüzü-windows-1011-ve-android) |
 | Android: 2D editör (9 araç, rampa/HSV sayfası, katman paneli) + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint hatası yok; **cihazda ve emülatörde henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
@@ -141,7 +142,7 @@ Freedom Network düzeni: her platform tek kaynak dosyası (`Core.kt` / `Core.rs`
 ### Hızlı başlangıç
 
 ```bash
-cd Native && cargo test                     # Rust motoru: 80 test (golden render dahil)
+cd Native && cargo test                     # Rust motoru: 82 test (golden render dahil)
 ./gradlew test                              # JVM: JSON, JNI köprüsü, gateway (Rust'ı otomatik derler)
 ./gradlew :Windows:run                      # masaüstü editörü
 ./gradlew :Gateway:run --args="--size 64x64 --port 38471 --workspace ./workspace [--token T] [--allow-destructive]"
@@ -319,7 +320,7 @@ Sunucu "dual-era"dır ve iki dönemi aynı endpoint'te sunar:
 
 Yanıtlar her zaman `application/json` olarak döner. Bildirimler `202` alır. `GET /mcp` isteği `405` döner.
 
-### Araçlar (99)
+### Araçlar (100)
 
 Araç seti 2026-11'de sadeleştirildi: aynı işi yapan küçük araçlar birleştirildi (113 → 93 araç, motorda 124 → 97 işlem), el ile piksel sanatı için dört yeni araç eklendi. Ardından kalite araçları geldi (99 araç, 103 işlem; bkz. [bölüm 18](#18-kalite-araçları-eleştirmen-form-ışığı-eğriler-manken)). Eski adlar ve karşılıkları:
 
@@ -1107,4 +1108,54 @@ Aura katmanları yarı saydam piksel içermez; her oyun motorunda keskin kalır.
 Alev ve hale tek piksellik benekleri çoğunluk filtresiyle temizlenir.
 
 **Döngü doğrulaması:** Hareket fonksiyonları 30 kare kaydırıldığında piksel piksel aynı sonucu veriyor. Bunun için iki önlem alındı: faz periyoda indirgeniyor, kare indeksi 30'a göre normalize ediliyor (`sin(2π)` ≠ 0 kaymasına karşı). Son kareden ilk kareye geçişte değişen piksel sayısı (12876), normal kare geçişleri (11493–13900) aralığında.
+
+## 21. Hibrit hat: AI konsept görselinden gerçek pixel art'a
+
+Motor kendi başına "güzel karakter" icat etmekte zayıf kaldığı için, yaratıcı taslak bir görsel modelinden gelir. Motor bu taslağı **gerçek, düzenlenebilir pixel art'a** çevirir; geri kalanını (yönler, animasyon, temizlik, dışa aktarma) kendi araçlarıyla yapar.
+
+![AI konseptinden pixel art](Assets/Gallery/ranger_x4.png)
+
+*Bir görsel modelinin ürettiği 2400×1792 JPEG'den motorun çıkardığı 80×110 piksellik sprite (×4 gösterim).*
+
+### Akış
+
+1. **Prompt:** MCP `concept_prompt` promptu (ya da editördeki şablon) görsel modeline uygun bir prompt üretir:
+   - düz tek renk (#FF00FF) arka plan,
+   - tutarlı piksel ızgarası,
+   - sol üstten tek ışık,
+   - yaklaşık 32 renk,
+   - ayakları görünen tam boy.
+2. **Görsel modeli:** Kullanıcı görseli üretir (ChatGPT/OpenAI, Gemini, Midjourney…) ve editöre ya da ajana verir.
+3. **`concept_import`:**
+   - **Biçim:** PNG ya da baseline JPEG doğrudan girer (motorda saf Rust JPEG çözücü var). Masaüstü diğer biçimleri ImageIO ile, Android BitmapFactory ile (WebP, HEIF dahil) PNG'ye çevirir.
+   - **Izgara:** Kenar profilinin Fourier tepkisiyle bulunur. 12 gri seviyenin altındaki farklar sıkıştırma gürültüsü sayılır. Harmonik tuzağına karşı tepe noktasının 2, 3 ve 4 katları da denenir: gerçek hücre güçlü yanıt verir, gerçek hücrenin katlarında yanıt söner.
+   - **Örnekleme:** Her hücrenin ortasından baskın renk alınır; JPEG gürültüsüne ve bulanıklığa dayanıklıdır.
+   - **Temizlik:**
+     - Kenarın baskın rengi algısal toleransla silinir.
+     - Komşusunun sadece sıkıştırma salınımı olan tek pikseller birleştirilir; gerçek detaylar korunur.
+     - Palet azaltılır ve renk tonu ailelerinden rampalar çıkarılır.
+     - Sprite içeriğe göre kırpılır, tuval sprite'a uydurulur.
+4. **Devamı:** Diğer 7 yön (`turnaround_prompt` + aynalama), animasyon, `art_review`, dışa aktarma.
+
+### Ölçüm
+
+İlk konsept (2400×1792 baseline JPEG, macenta arka plan):
+
+| Ölçüt | Sonuç |
+| --- | --- |
+| Bulunan hücre | 15 px (güven 0,54) |
+| Sprite | 80×110 |
+| Renk | 40 |
+| Silinen arka plan | 15.284 piksel |
+| Süre | ~0,6 s |
+
+Görselin ölçeklenmiş hali ile motorun çıktısı yan yana neredeyse aynı.
+
+Testler (`mod artkit_tools`):
+- **JPEG:** 4:2:0 renk alt örneklemeli dört renkli bir JPEG doğru çözülüyor.
+- **Konsept:** 7× büyütülmüş, gürültülü, q85 JPEG bir sprite'ın ızgarası (7,0), boyutu (8×9), göz ve ten pikselleri ile silinen arka planı doğru geri kuruluyor.
+
+**Editör:** Masaüstü *File → Import AI concept…* (`Ctrl+Shift+J`); Android taşma menüsü *Import AI concept…*. Ajanlar için `concept_import` aracı ve `concept_prompt` / `turnaround_prompt` MCP promptları.
+
+**Sınırlar:** Progressive JPEG motor içinde henüz çözülmüyor; editörler bu durumda görseli PNG'ye çevirip yeniden deniyor. Görsel modellerini API ile doğrudan çağırma (OpenAI, Gemini, PixelLab, Stability) bir sonraki adım. Model adları sık değiştiği için ayarlardan seçilebilir olacak.
 

@@ -1059,7 +1059,7 @@ pub mod commands {
                         .map_err(|_| CmdError::invalid("provide the PNG as 'data_base64' (or as the binary payload)"))?,
                 )?
             };
-            let src = crate::export::png::decode(&png).map_err(|e| CmdError::new("invalid_file", e))?;
+            let src = crate::export::decode_image(&png).map_err(|e| CmdError::new("invalid_file", e))?;
             let (nw, nh) = match a.get("grid") {
                 None | Some(Json::Null) => detect_grid(&src),
                 Some(Json::Str(s)) if s == "auto" => detect_grid(&src),
@@ -2138,6 +2138,258 @@ pub mod commands {
                 changed += grid.set(x, y, v) as u64;
             }
             Ok(Outcome::new(Json::obj().with("changed", changed), changed))
+        }
+
+        // ---- AI concept import --------------------------------------------------------------------
+
+        /// Period (cell size) and phase of a pseudo-pixel grid along one axis, from the Fourier
+        /// response of the edge profile: AI "pixel art" is upscaled art with blur and compression
+        /// noise, so exact matching fails but the edge comb still has a sharp spectral peak.
+        pub fn grid_period(profile: &[f64], smin: f64, smax: f64) -> Option<(f64, f64, f64)> {
+            let n = profile.len();
+            if n < 16 {
+                return None;
+            }
+            let mean = profile.iter().sum::<f64>() / n as f64;
+            let p: Vec<f64> = profile.iter().map(|v| v - mean).collect();
+            let norm: f64 = p.iter().map(|v| v.abs()).sum::<f64>().max(1e-9);
+            let response = |s: f64| -> (f64, f64) {
+                let w = 2.0 * std::f64::consts::PI / s;
+                let (mut re, mut im) = (0.0, 0.0);
+                for (x, v) in p.iter().enumerate() {
+                    let a = w * x as f64;
+                    re += v * a.cos();
+                    im -= v * a.sin();
+                }
+                (re.hypot(im) / norm, (-im.atan2(re) / w).rem_euclid(s))
+            };
+            let mut best = (0.0f64, 0.0f64, 0.0f64);
+            let mut s = smin;
+            while s <= smax {
+                let (z, phase) = response(s);
+                if z > best.0 {
+                    best = (z, s, phase);
+                }
+                s += 0.01;
+            }
+            // The strongest peak can be a harmonic (s/2, s/3) of the real cell. A real cell size
+            // still responds strongly, while multiples of a real cell cancel out; so take the largest
+            // multiple that keeps a strong response (refined locally).
+            for k in [4.0, 3.0, 2.0] {
+                let target = best.1 * k;
+                if target > smax * 2.0 || target * 2.0 > n as f64 {
+                    continue;
+                }
+                let mut local = (0.0f64, target, 0.0f64);
+                let mut t = target - 0.15 * k;
+                while t <= target + 0.15 * k {
+                    let (z, ph) = response(t);
+                    if z > local.0 {
+                        local = (z, t, ph);
+                    }
+                    t += 0.01;
+                }
+                if local.0 >= best.0 * 0.6 {
+                    return Some(local);
+                }
+            }
+            Some(best)
+        }
+
+        /// Turns an image from an AI image model (PNG or JPEG, any size) into true pixel art: finds
+        /// the pseudo-pixel grid, takes each cell's dominant colour, keys out the background, reduces
+        /// and ramps the palette and places the sprite, cropped, on a layer.
+        pub fn concept_import(doc: &mut Document, a: &Json, payload: &[u8]) -> CmdResult<Outcome> {
+            let bytes = if !payload.is_empty() {
+                payload.to_vec()
+            } else {
+                super::voxel::base64_decode(
+                    super::args::req_str(a, "data_base64")
+                        .map_err(|_| CmdError::invalid("give the image as 'data_base64' or as the binary payload"))?,
+                )?
+            };
+            let src = crate::export::decode_image(&bytes).map_err(|e| CmdError::new("invalid_file", e))?;
+            let (sw, sh) = (src.width as usize, src.height as usize);
+            let gray: Vec<f64> = src.pixels.as_chunks::<4>().0.iter().map(|p| (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0).collect();
+            // Grid: auto (Fourier), a fixed cell size, or none.
+            let (cell, ox, oy, confidence) = match a.get("cell") {
+                Some(v) if !v.is_null() && v.as_f64().is_some() => (v.as_f64().unwrap().max(1.0), 0.0, 0.0, 1.0),
+                _ => {
+                    let mut gx = vec![0f64; sw.saturating_sub(1)];
+                    let mut gy = vec![0f64; sh.saturating_sub(1)];
+                    // Edge profiles; differences below 12 grey levels are compression / texture noise.
+                    let edge = |d: f64| if d.abs() < 12.0 { 0.0 } else { d.abs() };
+                    for y in 0..sh {
+                        for x in 0..sw - 1 {
+                            gx[x] += edge(gray[y * sw + x + 1] - gray[y * sw + x]);
+                        }
+                    }
+                    for y in 0..sh - 1 {
+                        for x in 0..sw {
+                            gy[y] += edge(gray[(y + 1) * sw + x] - gray[y * sw + x]);
+                        }
+                    }
+                    let smax = (sw.min(sh) as f64 / 16.0).clamp(2.0, 64.0);
+                    let (zx, sx, px) = grid_period(&gx, 2.0, smax).unwrap_or((0.0, 1.0, 0.0));
+                    let (zy, sy, py) = grid_period(&gy, 2.0, smax).unwrap_or((0.0, 1.0, 0.0));
+                    let conf = zx.min(zy);
+                    if conf < 0.12 {
+                        (1.0, 0.0, 0.0, conf)
+                    } else {
+                        // One square cell: the better-resolved axis wins when they disagree a little.
+                        let s = if (sx - sy).abs() / sx < 0.03 {
+                            (sx + sy) / 2.0
+                        } else if zx >= zy {
+                            sx
+                        } else {
+                            sy
+                        };
+                        // gradient index i is the boundary between pixel i and i+1
+                        (s, px + 1.0, py + 1.0, conf)
+                    }
+                }
+            };
+            let first = |o: f64| o.rem_euclid(cell);
+            let (fx, fy) = (first(ox), first(oy));
+            let cols = (((sw as f64 - fx) / cell).floor() as usize).max(1);
+            let rows = (((sh as f64 - fy) / cell).floor() as usize).max(1);
+            if cols > 2048 || rows > 2048 {
+                return Err(CmdError::new("limit", "the detected sprite would exceed 2048 px; pass 'cell' explicitly"));
+            }
+            // Dominant colour of each cell's centre (robust to blur and JPEG noise).
+            let mut img = Image::new(cols as u32, rows as u32);
+            let inner = opt_f64(a, "sample")?.unwrap_or(0.5).clamp(0.1, 1.0);
+            for j in 0..rows {
+                for i in 0..cols {
+                    let (cx, cy) = (fx + (i as f64 + 0.5) * cell, fy + (j as f64 + 0.5) * cell);
+                    let r = (cell * inner / 2.0).max(0.5);
+                    let mut bins: HashMap<u32, (u32, [u32; 3])> = HashMap::new();
+                    for y in ((cy - r).floor() as i64).max(0)..((cy + r).ceil() as i64).min(sh as i64) {
+                        for x in ((cx - r).floor() as i64).max(0)..((cx + r).ceil() as i64).min(sw as i64) {
+                            let o = (y as usize * sw + x as usize) * 4;
+                            let p = &src.pixels[o..o + 4];
+                            let key = ((p[0] as u32 >> 3) << 10) | ((p[1] as u32 >> 3) << 5) | (p[2] as u32 >> 3);
+                            let e = bins.entry(key).or_insert((0, [0; 3]));
+                            e.0 += 1;
+                            e.1[0] += p[0] as u32;
+                            e.1[1] += p[1] as u32;
+                            e.1[2] += p[2] as u32;
+                        }
+                    }
+                    if let Some((_, (n, s))) = bins.into_iter().max_by_key(|e| (e.1.0, e.0)) {
+                        let o = (j * cols + i) * 4;
+                        img.pixels[o..o + 4].copy_from_slice(&[(s[0] / n) as u8, (s[1] / n) as u8, (s[2] / n) as u8, 255]);
+                    }
+                }
+            }
+            // Background: the dominant border colour, keyed out within a perceptual tolerance.
+            let tol = opt_f64(a, "background_tolerance")?.unwrap_or(0.1).clamp(0.0, 0.5) as f32;
+            let mut border: HashMap<[u8; 3], usize> = HashMap::new();
+            for i in 0..cols {
+                for j in [0, rows - 1] {
+                    let o = (j * cols + i) * 4;
+                    *border.entry([img.pixels[o] >> 3 << 3, img.pixels[o + 1] >> 3 << 3, img.pixels[o + 2] >> 3 << 3]).or_default() += 1;
+                }
+            }
+            for j in 0..rows {
+                for i in [0, cols - 1] {
+                    let o = (j * cols + i) * 4;
+                    *border.entry([img.pixels[o] >> 3 << 3, img.pixels[o + 1] >> 3 << 3, img.pixels[o + 2] >> 3 << 3]).or_default() += 1;
+                }
+            }
+            let mut keyed = 0usize;
+            if opt_str(a, "background")?.unwrap_or("auto") != "keep"
+                && let Some((bg, _)) = border.into_iter().max_by_key(|e| e.1)
+            {
+                let bl = crate::pixelart::oklab(Rgba::new(bg[0] + 4, bg[1] + 4, bg[2] + 4, 255));
+                for p in img.pixels.as_chunks_mut::<4>().0 {
+                    let l = crate::pixelart::oklab(Rgba::new(p[0], p[1], p[2], 255));
+                    if ((l[0] - bl[0]).powi(2) + (l[1] - bl[1]).powi(2) + (l[2] - bl[2]).powi(2)).sqrt() < tol {
+                        *p = [0, 0, 0, 0];
+                        keyed += 1;
+                    }
+                }
+            }
+            // Crop to the content (plus a margin).
+            let margin = opt_i64(a, "margin")?.unwrap_or(2).clamp(0, 64) as usize;
+            let (mut x0, mut y0, mut x1, mut y1) = (cols, rows, 0usize, 0usize);
+            for j in 0..rows {
+                for i in 0..cols {
+                    if img.pixels[(j * cols + i) * 4 + 3] > 0 {
+                        (x0, y0, x1, y1) = (x0.min(i), y0.min(j), x1.max(i), y1.max(j));
+                    }
+                }
+            }
+            if x0 > x1 {
+                return Err(CmdError::invalid("nothing left after removing the background (try background: keep)"));
+            }
+            let (cw, ch) = (x1 - x0 + 1 + 2 * margin, y1 - y0 + 1 + 2 * margin);
+            let mut out = Image::new(cw as u32, ch as u32);
+            for j in y0..=y1 {
+                for i in x0..=x1 {
+                    let (s, d) = ((j * cols + i) * 4, ((j - y0 + margin) * cw + i - x0 + margin) * 4);
+                    out.pixels[d..d + 4].copy_from_slice(&img.pixels[s..s + 4]);
+                }
+            }
+            // Clean-up: a lone pixel that is only a compression wobble of its neighbours' colour joins
+            // them; real details (eye shines, rivets, sparkles) differ strongly and stay.
+            let clean = opt_f64(a, "clean")?.unwrap_or(0.07).clamp(0.0, 0.3) as f32;
+            let mut cleaned = 0usize;
+            if clean > 0.0 {
+                let src = out.clone();
+                let at = |x: usize, y: usize| -> [u8; 4] {
+                    let o = (y * cw + x) * 4;
+                    [src.pixels[o], src.pixels[o + 1], src.pixels[o + 2], src.pixels[o + 3]]
+                };
+                let lab = |p: [u8; 4]| crate::pixelart::oklab(Rgba::new(p[0], p[1], p[2], 255));
+                for y in 1..ch - 1 {
+                    for x in 1..cw - 1 {
+                        let c = at(x, y);
+                        if c[3] == 0 {
+                            continue;
+                        }
+                        let ns = [at(x - 1, y), at(x + 1, y), at(x, y - 1), at(x, y + 1)];
+                        if ns.contains(&c) {
+                            continue;
+                        }
+                        let best = *ns.iter().max_by_key(|n| ns.iter().filter(|m| *m == *n).count()).unwrap();
+                        if best[3] == 0 || ns.iter().filter(|m| **m == best).count() < 2 {
+                            continue;
+                        }
+                        let (l1, l2) = (lab(c), lab(best));
+                        if ((l1[0] - l2[0]).powi(2) + (l1[1] - l2[1]).powi(2) + (l1[2] - l2[2]).powi(2)).sqrt() < clean {
+                            let o = (y * cw + x) * 4;
+                            out.pixels[o..o + 4].copy_from_slice(&best);
+                            cleaned += 1;
+                        }
+                    }
+                }
+            }
+            if opt_bool(a, "fit_canvas")?.unwrap_or(true) {
+                doc.resize(cw as u32, ch as u32, 0, 0);
+            }
+            // Palette reduction, ramps and placement go through the reference importer.
+            let png = crate::export::png::encode(&out);
+            let mut args = Json::obj()
+                .with("grid", "none")
+                .with("transparent", "none")
+                .with("ramps", opt_bool(a, "ramps")?.unwrap_or(true))
+                .with("max_colors", opt_i64(a, "colors")?.unwrap_or(32).clamp(2, 256))
+                .with("x", opt_i64(a, "x")?.unwrap_or(0))
+                .with("y", opt_i64(a, "y")?.unwrap_or(0));
+            args.set("layer", a.get("layer").cloned().unwrap_or(Json::from("Concept")));
+            if let Some(f) = a.get("frame") {
+                args.set("frame", f.clone());
+            }
+            let placed = super::artist::reference_import(doc, &args, &png)?;
+            let mut result = placed.result;
+            result.set("source", Json::obj().with("width", sw).with("height", sh));
+            result.set("cell", (cell * 100.0).round() / 100.0);
+            result.set("gridConfidence", ((confidence * 100.0).round() / 100.0) as f32);
+            result.set("sprite", Json::obj().with("width", cw).with("height", ch));
+            result.set("backgroundPixels", keyed);
+            result.set("cleanedPixels", cleaned);
+            Ok(Outcome::new(result, placed.changed))
         }
 
         // ---- critic -------------------------------------------------------------------------------
@@ -8652,6 +8904,7 @@ pub mod commands {
         ("draw_path", Kind::Mutate),
         ("antialias", Kind::Mutate),
         ("draw_figure", Kind::Mutate),
+        ("concept_import", Kind::Mutate),
         // game production
         ("slice_set", Kind::Mutate),
         ("slice_delete", Kind::Mutate),
@@ -8718,6 +8971,7 @@ pub mod commands {
             "draw_path" => artkit::draw_path(doc, a),
             "antialias" => artkit::antialias(doc, a),
             "draw_figure" => artkit::draw_figure(doc, a),
+            "concept_import" => artkit::concept_import(doc, a, payload),
             "image_import" => artist::reference_import(doc, a, payload),
             "slice_set" => gamedev::slice_set(doc, a),
             "slice_delete" => gamedev::slice_delete(doc, a),
@@ -9705,6 +9959,378 @@ pub mod export {
             Ok(out)
         }
     }
+    pub mod jpeg {
+        //! Baseline (sequential, Huffman) JPEG decoder: 8-bit, 1 or 3 components, any chroma
+        //! subsampling, restart intervals. Enough for the images that AI image models and phones
+        //! produce in their default settings; progressive and arithmetic-coded files are refused with
+        //! a clear message (re-save them as PNG or baseline JPEG).
+
+        use crate::renderer::Image;
+
+        const ZIGZAG: [usize; 64] = [
+            0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42,
+            49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
+        ];
+
+        #[derive(Clone, Default)]
+        struct Huffman {
+            maxcode: [i32; 18],
+            valptr: [i32; 17],
+            mincode: [i32; 17],
+            values: Vec<u8>,
+        }
+
+        impl Huffman {
+            fn new(counts: &[u8; 16], values: Vec<u8>) -> Huffman {
+                let mut h = Huffman { maxcode: [-1; 18], values, ..Default::default() };
+                let (mut code, mut k) = (0i32, 0i32);
+                for len in 1..=16 {
+                    let n = counts[len - 1] as i32;
+                    if n > 0 {
+                        h.valptr[len] = k;
+                        h.mincode[len] = code;
+                        code += n;
+                        k += n;
+                        h.maxcode[len] = code - 1;
+                    }
+                    code <<= 1;
+                }
+                h.maxcode[17] = i32::MAX;
+                h
+            }
+        }
+
+        struct Bits<'a> {
+            d: &'a [u8],
+            pos: usize,
+            acc: u32,
+            n: u32,
+        }
+
+        impl Bits<'_> {
+            fn bit(&mut self) -> Result<u32, String> {
+                if self.n == 0 {
+                    let b = *self.d.get(self.pos).ok_or("JPEG data ends early")?;
+                    self.pos += 1;
+                    if b == 0xFF {
+                        let next = *self.d.get(self.pos).unwrap_or(&0);
+                        if next == 0x00 {
+                            self.pos += 1;
+                        } else {
+                            // A marker inside the scan: feed zero bits (the decoder stops at the MCU count).
+                            self.pos -= 1;
+                            self.acc = 0;
+                            self.n = 7;
+                            return Ok(0);
+                        }
+                    }
+                    self.acc = b as u32;
+                    self.n = 8;
+                }
+                self.n -= 1;
+                Ok((self.acc >> self.n) & 1)
+            }
+
+            fn bits(&mut self, count: u32) -> Result<i32, String> {
+                let mut v = 0i32;
+                for _ in 0..count {
+                    v = (v << 1) | self.bit()? as i32;
+                }
+                Ok(v)
+            }
+
+            fn decode(&mut self, h: &Huffman) -> Result<u8, String> {
+                let mut code = 0i32;
+                for len in 1..=16 {
+                    code = (code << 1) | self.bit()? as i32;
+                    if h.maxcode[len] >= 0 && code <= h.maxcode[len] {
+                        let i = (h.valptr[len] + code - h.mincode[len]) as usize;
+                        return h.values.get(i).copied().ok_or_else(|| "bad Huffman code".to_string());
+                    }
+                }
+                Err("bad Huffman code".into())
+            }
+
+            fn reset(&mut self) {
+                self.n = 0;
+                // skip an RSTn marker if we are sitting on one
+                while self.pos + 1 < self.d.len() && self.d[self.pos] == 0xFF {
+                    let m = self.d[self.pos + 1];
+                    if (0xD0..=0xD7).contains(&m) {
+                        self.pos += 2;
+                        return;
+                    }
+                    if m == 0xFF {
+                        self.pos += 1;
+                        continue;
+                    }
+                    return;
+                }
+            }
+        }
+
+        fn extend(v: i32, s: u32) -> i32 {
+            if s == 0 {
+                0
+            } else if v < (1 << (s - 1)) {
+                v - (1 << s) + 1
+            } else {
+                v
+            }
+        }
+
+        fn cos_table() -> [[f32; 8]; 8] {
+            let c = |u: usize| if u == 0 { std::f32::consts::FRAC_1_SQRT_2 } else { 1.0 };
+            let mut cos = [[0f32; 8]; 8];
+            for (x, row) in cos.iter_mut().enumerate() {
+                for (u, v) in row.iter_mut().enumerate() {
+                    *v = c(u) * (((2 * x + 1) as f32 * u as f32 * std::f32::consts::PI) / 16.0).cos();
+                }
+            }
+            cos
+        }
+
+        fn idct(block: &[f32; 64], out: &mut [u8; 64], cos: &[[f32; 8]; 8]) {
+            // Separable float IDCT (precise enough for 8-bit output).
+            let mut tmp = [0f32; 64];
+            for y in 0..8 {
+                for x in 0..8 {
+                    let mut s = 0.0;
+                    for u in 0..8 {
+                        s += cos[x][u] * block[y * 8 + u];
+                    }
+                    tmp[y * 8 + x] = s / 2.0;
+                }
+            }
+            for x in 0..8 {
+                for y in 0..8 {
+                    let mut s = 0.0;
+                    for v in 0..8 {
+                        s += cos[y][v] * tmp[v * 8 + x];
+                    }
+                    out[y * 8 + x] = (s / 2.0 + 128.0).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+
+        struct Comp {
+            id: u8,
+            h: usize,
+            v: usize,
+            tq: usize,
+            td: usize,
+            ta: usize,
+            pred: i32,
+            plane: Vec<u8>,
+            pw: usize,
+        }
+
+        pub fn is_jpeg(data: &[u8]) -> bool {
+            data.len() > 3 && data[0] == 0xFF && data[1] == 0xD8
+        }
+
+        pub fn decode(data: &[u8]) -> Result<Image, String> {
+            if !is_jpeg(data) {
+                return Err("not a JPEG file".into());
+            }
+            let mut q = [[0u16; 64]; 4];
+            let mut dc: Vec<Huffman> = vec![Huffman::default(); 4];
+            let mut ac: Vec<Huffman> = vec![Huffman::default(); 4];
+            let mut comps: Vec<Comp> = Vec::new();
+            let (mut width, mut height, mut restart) = (0usize, 0usize, 0usize);
+            let mut pos = 2;
+            let be16 = |d: &[u8], p: usize| -> Result<usize, String> {
+                Ok(((*d.get(p).ok_or("truncated JPEG")? as usize) << 8) | *d.get(p + 1).ok_or("truncated JPEG")? as usize)
+            };
+            loop {
+                while pos < data.len() && data[pos] != 0xFF {
+                    pos += 1;
+                }
+                while pos < data.len() && data[pos] == 0xFF {
+                    pos += 1;
+                }
+                let marker = *data.get(pos).ok_or("JPEG ends before the image data")?;
+                pos += 1;
+                match marker {
+                    0xD8 | 0x01 | 0xD0..=0xD7 => continue,
+                    0xD9 => return Err("JPEG has no image data".into()),
+                    _ => {}
+                }
+                let len = be16(data, pos)?;
+                let seg = data.get(pos + 2..pos + len).ok_or("truncated JPEG segment")?;
+                match marker {
+                    0xDB => {
+                        let mut i = 0;
+                        while i < seg.len() {
+                            let (pq, tq) = ((seg[i] >> 4) as usize, (seg[i] & 15) as usize);
+                            i += 1;
+                            for k in 0..64 {
+                                let v = if pq == 0 {
+                                    i += 1;
+                                    *seg.get(i - 1).ok_or("bad DQT")? as u16
+                                } else {
+                                    i += 2;
+                                    ((*seg.get(i - 2).ok_or("bad DQT")? as u16) << 8) | *seg.get(i - 1).ok_or("bad DQT")? as u16
+                                };
+                                q[tq & 3][ZIGZAG[k]] = v;
+                            }
+                        }
+                    }
+                    0xC4 => {
+                        let mut i = 0;
+                        while i < seg.len() {
+                            let (class, id) = (seg[i] >> 4, (seg[i] & 15) as usize);
+                            let mut counts = [0u8; 16];
+                            counts.copy_from_slice(seg.get(i + 1..i + 17).ok_or("bad DHT")?);
+                            let total: usize = counts.iter().map(|c| *c as usize).sum();
+                            let values = seg.get(i + 17..i + 17 + total).ok_or("bad DHT")?.to_vec();
+                            let h = Huffman::new(&counts, values);
+                            if class == 0 {
+                                dc[id & 3] = h
+                            } else {
+                                ac[id & 3] = h
+                            }
+                            i += 17 + total;
+                        }
+                    }
+                    0xC0 | 0xC1 => {
+                        if seg[0] != 8 {
+                            return Err("only 8-bit JPEGs are supported".into());
+                        }
+                        height = be16(seg, 1)?;
+                        width = be16(seg, 3)?;
+                        let n = seg[5] as usize;
+                        if !(n == 1 || n == 3) {
+                            return Err("only greyscale and YCbCr JPEGs are supported (CMYK is not)".into());
+                        }
+                        for k in 0..n {
+                            let b = 6 + k * 3;
+                            comps.push(Comp {
+                                id: seg[b],
+                                h: (seg[b + 1] >> 4) as usize,
+                                v: (seg[b + 1] & 15) as usize,
+                                tq: seg[b + 2] as usize & 3,
+                                td: 0,
+                                ta: 0,
+                                pred: 0,
+                                plane: Vec::new(),
+                                pw: 0,
+                            });
+                        }
+                        if width == 0 || height == 0 || width > 16384 || height > 16384 {
+                            return Err("JPEG size out of range".into());
+                        }
+                    }
+                    0xC2 | 0xC6 | 0xCA => {
+                        return Err("progressive JPEGs are not supported yet: save the image as PNG or baseline JPEG".into());
+                    }
+                    0xC3 | 0xC5 | 0xC7 | 0xC9 | 0xCB | 0xCD | 0xCE | 0xCF => {
+                        return Err("this JPEG flavour (lossless/arithmetic) is not supported".into());
+                    }
+                    0xDD => restart = be16(seg, 0)?,
+                    0xDA => {
+                        if comps.is_empty() {
+                            return Err("JPEG scan before frame header".into());
+                        }
+                        let ns = seg[0] as usize;
+                        if ns != comps.len() {
+                            return Err("non-interleaved JPEG scans are not supported".into());
+                        }
+                        for k in 0..ns {
+                            let (cid, t) = (seg[1 + k * 2], seg[2 + k * 2]);
+                            let c = comps.iter_mut().find(|c| c.id == cid).ok_or("unknown JPEG component")?;
+                            c.td = (t >> 4) as usize & 3;
+                            c.ta = (t & 15) as usize & 3;
+                        }
+                        let hmax = comps.iter().map(|c| c.h).max().unwrap_or(1).max(1);
+                        let vmax = comps.iter().map(|c| c.v).max().unwrap_or(1).max(1);
+                        let (mcux, mcuy) = (width.div_ceil(8 * hmax), height.div_ceil(8 * vmax));
+                        for c in comps.iter_mut() {
+                            c.pw = mcux * c.h * 8;
+                            c.plane = vec![0u8; c.pw * mcuy * c.v * 8];
+                        }
+                        let mut bits = Bits { d: data, pos: pos + len, acc: 0, n: 0 };
+                        let mut block = [0f32; 64];
+                        let mut px = [0u8; 64];
+                        let cos = cos_table();
+                        let total = mcux * mcuy;
+                        for m in 0..total {
+                            if restart > 0 && m > 0 && m % restart == 0 {
+                                bits.reset();
+                                comps.iter_mut().for_each(|c| c.pred = 0);
+                            }
+                            let (mx, my) = (m % mcux, m / mcux);
+                            for c in comps.iter_mut() {
+                                for by in 0..c.v {
+                                    for bx in 0..c.h {
+                                        block.fill(0.0);
+                                        let qt = &q[c.tq];
+                                        let s = bits.decode(&dc[c.td])? as u32;
+                                        let diff = extend(bits.bits(s)?, s);
+                                        c.pred += diff;
+                                        block[0] = c.pred as f32 * qt[0] as f32;
+                                        let mut k = 1;
+                                        while k < 64 {
+                                            let rs = bits.decode(&ac[c.ta])?;
+                                            let (r, s) = ((rs >> 4) as usize, (rs & 15) as u32);
+                                            if s == 0 {
+                                                if r == 15 {
+                                                    k += 16;
+                                                    continue;
+                                                }
+                                                break;
+                                            }
+                                            k += r;
+                                            if k > 63 {
+                                                break;
+                                            }
+                                            let v = extend(bits.bits(s)?, s);
+                                            let z = ZIGZAG[k];
+                                            block[z] = v as f32 * qt[z] as f32;
+                                            k += 1;
+                                        }
+                                        idct(&block, &mut px, &cos);
+                                        let (ox, oy) = ((mx * c.h + bx) * 8, (my * c.v + by) * 8);
+                                        for y in 0..8 {
+                                            let row = (oy + y) * c.pw + ox;
+                                            c.plane[row..row + 8].copy_from_slice(&px[y * 8..y * 8 + 8]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Colour conversion with chroma upsampling (nearest).
+                        let mut img = Image::new(width as u32, height as u32);
+                        for y in 0..height {
+                            for x in 0..width {
+                                let sample = |c: &Comp| c.plane[(y * c.v / vmax) * c.pw + x * c.h / hmax] as f32;
+                                let o = (y * width + x) * 4;
+                                if comps.len() == 1 {
+                                    let g = sample(&comps[0]) as u8;
+                                    img.pixels[o..o + 4].copy_from_slice(&[g, g, g, 255]);
+                                } else {
+                                    let (yy, cb, cr) = (sample(&comps[0]), sample(&comps[1]) - 128.0, sample(&comps[2]) - 128.0);
+                                    let r = (yy + 1.402 * cr).round().clamp(0.0, 255.0) as u8;
+                                    let g = (yy - 0.344_136 * cb - 0.714_136 * cr).round().clamp(0.0, 255.0) as u8;
+                                    let b = (yy + 1.772 * cb).round().clamp(0.0, 255.0) as u8;
+                                    img.pixels[o..o + 4].copy_from_slice(&[r, g, b, 255]);
+                                }
+                            }
+                        }
+                        return Ok(img);
+                    }
+                    _ => {}
+                }
+                pos += len;
+            }
+        }
+    }
+
+    /// PNG or baseline JPEG → RGBA image.
+    pub fn decode_image(data: &[u8]) -> Result<crate::renderer::Image, String> {
+        if jpeg::is_jpeg(data) { jpeg::decode(data) } else { png::decode(data) }
+    }
+
     pub mod png {
         //! PNG encoder (RGBA8, non-interlaced) built on the in-house zlib encoder.
 

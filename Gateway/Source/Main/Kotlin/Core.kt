@@ -1196,6 +1196,27 @@ object Guidance {
                 "'Shadow' layer set to multiply, then preview the mood with render_lit (2-3 warm/cool lights, bands 4). Finish with project_export " +
                 "format=${a["engine"] ?: "tiled"}."
         },
+        PromptDef(
+            "concept_prompt", "Prompt for an image model", "Writes a prompt for an AI image model whose output concept_import can turn into clean pixel art.",
+            listOf(Triple("character", "Who: age, hair, outfit, props, weapon", true), Triple("view", "e.g. '3/4 view facing left' (default)", false)),
+        ) { a ->
+            "Write this prompt for the user's image model, then import the result with concept_import:\n" +
+                "Pixel art game character sprite, full body, standing idle pose, ${a["view"] ?: "3/4 view facing left"}, ${a["character"]}, crisp hard-edged pixels on a clear " +
+                "consistent pixel grid, 128x128 sprite scale, limited palette of about 32 colors, hue-shifted shading, single light source from the top left, clean dark " +
+                "selective outline, readable silhouette, no anti-aliasing blur, no gradients, centered, feet fully visible, plain flat solid background in one color " +
+                "(#FF00FF magenta), no text, no frame.\nNegative: blurry, painterly, 3d render, smooth gradients, jpeg artifacts, text, watermark, cropped feet, " +
+                "multiple characters, busy background, inconsistent pixel size."
+        },
+        PromptDef(
+            "turnaround_prompt", "Prompt for the other directions", "Writes a turnaround prompt (all 8 directions on one sheet) to use with the imported concept as reference.",
+            listOf(Triple("character", "Short description of the same character", true)),
+        ) { a ->
+            "Write this prompt and tell the user to attach the concept image as the reference:\n" +
+                "Character turnaround sheet of the SAME pixel art character as the reference image (${a["character"]}): exactly 8 full-body views in one row, evenly " +
+                "spaced, same size, same scale, same pixel grid, feet on one baseline: front, front-right 3/4, right side, back-right 3/4, back, back-left 3/4, left side, " +
+                "front-left 3/4. Identical outfit, colors, proportions and props in every view; idle standing pose; single light from the top left; plain flat solid " +
+                "#FF00FF magenta background; no text, no labels, no frames."
+        },
         PromptDef("review_canvas", "Critique the canvas", "Reviews the current artwork and suggests concrete pixel-level fixes.", emptyList()) {
             "Run art_review first and read its value map and issues, then look with canvas_snapshot and read_region. Critique value structure, silhouette, palette, " +
                 "shading direction, outline quality and (if animated) frame-to-frame consistency. List concrete fixes with coordinates and the tool for each, " +
@@ -1921,6 +1942,17 @@ internal fun MutableList<ToolDef>.addCharTools() {
     tool("fix_banding", "Fix banding", Access.WRITE,
         "Automatic banding correction (Pixel Fixer): shortens one end of each same-length parallel run pair with the in-between ramp tone (or the neighbour's colour) while the banding error falls.",
         linkedMapOf<String, Schema>("mode" to string("average (default) or copy.", listOf("average", "copy")), "passes" to integer("1-32 (default 6).", 1, 32), "layer" to layerArg, "frame" to frameArg))
+    tool("concept_import", "Import AI concept art", Access.WRITE,
+        "Turns an image from an AI image model (PNG or baseline JPEG, any size) into true, editable pixel art: finds the pseudo-pixel grid by Fourier analysis " +
+            "(also noisy, blurred, JPEG-compressed upscales), takes each cell's dominant colour, keys out the flat background, removes compression speckle, " +
+            "reduces the palette, builds material ramps, crops to the sprite and fits the canvas. Returns the detected cell size, confidence and sprite size.",
+        linkedMapOf<String, Schema>("data_base64" to string("The image file (PNG or JPEG) as base64."), "cell" to num("Force the source pixel size (default: detect)."),
+            "colors" to integer("Palette size after reduction (default 32).", 2, 256), "background" to string("auto (key out the border colour) or keep.", listOf("auto", "keep")),
+            "background_tolerance" to num("Perceptual distance keyed as background (default 0.1)."), "clean" to num("Speckle clean-up strength 0-0.3 (default 0.07, 0 = off)."),
+            "ramps" to boolean("Build material ramps from the colours (default true)."), "fit_canvas" to boolean("Resize the canvas to the sprite (default true)."),
+            "margin" to integer("Transparent margin around the sprite (default 2).", 0, 64), "sample" to num("Fraction of each cell sampled (default 0.5)."),
+            "layer" to layerArg, "x" to integer("Left."), "y" to integer("Top."), "frame" to frameArg),
+        listOf("data_base64"))
     tool("draw_figure", "Posed body mannequin", Access.WRITE,
         "Draws a proportioned, posed and form-lit body (head, neck, torso, arms, hands, legs, feet) with a skin ramp — the base to dress with draw_path shapes. " +
             "Returns the joints (head, neck, shoulders, elbows, wrists, waist, pelvis, hips, knees, ankles, toes) to place clothes. layers 5 puts far arm, far leg, body, near leg and near arm on separate layers so sleeves and skirts stack correctly.",

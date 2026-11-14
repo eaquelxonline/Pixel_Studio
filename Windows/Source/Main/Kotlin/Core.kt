@@ -200,6 +200,7 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             add(item("Open…", ctrl(KeyEvent.VK_O)) { open() })
             add(item("Import image…", ctrl(KeyEvent.VK_I, true)) { importImage(false) })
             add(item("Import reference…") { importImage(true) })
+            add(item("Import AI concept…", ctrl(KeyEvent.VK_J, true)) { importConcept() })
             addSeparator()
             add(item("Save", ctrl(KeyEvent.VK_S)) { save(false) })
             add(item("Save As…", ctrl(KeyEvent.VK_S, true)) { save(true) })
@@ -360,6 +361,32 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             val n = r.result.obj("native")
             status.flash("Imported ${n?.long("width")}×${n?.long("height")} (scale ${r.result["scale"]}), ${r.result["colors"]} colors, ${r.result.list("ramps")?.size ?: 0} ramps")
         }
+    }
+
+    /** An AI image model's output (PNG, JPEG, …) → true pixel art on a "Concept" layer. */
+    private fun importConcept() {
+        val ch = JFileChooser(c.file?.parentFile ?: workspaceDir()).apply {
+            fileFilter = FileNameExtensionFilter("Images (PNG, JPEG, BMP, GIF)", "png", "jpg", "jpeg", "bmp", "gif")
+        }
+        if (ch.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return
+        val colors = JOptionPane.showInputDialog(this, "Palette size (colours)", "32")?.toIntOrNull()?.coerceIn(2, 256) ?: return
+        var bytes = ch.selectedFile.readBytes()
+        var r = c.run("concept_import", mapOf("colors" to colors, "layer" to ch.selectedFile.nameWithoutExtension), bytes)
+        if (!r.ok) {
+            // Formats the engine does not decode itself (progressive JPEG, BMP, GIF): convert to PNG first.
+            val img = runCatching { ImageIO.read(ch.selectedFile) }.getOrNull()
+            if (img != null) {
+                val out = java.io.ByteArrayOutputStream()
+                ImageIO.write(img, "png", out)
+                bytes = out.toByteArray()
+                r = c.run("concept_import", mapOf("colors" to colors, "layer" to ch.selectedFile.nameWithoutExtension), bytes)
+            }
+        }
+        if (r.ok) {
+            val sp = r.result.obj("sprite")
+            canvas.fit()
+            status.flash("Concept: ${sp?.get("width")}×${sp?.get("height")} px sprite (source pixel ${r.result["cell"]} px, ${r.result["colors"]} colours, ${r.result.list("ramps")?.size ?: 0} ramps)")
+        } else JOptionPane.showMessageDialog(this, "Could not import: ${r.errorMessage}")
     }
 
     private fun save(askName: Boolean) {
