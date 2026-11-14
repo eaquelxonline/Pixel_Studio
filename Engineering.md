@@ -40,6 +40,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 20. [Korku aurası: 256×256, 30 karelik döngü](#20-korku-aurası-256256-30-karelik-döngü)
 21. [Hibrit hat: AI konsept görselinden gerçek pixel art'a](#21-hibrit-hat-ai-konsept-görselinden-gerçek-pixel-arta)
 22. [Sıfırdan çizim neden zayıf ve çözümü: görsel API'si, küçük taslak, skill](#22-sıfırdan-çizim-neden-zayıf-ve-çözümü-görsel-apisi-küçük-taslak-skill)
+23. [Fener Bekçisi: sıfırdan en detaylı karakter + 8 karelik idle](#23-fener-bekçisi-sıfırdan-en-detaylı-karakter--8-karelik-idle)
 
 ---
 
@@ -68,6 +69,10 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
 
 Ayrıntılar: [2D piksel art](#7-2d-piksel-art), [3D voxel](#8-3d-voxel) ve [oyun üretimi](#9-oyun-üretimi).
+
+| Fener Bekçisi (sıfırdan, [bölüm 23](#23-fener-bekçisi-sıfırdan-en-detaylı-karakter--8-karelik-idle)) | 8 karelik idle |
+| --- | --- |
+| ![warden](Assets/Gallery/warden_x4.png) | ![idle](Assets/Gallery/warden_idle_x3.gif) |
 
 ![Pastel chibi](Assets/Gallery/pastel_chibi_lineup.png)
 
@@ -1241,3 +1246,52 @@ Bir sınır daha var: eleştirmen (`art_review`) kusurları ölçer (banding, ye
 - Yürüme ve koşu döngülerinde bacaklar her karede yeniden çizilmeli. En iyi sonuç görsel modelinden gelen anahtar pozlarla alınıyor; modelsiz yöntem çalışıyor ama daha fazla deneme istiyor.
 - Aynalanan yönlerde asimetrik detaylar (silah eli, saç ayrımı) ve ışık yönü elle düzeltilmeli.
 - Gerçek ücretli API çağrıları bu ortamda yapılmadı; istek ve yanıt biçimleri taklit sunucu ve sağlayıcı belgeleriyle doğrulandı.
+
+## 23. Fener Bekçisi: sıfırdan en detaylı karakter + 8 karelik idle
+
+![Fener Bekçisi](Assets/Gallery/warden_x4.png) ![Idle](Assets/Gallery/warden_idle_x3.gif)
+
+*Özgün tasarım; görsel modeli kullanılmadan, yalnızca motor komutlarıyla çizildi. Kaynak: `python3 Assets/Sprites.py warden` (1.363 komut, 8 kare).*
+
+Kancalı bir asanın ucunda fener taşıyan bir gezgin. Kıyafeti şöyle:
+- Pirinç işlemeli turkuaz kukuleta ve pelerin.
+- Sivri uçlu kısa omuz pelerini.
+- Bağcıklı deri yelek.
+- Alev amblemli kırmızı tabard.
+- Anahtar halkası, kemer çantası, kat kat çizmeler ve asada kurdele.
+
+### Yöntem ([bölüm 22](#22-sıfırdan-çizim-neden-zayıf-ve-çözümü-görsel-apisi-küçük-taslak-skill)'deki yedek yöntemin uygulanışı)
+
+1. **Değer planı ve rampalar:** Her malzeme için koyudan açığa ton kaydırmalı bir rampa hazırlandı (pelerin 7 ton, diğerleri 5–6 ton).
+2. **Bloklama:** Her parça kendi katmanında düz bir şekil (`draw_path`): pelerin, astar, bacaklar, çizmeler, yelek, tunik, tabard, omuz peleri, kollar, kukuleta. Her şekil `Sil` katmanına da çizilir; sonda tek bir koyu dış kontur oluşur.
+3. **Piksel piksel çizilen bölgeler (`draw_ascii`):** Ayrıntının yoğun olduğu yerler: yüz (17×20, göz kapağı, iris, kaş, burun, ağız, allık), perçem, eller ve fener (3 alev durumu). En büyük kalite artışı buradan geldi.
+4. **Işık:**
+   - `shade_form` tek ışıkla her parçaya hacim veriyor.
+   - Elle yerleştirilen gölge şekilleri: kukuleta ve saçın alna düşen gölgesi, kemerin tuniğe düşen gölgesi, pelerin ve omuz pelerini kıvrımları, diz ve bilek kırışıkları.
+   - Fenerden gelen sıcak kenar ışığı sol kenarlarda; arka plandan ayırmak için soğuk bir kenar ışığı sağ kenarlarda.
+5. **Bitiş:**
+   - Parçalar arasında seçici iç konturlar ve tek koyu dış kontur.
+   - Palet rampalara kilitlendi (`quantize`): 88 renkten 56'ya.
+6. **Idle animasyonu:**
+   - Her kare aynı parametrik tariften yeniden çiziliyor: nefeste üst gövde 1 px iniyor, pelerin eteği dalgalanıyor, kurdele uçuşuyor, 5. karede göz kırpılıyor, fener alevi ve hale titriyor.
+   - Her kare kendi ışığını ve konturunu aldığı için katman kaydırmadan kaynaklanan dikiş oluşmuyor.
+
+### Yineleme
+
+![Süreç](Assets/Gallery/warden_process.png)
+
+| Sürüm | Değişiklik | `art_review` | Renk |
+| --- | --- | --- | --- |
+| v1 | Bloklama + form ışığı; yüz boş, gölgeler yumuşak | 87 | 76 |
+| v2 | Elle çizilmiş yüz ve fener, pirinç işlemeler, dış kontur, gölge şekilleri | 87 | 84 |
+| v3 | Genç yüz, tabard, çizme konçları, kenar ışığı | 81 | 88 |
+| v4 | Parmaklı eller, ince boyun, rampalara kilitli palet | 88 | 56 |
+| v5–v8 | Yelek bağcığı, kıvrımlar, asa bantları ve kurdele, anahtar halkası, derin gölge, soğuk kenar ışığı, zemin gölgesi | 89 | 56 |
+| Son | Bacaklar +5 px, daha geniş duruş, pelerin eteğinde pirinç işleme, 8 karelik idle | 89 | 56 |
+
+Her adımda 4× tam görüntü ve 8× yakın kırpmalar (yüz, gövde, çizmeler) incelendi. Galerideki AI konseptli ranger ile yan yana karşılaştırıldı. Bu karşılaştırma bacakların kısa ve duruşun dar olduğunu gösterdi; son sürümde düzeltildi.
+
+**Sınırlar:**
+- Kafa stilize olarak büyük (yaklaşık 4,5 baş boy).
+- Poz bir bekleme duruşu; yürüme ve saldırı için yeni anahtar pozlar gerekiyor.
+- Eleştirmenin değer aralığı 48 (hedef 55). Gölgede kalan pelerin bilinçli olarak orta-koyu tutuldu; fener ve saç en açık noktalar.

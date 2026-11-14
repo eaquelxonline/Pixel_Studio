@@ -3154,12 +3154,356 @@ def build_aura(out):
     print(f"Aura: {len(cmds)} scene commands + {N} frames")
 
 
+# ═══ Lantern Warden: 128×128 character with an 8-frame idle ═══════════════════════════════════════
+
+def build_warden(out):
+    """The Lantern Warden (original design), drawn from scratch with engine commands only.
+
+    Value-planned, hue-shifted ramps → flat shapes per part (draw_path) → hand-drawn pixel art for
+    the face, hair, hands and lantern (draw_ascii) → one-light form shading (shade_form) → hand-placed
+    shadow shapes, folds and creases (shade) → warm rim light from the lantern and a cool back-rim →
+    one dark silhouette outline + selective inner outlines → palette locked to the ramps (quantize).
+    Every idle frame is rebuilt from the same parametric description (breath, cloak sway, blink,
+    flame flicker), so each frame is lit and outlined on its own: no seams."""
+    R = {
+        "cloak":   ["#0B1620", "#112A35", "#1A424A", "#26605F", "#3C8079", "#68A898", "#A2D0B8"],
+        "crimson": ["#260B18", "#4A1424", "#781E2C", "#A23034", "#C9503E", "#E87C56"],
+        "leather": ["#1E100D", "#3A1F17", "#5C3423", "#834F31", "#AB7546", "#CFA066"],
+        "brass":   ["#2A170C", "#5A3514", "#8C5A1C", "#BF8A2C", "#E6BE50", "#FFE79A"],
+        "skin":    ["#3A1C1C", "#6A3228", "#9C553C", "#CB8259", "#EBAE84", "#FFD6B4"],
+        "hair":    ["#262638", "#454962", "#6E7590", "#9CA4BC", "#C8D0E0", "#EEF3FC"],
+        "slate":   ["#111220", "#1E2034", "#2E344C", "#454E66", "#677289"],
+        "wood":    ["#26150E", "#43271A", "#653D24", "#8C5A34", "#B7834E"],
+        "glow":    ["#FF8A24", "#FFB840", "#FFE27A", "#FFF8D8"],
+    }
+    OUT = "#100C18"
+    BASE = {"cloak": 3, "crimson": 3, "leather": 3, "brass": 3, "skin": 3, "hair": 4, "slate": 2, "wood": 3}
+    EXTRA = [OUT, "#1A0F08", "#3A1C1C", "#1A1424", "#F2EEE8", "#1A424A", "#7A2E2E", "#E39072"]
+    PALETTE = sorted({x for r in R.values() for x in r} | set(EXTRA))
+    LAYERS = ["Shadow", "Glow", "Sil", "CloakBack", "Lining", "Staff", "FarArm", "FarHand", "FarLeg", "FarBoot", "NearLeg",
+              "NearBoot", "Cuffs", "Torso", "Skirt", "Tabard", "Belt", "Mantle", "NearArm", "NearHand", "HoodBack", "Neck",
+              "Face", "Hair", "Hood", "Trim", "Lantern", "Details"]
+    FRAMES = 8
+    BREATH = [0, 0, 1, 1, 1, 1, 0, 0]          # upper body sinks 1 px on the exhale
+    FRAME_MS = [160, 120, 120, 160, 160, 120, 120, 160]
+
+    FACE = [
+        "..llllllllsssdddo",
+        "..lLLllllllssdddo",
+        "..lLlllllllllsddo",
+        "..lllllllllllsddo",
+        "..lbbllllbbbbsddo",
+        "..leelllleeeeesdo",
+        "..liilllliIiwesdo",
+        "..ldllllliiiwesdo",
+        ".Llllllllldddlsdo",
+        "Llllllllrrrllssdo",
+        ".dsllllllrrlllsdo",
+        "..sllllllllllssdo",
+        "..mmdlllllllllsdo",
+        "..ldlllllllllssdo",
+        "..llllllllllssddo",
+        "..lllllllllssddo.",
+        "..dlllllllssddo..",
+        "...dlllllssdo....",
+        "....ddssssdo.....",
+        ".....ooooo.......",
+    ]
+    FACE_L = {"o": "#3A1C1C", "D": "#6A3228", "d": "#9C553C", "s": "#CB8259", "l": "#EBAE84", "L": "#FFD6B4",
+              "e": "#1A1424", "w": "#F2EEE8", "i": "#1A424A", "I": "#68A898", "b": "#6E7590", "m": "#7A2E2E", "r": "#E39072"}
+    BLINK = {5: "..llllllllllllsdo", 6: "..leelllleeeeesdo", 7: "..llllllllddddsdo"}   # closed lids for one frame
+    HAIR = [
+        "......0011111000....",
+        "....00233444332100..",
+        "...0234455544433210.",
+        "..023445554443332210",
+        "..0345554443332211.0",
+        "..035543433322211...",
+        "..04532.3321.2211...",
+        "..0342..231..121....",
+        "...03...12...01.....",
+        "...0.....1..........",
+    ]
+    HAIR_L = {"0": "#262638", "1": "#454962", "2": "#6E7590", "3": "#9CA4BC", "4": "#C8D0E0", "5": "#EEF3FC"}
+    HAND_L = {"o": "#3A1C1C", "d": "#9C553C", "s": "#CB8259", "l": "#EBAE84", "L": "#FFD6B4"}
+    LANTERN_TOP = ["......k......", ".....kGk.....", "......k......", "......m......", ".....kGk.....", "....kGWGk....",
+                   "...kgGGGgk...", "..kmgggggmk..", "..kBkkkkkBk.."]
+    FLAMES = [  # three flicker states of the glass
+        ["..kGfFyFfmk..", "..kGFyYyFmk..", "..kGFYYYFmk..", "..kgFyYyFmk..", "..kgfFyFfmk..", "..kgffFffmk.."],
+        ["..kGffyFfmk..", "..kGFyYYFmk..", "..kGFyYYFmk..", "..kgFyYyfmk..", "..kgfFyFfmk..", "..kgfffFfmk.."],
+        ["..kGfFyffmk..", "..kGFYYyFmk..", "..kGFYYyFmk..", "..kgfyYyFmk..", "..kgfFyFfmk..", "..kgfFfffmk.."],
+    ]
+    LANTERN_BOTTOM = ["..kBkkkkkBk..", "..kmgGGgmmk..", "...kmgggmk...", "....kkkkk....", ".....kmk.....", "......k......"]
+    LANTERN_L = {"k": "#1A0F08", "B": "#5A3514", "m": "#8C5A1C", "g": "#BF8A2C", "G": "#E6BE50", "W": "#FFE79A",
+                 "f": "#FF8A24", "F": "#FFB840", "y": "#FFE27A", "Y": "#FFF8D8"}
+    FLICKER = [0, 1, 0, 2, 1, 0, 2, 1]
+    GLOW_R = [15, 14, 15, 16, 15, 14, 16, 15]
+
+
+    def col(ramp, i=None):
+        return R[ramp][BASE.get(ramp, 2) if i is None else i]
+
+
+    def poly_pixels(pts):
+        """Even-odd scanline fill of a straight-edged polygon (pixel centres)."""
+        out = []
+        ys = [p[1] for p in pts]
+        for y in range(int(min(ys)), int(max(ys)) + 1):
+            yc = y + 0.5
+            xs = []
+            for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+                if (y0 <= yc < y1) or (y1 <= yc < y0):
+                    xs.append(x0 + (yc - y0) * (x1 - x0) / (y1 - y0))
+            xs.sort()
+            for a, b in zip(xs[::2], xs[1::2]):
+                for x in range(int(round(a)), int(round(b))):
+                    out.append([x, y])
+        return out
+
+
+    def build_frame(cmds, k):
+        F = k
+        by = BREATH[k]
+        phi = 2 * math.pi * k / FRAMES
+
+        def c(op, **a):
+            cmds.append({"op": op, "frame": F, **a})
+
+        def up(pts, d=None):
+            d = by if d is None else d
+            return [[x, y + d] for x, y in pts]
+
+        def leg(pts, dx=0.0):
+            """Longer legs (+5 px below the knee) and a wider stance (dx at the ankle)."""
+            out = []
+            for x, y in pts:
+                t = min(1.0, max(0.0, (y - 72) / 14))
+                out.append([x + dx * t, y + (5 if y >= 86 else 5 * max(0.0, (y - 80) / 6) if y > 80 else 0)])
+            return out
+
+        def sw(pts):
+            """Cloak sway: the hem moves most, the shoulders not at all."""
+            out = []
+            for x, y in pts:
+                h = max(0.0, (y - 70) / 44)
+                out.append([x + 1.6 * h * math.sin(phi - 1.4 * h), y + (by if y < 56 else 5 if y >= 86 else 0)])
+            return out
+
+        def sil(pts=None, stroke_pts=None, width=1):
+            if pts:
+                c("draw_path", layer="Sil", points=pts, closed=True, filled=True, color=OUT)
+            if stroke_pts:
+                c("draw_path", layer="Sil", points=stroke_pts, width=width, color=OUT)
+
+        def shape(layer, ramp, pts, i=None, s=True, **kw):
+            c("draw_path", layer=layer, points=pts, closed=True, filled=True, color=col(ramp, i), **kw)
+            if s:
+                sil(pts)
+
+        def stroke(layer, ramp, pts, width=1, i=None, s=True, **kw):
+            c("draw_path", layer=layer, points=pts, width=width, color=col(ramp, i), **kw)
+            if s:
+                sil(stroke_pts=pts, width=width)
+
+        def px(layer, pts):
+            c("set_pixels", layer=layer, pixels=pts)
+
+        def shade_poly(layer, pts, steps=-1):
+            c("shade", layer=layer, pixels=poly_pixels(pts), steps=steps)
+
+        def ascii(layer, x, y, rows, legend):
+            c("draw_ascii", layer=layer, x=x, y=y, rows=rows, legend=legend, transparent=".")
+
+        def rim(layer, pts, steps=1, side=-1):
+            inside = {(x, y) for x, y in poly_pixels(pts)}
+            edge = [[x, y] for x, y in inside if (x + side, y) not in inside]
+            c("shade", layer=layer, pixels=edge, steps=steps)
+
+        # ---- blocking -------------------------------------------------------------
+        CLOAK = sw([[52, 38], [76, 36], [86, 44], [93, 62], [98, 84], [102, 104], [101, 113], [93, 110], [85, 114], [77, 110],
+                    [66, 113], [55, 111], [47, 98], [45, 78], [46, 56], [48, 44]])
+        shape("CloakBack", "cloak", CLOAK, i=2)
+        shape("Lining", "crimson", sw([[88, 58], [94, 76], [99, 96], [101.6, 108], [100.6, 112.4], [95.4, 106], [92, 90], [89, 72]]),
+              i=2, s=False)
+        stroke("Staff", "wood", [[42, 124.4], [42, 70], [42, 30], [42, 21]], 3)
+        stroke("Staff", "wood", [[42, 22], [42, 14], [39.6, 9], [34, 6.8], [29, 7.6], [26.6, 10.4], [27, 13]], [3, 3, 3, 3, 3, 2.6, 2.2])
+        stroke("FarArm", "crimson", [[50.4, 45 + by], [46, 56], [43.6, 62]], [8, 7, 6], i=2)
+        stroke("FarArm", "leather", [[46.4, 56.4], [44.4, 61.6]], [6.6, 6.2], i=2)
+        ascii("FarHand", 38, 60, [".oooo...", "oLlllo..", "olssddo.", "oLlllsdo", "odsssddo", "oLlllsdo", "odssdddo", ".oooooo."], HAND_L)
+        shape("FarLeg", "slate", leg([[54.6, 72], [62.4, 72], [61.6, 86], [60.4, 98], [53.6, 98], [53, 86]], -1.6))
+        shape("NearLeg", "slate", leg([[64.4, 72], [74, 72], [75, 86], [73, 98], [66, 98], [65.4, 86]], 1.6))
+        shape("FarBoot", "leather", leg([[52.4, 95], [60.6, 95], [60.2, 108], [59.8, 118.8], [46, 119.2], [45.4, 116.4], [51.4, 112.6]], -1.6), i=2)
+        shape("NearBoot", "leather", leg([[65.2, 95], [73.8, 95], [73, 108], [72.8, 119.2], [59.6, 119.2], [59.8, 116.2], [65.4, 112.4]], 1.6))
+        shape("Torso", "leather", up([[53.6, 42], [74.6, 42], [76.4, 50], [74.8, 58], [73.4, 64], [56, 64], [54.2, 58], [52.8, 50]]))
+        shape("Skirt", "crimson", [[54.6, 61], [73.6, 61], [76.6, 69], [79.4, 77.6], [72, 79], [64, 76.6], [56, 79], [50.4, 77.6], [52.4, 69]])
+        TABARD = [[60.4, 63], [68, 63], [68.4, 101], [64.2, 105.6], [60, 101]]
+        shape("Tabard", "crimson", TABARD, curve="polyline")
+        shape("Belt", "leather", [[53.8, 60.6], [75, 60], [75.4, 64.4], [54.2, 65]], i=1)
+        shape("Belt", "leather", [[71.6, 63.6], [78.4, 63.2], [79, 71], [76, 73], [72, 71.6]], i=2)
+        MANTLE = up([[52, 36.6], [60, 39], [68, 39], [76, 36.6], [82.4, 39.6], [86.6, 45], [88, 50.6], [84, 49.6], [80.6, 53.4],
+                     [76, 49.6], [71, 52.6], [66, 49.8], [61, 52.6], [56, 49.8], [51, 52.4], [47.6, 49], [44, 50], [44.8, 44.6], [47.6, 39.6]])
+        shape("Mantle", "cloak", MANTLE, curve="polyline")
+        stroke("NearArm", "crimson", up([[81, 47], [83.6, 58], [81, 66.4]]), [8, 7, 6])
+        stroke("NearArm", "leather", up([[83.2, 59], [81.2, 66]]), [6.8, 6.4], i=3)
+        ascii("NearHand", 76, 65 + by, [".oooooo.", "oLlllsso", "olllssdo", "oLllssdo", "olsssddo", "oldldldo", ".olsldo.", "..oooo.."], HAND_L)
+        shape("HoodBack", "cloak", up([[50.6, 22], [51.6, 13], [57, 7.4], [65, 5.4], [73, 7.4], [80, 10], [84.6, 13.4], [82, 16],
+                                       [81.4, 24], [80.6, 32], [78, 38.6], [70, 41], [58, 40], [52.6, 34]]), i=1)
+        shape("Neck", "skin", up([[60.6, 33], [66.4, 33], [66, 40.4], [61, 40.4]]), i=2)
+        face = [BLINK.get(j, r) if k == 4 else r for j, r in enumerate(FACE)]
+        ascii("Face", 54, 16 + by, face, FACE_L)
+        sil(up([[54, 25], [56, 16], [70, 16], [70, 34], [61, 35.4], [56, 32]]))
+        ascii("Hair", 52, 11 + by, HAIR, HAIR_L)
+        stroke("HoodBack", "hair", up([[55, 18], [53.4, 24], [53.6, 31], [55, 37], [54.6, 43]]), [2.6, 2.6, 2.4, 2, 1.2], i=2)
+        stroke("Hair", "hair", up([[68.6, 17], [69.4, 23], [68.4, 29], [69.2, 34], [68.4, 38]]), [3, 3, 2.6, 2.2, 1.2], i=3)
+        HOOD = up([[56, 11.4], [60, 7.6], [66, 5.6], [73, 7.6], [80, 10], [84.6, 13.4], [82, 16], [81.4, 24], [80.4, 32],
+                   [77.4, 39], [70.4, 41.4], [70.2, 36], [71.6, 28], [71, 19.6], [67, 13.6], [61, 11]])
+        shape("Hood", "cloak", HOOD)
+        # brass trims, clasp, buckle, emblem
+        stroke("Trim", "brass", up([[55.6, 12.4], [61, 10], [67, 12.6], [71, 18.6], [72, 27], [71, 35], [70.4, 40.6]]), 1.6, s=False)
+        stroke("Trim", "brass", up([[44.4, 49.6], [47.6, 48.8], [51, 52], [56, 49.6], [61, 52.2], [66, 49.4], [71, 52.2], [76, 49.2],
+                                    [80.6, 53], [84, 49.2], [88, 50.2]]), 1, curve="polyline", s=False)
+        stroke("Trim", "brass", [[50.6, 77.2], [56, 78.6], [64, 76.2], [72, 78.6], [79.2, 77.2]], 1, s=False)
+        stroke("Trim", "brass", [[60.6, 64], [60.6, 100.6], [64.2, 104.8], [67.8, 100.6], [67.8, 64]], 1, curve="polyline", s=False)
+        BR = {"k": "#5A3514", "K": "#2A170C", "m": "#8C5A1C", "g": "#BF8A2C", "G": "#E6BE50", "W": "#FFE79A", "Y": "#FFF8D8"}
+        ascii("Trim", 62, 70, ["..k..", ".kGk.", "kGWGk", "kgYgk", ".kgk.", "..k.."], BR)                 # flame emblem
+        ascii("Trim", 59, 38 + by, [".KGK.", "KGYGK", "mGGgm", ".KmK."], BR)                             # clasp
+        ascii("Trim", 62, 60, ["KKKKK", "KGWgK", "Kg.gK", "KgggK", "KKKKK"], BR)                          # buckle
+        # cloak hem: brass border just inside the bottom edge (in shadow on the right)
+        hem = sw([[47.6, 98], [55.4, 110], [66, 112], [77, 109], [85, 113], [93, 109], [100.4, 112]])
+        stroke("Lining", "brass", [[x, y - 1.2] for x, y in hem], 1, i=2, s=False)
+        # lantern: fixed hook and cap, flickering glass, glow halo
+        ascii("Lantern", 21, 13, LANTERN_TOP + FLAMES[FLICKER[k]] + LANTERN_BOTTOM, LANTERN_L)
+        r0 = GLOW_R[k]
+        for r, a in [(r0, "#FFB84014"), (r0 - 4, "#FFC85022"), (r0 - 8, "#FFD86030")]:
+            c("draw_ellipse", layer="Glow", x=27 - r, y=24 - r, width=2 * r + 1, height=2 * r + 1, color=a, filled=True)
+
+        # ---- form light ------------------------------------------------------------
+        for layer, ramp in [("CloakBack", "cloak"), ("Lining", "crimson"), ("Mantle", "cloak"), ("Hood", "cloak"),
+                            ("HoodBack", "cloak"), ("Skirt", "crimson"), ("Tabard", "crimson"), ("Torso", "leather"),
+                            ("Belt", "leather"), ("FarLeg", "slate"), ("NearLeg", "slate"), ("FarBoot", "leather"),
+                            ("NearBoot", "leather"), ("NearArm", "crimson"), ("FarArm", "crimson")]:
+            c("shade_form", layer=layer, ramp=ramp, light="top-left", shadow_steps=2, light_steps=3 if ramp == "crimson" else 2, bias=-0.15)
+        c("shade_form", layer="Staff", ramp="wood", light="top-left", shadow_steps=2, light_steps=1)
+        c("shade_form", layer="Neck", ramp="skin", light="top-left", shadow_steps=1, light_steps=0)
+
+        # ---- hand-placed shadow shapes and details ----------------------------------
+        shade_poly("CloakBack", sw([[80, 40], [88, 46], [95, 64], [100, 86], [100, 112], [92, 110], [86, 90], [80, 60]]), -1)
+        shade_poly("Mantle", up([[70, 40], [78, 37], [86, 45], [88, 51], [80, 53], [76, 49]]), -1)
+        shade_poly("Hood", up([[72, 16], [80, 11], [84, 14], [81, 24], [80, 34], [76, 40], [71, 40]]), -1)
+        shade_poly("Face", up([[55, 16], [71, 16], [71, 21], [55, 19]]), -1)                      # hood/hair cast shadow
+        shade_poly("Skirt", [[67, 76], [76, 70], [80, 84], [81, 92], [74, 93], [68, 90]], -1)
+        shade_poly("Skirt", [[53, 66], [74, 66], [74, 69], [53, 69]], -1)                         # belt cast shadow
+        for x0, x1 in [(52.4 - 1.6, 60.8 - 1.6), (65 + 1.6, 74 + 1.6)]:                             # folded boot cuffs
+            shape("Cuffs", "leather", [[x0 - 0.4, 99.6], [x1 + 0.4, 99.6], [x1, 103.4], [x0, 103.4]], i=4, s=False, curve="polyline")
+            c("draw_line", layer="Cuffs", x0=int(x0), y0=104, x1=int(x1), y1=104, color=col("leather", 1))
+        fl, nl = -1.6, 1.6                                                                          # boot details follow the stance
+        stroke("Details", "leather", [[52 + fl, 111], [60.4 + fl, 110]], 1.4, i=1, s=False)       # straps + buckles
+        stroke("Details", "leather", [[65.2 + nl, 110.6], [73.2 + nl, 109.6]], 1.4, i=1, s=False)
+        px("Details", [[55, 110, col("brass", 4)], [56, 110, col("brass", 2)], [70, 110, col("brass", 4)], [71, 110, col("brass", 2)]])
+        stroke("Details", "leather", [[46 + fl, 123.6], [59.6 + fl, 123.6]], 1, i=0, s=False)       # soles
+        stroke("Details", "leather", [[60 + nl, 123.6], [72.6 + nl, 123.6]], 1, i=0, s=False)
+        px("Details", [[45, 121, col("leather", 4)], [46, 121, col("leather", 4)], [62, 121, col("leather", 4)], [63, 121, col("leather", 5)]])
+        c("draw_line", layer="Details", x0=64, y0=51 + by, x1=64, y1=59 + by, color=col("leather", 0))   # vest lacing
+        lace = []
+        for y in (51, 54, 57):
+            lace += [[63, y + by, col("leather", 5)], [65, y + by, col("leather", 4)], [64, y + 1 + by, col("leather", 5)]]
+        px("Details", lace)
+        shade_poly("Torso", up([[67, 44], [77, 44], [76, 62], [69, 62]]), -1)
+        shade_poly("Torso", up([[72, 44], [77, 44], [76, 62], [73, 62]]), -1)
+        shade_poly("Torso", up([[54, 50], [57, 50], [57, 59], [55, 59]]), 1)
+        for x0, x1, top in [(83, 86, 56), (89, 92, 66), (77, 79, 60)]:                            # cloak folds
+            shade_poly("CloakBack", sw([[x0, top], [x0 + 2, top], [x1 + 2, 110], [x1, 112]]), -1)
+        for x0 in (80, 86):
+            shade_poly("CloakBack", sw([[x0, 62], [x0 + 1, 62], [x0 + 4, 108], [x0 + 3, 110]]), 1)
+        for x in (56, 66, 76):                                                                      # mantle folds
+            shade_poly("Mantle", up([[x - 1, 43], [x + 1, 43], [x + 1.5, 50], [x - 0.5, 50]]), -1)
+            shade_poly("Mantle", up([[x - 3, 43], [x - 1, 43], [x - 1.5, 49], [x - 3.5, 49]]), 1)
+        shade_poly("CloakBack", sw([[86, 80], [96, 84], [101, 104], [100, 112], [92, 108]]), -1)
+        for y in (24, 55, 69):                                                                      # staff bands
+            stroke("Staff", "brass", [[40.6, y], [43.4, y]], 1, i=4, s=False)
+            stroke("Staff", "brass", [[40.6, y + 1], [43.4, y + 1]], 1, i=2, s=False)
+        flut = math.sin(phi)                                                                        # ribbon flutter
+        stroke("Details", "crimson", [[43, 25.6], [45.4, 29], [44.6 + 0.6 * flut, 33], [46.6 + 1.2 * flut, 37.4]], [2.2, 2, 1.6, 1], i=4)
+        stroke("Details", "crimson", [[43, 26.4], [44.2, 31], [43.2 + 0.6 * flut, 35]], [1.6, 1.4, 1], i=2)
+        ascii("Details", 54, 64, [".kk.", "k..k", ".kk.", ".gG.", ".g..", ".gG.", "..G.", ".g..", ".gG."],
+              {"k": "#8C5A1C", "g": "#BF8A2C", "G": "#FFE79A"})                                   # key ring
+        shade_poly("CloakBack", sw([[90, 54], [95, 64], [100, 86], [102, 106], [99, 113], [94, 104], [91, 80]]), -1)
+        shade_poly("Lining", sw([[95, 90], [99, 96], [101, 108], [100, 112], [96, 106]]), -1)
+        shade_poly("FarLeg", [[54, 83], [57, 83], [57, 89], [54, 89]], 1)                     # knees
+        shade_poly("NearLeg", [[67, 83], [70, 83], [70, 89], [67, 89]], 1)
+        stroke("Details", "slate", [[58.4, 92], [60, 95]], 1, i=0, s=False)
+        stroke("Details", "slate", [[72.4, 92], [74, 95]], 1, i=0, s=False)
+        shade_poly("FarBoot", [[51.4, 105], [53.4, 105], [53, 116], [51, 116]], 1)
+        shade_poly("NearBoot", [[67.6, 105], [69.6, 105], [69.2, 116], [67.2, 116]], 1)
+        for x0, y0 in [(51.4, 115), (53.4, 117), (67.6, 115), (69.6, 117)]:
+            stroke("Details", "leather", [[x0, y0], [x0 + 3, y0 - 1]], 1, i=1, s=False)
+        # warm rim light from the lantern (left), cool back-rim (right)
+        rim("Hood", HOOD, 2)
+        rim("Mantle", MANTLE, 2)
+        rim("CloakBack", CLOAK, 1)
+        shade_poly("CloakBack", sw([[46, 70], [53, 64], [54, 112], [47, 104]]), -1)
+        rim("Tabard", TABARD, 1)
+        for layer, pts in [("CloakBack", CLOAK), ("Hood", HOOD), ("Mantle", MANTLE)]:
+            rim(layer, pts, 2, side=1)
+        c("draw_ellipse", layer="Shadow", x=38, y=120, width=68, height=7, color="#05040A70", filled=True)
+        c("draw_ellipse", layer="Shadow", x=44, y=121, width=54, height=5, color="#05040A60", filled=True)
+
+        # ---- finish ----------------------------------------------------------------
+        for layer in ["CloakBack", "Staff", "FarArm", "FarLeg", "FarBoot", "NearLeg", "NearBoot", "Torso", "Skirt", "Tabard",
+                      "Belt", "Mantle", "NearArm", "HoodBack", "Hood"]:
+            c("outline", layer=layer, mode="selective", inside=True)
+        c("outline", layer="Sil", color=OUT, mode="solid")
+
+
+    def build(frames=FRAMES):
+        cmds = [{"op": "project_new", "width": 128, "height": 128, "name": "Lantern Warden"},
+                {"op": "layer_set", "layer": 0, "name": LAYERS[0]}]
+        cmds += [{"op": "layer_create", "name": n, "index": i} for i, n in enumerate(LAYERS[1:], start=1)]
+        cmds += [{"op": "ramp_set", "name": n, "colors": r} for n, r in R.items()]
+        cmds.append({"op": "layer_set", "layer": "Glow", "blend": "screen"})
+        if frames > 1:
+            cmds.append({"op": "frame_add", "count": frames - 1})
+        for k in range(frames):
+            build_frame(cmds, k)
+            cmds.append({"op": "frame_set_duration", "frame": k, "duration": FRAME_MS[k]})
+        cmds += [{"op": "quantize", "layer": layer, "scope": "layer", "palette": PALETTE} for layer in LAYERS[2:]]
+        if frames > 1:
+            cmds.append({"op": "animation_tag_create", "name": "idle", "from": 0, "to": frames - 1, "direction": "forward"})
+        return cmds
+
+    cmds = build()
+    os.makedirs(os.path.join(out, "warden"), exist_ok=True)
+    lines = [json.dumps(x) for x in cmds]
+    with open(os.path.join(out, "warden.jsonl"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    bg = [json.dumps({"op": "layer_create", "name": "BG", "index": 0}),
+          json.dumps({"op": "draw_rectangle", "layer": "BG", "x": 0, "y": 0, "width": 128, "height": 128, "color": "#181C28", "filled": True, "frame": 0})]
+    bg += [json.dumps({"op": "draw_rectangle", "layer": "BG", "x": 0, "y": 0, "width": 128, "height": 128, "color": "#181C28", "filled": True, "frame": k})
+           for k in range(1, FRAMES)]
+    show = lines + [
+        json.dumps({"op": "layer_set", "layer": "Glow", "visible": False}),
+        json.dumps({"op": "layer_set", "layer": "Shadow", "visible": False}),
+        json.dumps({"op": "art_review", "frame": 0, "scale": 4, "_save": "warden/warden_review.png", "_json": True}),
+        json.dumps({"op": "layer_set", "layer": "Glow", "visible": True}),
+        json.dumps({"op": "layer_set", "layer": "Shadow", "visible": True}),
+        json.dumps({"op": "export", "format": "png", "frame": 0, "scale": 1, "density": 1, "_save": "warden/warden.png"}),
+        json.dumps({"op": "export", "format": "spritesheet", "scale": 1, "columns": 4, "_save": "warden/warden_idle_sheet.png", "_json": True}),
+        json.dumps({"op": "project_save", "_save": "warden/warden.pxs"}),
+    ] + bg + [
+        json.dumps({"op": "export", "format": "png", "frame": 0, "scale": 4, "density": 1, "_save": "warden/warden_x4.png"}),
+        json.dumps({"op": "export", "format": "gif", "scale": 3, "_save": "warden/warden_idle_x3.gif"}),
+    ]
+    with open(os.path.join(out, "warden_showcase.jsonl"), "w") as fh:
+        fh.write("\n".join(show) + "\n")
+    print(f"Lantern Warden: {len(lines)} engine commands, {FRAMES} frames")
+
+
 def main(argv):
-    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|waterfall|aura|all]   → command scripts in Assets/Build/."""
+    """Usage: python3 Assets/Sprites.py [chibi|cast|vfx2d|portraits|warrior|kade|sela|waterfall|aura|warden|all]   → command scripts in Assets/Build/."""
     import os
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Build")
     os.makedirs(out, exist_ok=True)
-    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela, "waterfall": build_waterfall, "aura": build_aura}
+    targets = {"chibi": build_chibi, "cast": build_cast, "vfx2d": build_vfx2d, "portraits": build_portraits, "warrior": build_warrior, "kade": build_kade, "sela": build_sela, "waterfall": build_waterfall, "aura": build_aura, "warden": build_warden}
     wanted = argv[1:] or ["all"]
     for name, fn in targets.items():
         if "all" in wanted or name in wanted:

@@ -57,6 +57,22 @@ the snapshot covers the whole design.
 Hood shapes first, then the face window with a lit cheek (`S`) and two eye pixels; spaces are
 transparent.
 
+## What worked best (Lantern Warden, `Assets/Sprites.py warden`)
+
+- Flat `draw_path` shapes per part, each also drawn into a `Sil` layer that gets one solid dark
+  outline at the end; selective `inside` outlines separate the parts.
+- Hand-drawn `draw_ascii` at 1:1 for the dense areas: face (≈17×20), bangs, hands (8×8) and the
+  key prop. This gave the largest jump in quality.
+- `shade_form` for volume, then hand-placed shadow polygons (`shade` with pixel lists): cast
+  shadows under hair and belt, cloth folds, knee and ankle creases.
+- A warm rim on the edges facing the key light and a cool back-rim on the other side.
+- `quantize` each layer to the ramps (+ a few accent colours) at the end.
+- Compare side by side with a strong reference (an imported concept) to catch proportion
+  problems: here, short legs and a narrow stance.
+- For animation, rebuild every frame from the same parametric description (breath offset, sway
+  phase, blink, flicker) instead of shifting layers: every frame gets its own lighting and
+  outlines, so there are no seams.
+
 ## Iteration discipline
 
 - One area per step; snapshot after each.
