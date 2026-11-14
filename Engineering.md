@@ -39,6 +39,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 19. [Şelale: 256×256, 30 karelik döngü](#19-şelale-256256-30-karelik-döngü)
 20. [Korku aurası: 256×256, 30 karelik döngü](#20-korku-aurası-256256-30-karelik-döngü)
 21. [Hibrit hat: AI konsept görselinden gerçek pixel art'a](#21-hibrit-hat-ai-konsept-görselinden-gerçek-pixel-arta)
+22. [Sıfırdan çizim neden zayıf ve çözümü: görsel API'si, küçük taslak, skill](#22-sıfırdan-çizim-neden-zayıf-ve-çözümü-görsel-apisi-küçük-taslak-skill)
 
 ---
 
@@ -48,7 +49,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 
 | Parça | Durum | Doğrulama |
 | --- | --- | --- |
-| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 82 test, `clippy -D warnings` temiz |
+| Rust çekirdek (`Native/Core.rs`, yalnızca `std`, Rust 1.100) | ✅ | 86 test, `clippy -D warnings` temiz |
 | 2D: **gerçek renk** (RGBA8), 16×16 COW tile, katman, dinamik kare, etiket, onion skin | ✅ | birim ve motor testleri |
 | **3D Voxel motoru**: 512³ modeller, şekil araçları, PBR materyaller + 7 harita, PNG/prosedürel dokular | ✅ | birim ve motor testleri |
 | Rig, keyframe animasyon, prosedürel walk/run/idle, kare kare VFX sekansları | ✅ | motor testleri + varlık betikleri |
@@ -61,7 +62,7 @@ AI / İnsan ──► MCP (/mcp) · REST (/api/v1) · Function calling · STDIO
 | **Oyun üretimi**: katman karışım modları, slice (hitbox/pivot), 47'lik blob autotile üreticisi, tilemap + ASCII arazi, normal map'li 2D ışık önizlemesi, RotSprite, palet takası, MaxRects atlas, Aseprite JSON / Godot SpriteFrames / Tiled TMJ dışa aktarma | ✅ | birim + motor + gateway testleri |
 | **Karakter bitirme**: `auto_shade` (şekle uyan cel gölge + katmanlar arası gölge + rim ışığı), sel-out outline, gradient map, parıltı damgası, pixel-perfect temizlik; 8 pastel chibi (64×80) + 2 animasyonlu portre (128×128) | ✅ | birim + motor + gateway testleri |
 | **2D kadro** (10 özgün anime-chibi karakter, idle + walk) ve **2D VFX paketi** (8 efekt) | ✅ | motordan `draw_ascii` ile üretildi |
-| MCP (eski + 2026-07-28), REST, function calling: **100 araç** | ✅ | 15 uçtan uca gateway testi |
+| MCP (eski + 2026-07-28), REST, function calling: **104 araç** | ✅ | 26 gateway testi (uçtan uca + görsel API taklit sunucusu) |
 | Masaüstü editör (Windows 10/11 tarzı): **Pixel + Voxel 3D** sekmeleri, 11 araç, rampa paneli, katman yoğunluğu | ✅ | derleniyor; Xvfb altında çalıştırıldı, ekran görüntüleri [bölüm 17](#17-editör-arayüzü-windows-1011-ve-android) |
 | Android: 2D editör (9 araç, rampa/HSV sayfası, katman paneli) + 3D görüntüleyici + Agent Mode | 🟡 | APK derleniyor, lint hatası yok; **cihazda ve emülatörde henüz çalıştırılmadı** |
 | LAN + TLS eşleştirme | ⏳ | şimdilik `adb forward` (USB) |
@@ -142,7 +143,7 @@ Freedom Network düzeni: her platform tek kaynak dosyası (`Core.kt` / `Core.rs`
 ### Hızlı başlangıç
 
 ```bash
-cd Native && cargo test                     # Rust motoru: 82 test (golden render dahil)
+cd Native && cargo test                     # Rust motoru: 86 test (golden render dahil)
 ./gradlew test                              # JVM: JSON, JNI köprüsü, gateway (Rust'ı otomatik derler)
 ./gradlew :Windows:run                      # masaüstü editörü
 ./gradlew :Gateway:run --args="--size 64x64 --port 38471 --workspace ./workspace [--token T] [--allow-destructive]"
@@ -1157,5 +1158,86 @@ Testler (`mod artkit_tools`):
 
 **Editör:** Masaüstü *File → Import AI concept…* (`Ctrl+Shift+J`); Android taşma menüsü *Import AI concept…*. Ajanlar için `concept_import` aracı ve `concept_prompt` / `turnaround_prompt` MCP promptları.
 
-**Sınırlar:** Progressive JPEG motor içinde henüz çözülmüyor; editörler bu durumda görseli PNG'ye çevirip yeniden deniyor. Görsel modellerini API ile doğrudan çağırma (OpenAI, Gemini, PixelLab, Stability) bir sonraki adım. Model adları sık değiştiği için ayarlardan seçilebilir olacak.
+**Sınırlar:** Progressive JPEG motor içinde henüz çözülmüyor; editörler bu durumda görseli PNG'ye çevirip yeniden deniyor. Görsel modellerini API ile doğrudan çağırma [bölüm 22](#22-sıfırdan-çizim-neden-zayıf-ve-çözümü-görsel-apisi-küçük-taslak-skill)'de.
 
+## 22. Sıfırdan çizim neden zayıf ve çözümü: görsel API'si, küçük taslak, skill
+
+### Neden sıfırdan zayıf, konseptten iyi?
+
+Aynı motor, bir görsel modelinin konseptinden 0,6 saniyede birebir bir sprite çıkardı ([bölüm 21](#21-hibrit-hat-ai-konsept-görselinden-gerçek-pixel-arta)). Ajanın sıfırdan çizdiği karakterler ise eleştirmenden 47/100 aldı. Fark motordan değil, işin türünden geliyor:
+
+| | Konseptten (`concept_import`) | Sıfırdan (ajan koordinat yazar) |
+| --- | --- | --- |
+| Tasarım kararlarını kim veriyor | Milyonlarca görselle eğitilmiş görsel modeli | Dil modeli, tek tek koordinatlarla |
+| Ajanın görevi | Ölçmek: ızgara, renk, arka plan | Binlerce pikseli hayal edip yerleştirmek |
+| Geri bildirim | Her adım sayısal olarak doğrulanabilir | Az sayıda, düşük çözünürlüklü bakış |
+| Hata birikimi | Yok, her hücre bağımsız | Erken oran ve poz hataları sona kadar taşınır |
+
+Araştırmalar da aynı şeyi gösteriyor:
+- **SVGenius (2025):** Dil modellerinin kodla çizdiği grafiklerin kalitesi karmaşıklık arttıkça hızla düşüyor.
+- **Render-in-the-Loop (arXiv 2604.20730), RefineSVG (arXiv 2607.27699), Generator/Critic (arXiv 2603.09312):** Her adımda çıktıyı görüp düzeltmek açığı kısmen kapatıyor, ama tamamen kapatmıyor.
+- **PixelBench (arXiv 2611.02540):** Pixel art'ta da aynı eğilim var.
+
+Sektörün çözümü de bu yönde: pixel art'a özel görsel modelleri (PixelLab, Retro Diffusion) ve ardından temizlik.
+
+Bir sınır daha var: eleştirmen (`art_review`) kusurları ölçer (banding, yetim piksel, değer aralığı), güzelliği ölçemez. Yüksek puan "kusursuz" demektir, "çekici" demek değildir.
+
+### Çözüm
+
+1. **Görsel modeli API'si (`generate_image`):**
+   - Gateway OpenAI uyumlu (`/v1/images/generations`) ve Gemini (`:generateContent`, `responseModalities: IMAGE`) uç noktalarını doğrudan çağırır.
+   - `kind=concept`: tek görünüş üretir ve `concept_import` ile içe aktarır.
+   - `kind=turnaround`: mevcut tuvali referans olarak gönderir. Gelen 8 yönlü sayfayı içe aktarır ve `split_sheet` ile S…SW karelerine böler.
+   - Ham görsel Exports klasörüne kaydedilir; tekrar içe aktarmak için yeni bir ücretli çağrı gerekmez.
+   - Araç `DESTRUCTIVE` erişimli olduğu için her çağrı ücretlidir ve insan onayı ister.
+   - `image_api_status` sağlayıcıyı, modeli ve anahtarın olup olmadığını gösterir; anahtarın kendisini asla göstermez.
+2. **Ayarlar:**
+   - Ortam değişkenleri `PIXEL_STUDIO_IMAGE_PROVIDER/_MODEL/_KEY/_URL/_SIZE` ya da çalışma alanındaki `image_api.json` (yalnızca sahibi okuyabilir).
+   - Masaüstü: *File → AI image model* (konsept üret `Ctrl+Shift+G`, turnaround üret, prompt kopyala, ayarlar). Android: taşma menüsü.
+   - Model adları sık değiştiği için (birçoğu 2026'da emekliye ayrıldı) kodda sabit model yok; model ayarlardan seçilir.
+3. **Görsel modeli yoksa yedek yöntem: önce küçük taslak.** Sanatçıların yöntemi:
+   - Tasarım 32–48 px'te `draw_ascii` ile yapılır. Piksel sayısı az olduğu için her birine tek tek karar verilebilir ve tek bakış bütün tasarımı kapsar.
+   - Sonra `upscale` uygulanır (EPX/Scale2x: merdivenleri yuvarlar, blok blok büyütmez).
+   - Son olarak tam boyutta `shade_form`, `draw_path`, `fix_banding`, `antialias` ve `art_review` ile incelenir.
+   - Yakın inceleme için `canvas_snapshot` artık `x, y, width, height` ile bölge kırpabiliyor (otomatik büyütme, 512 px'e kadar).
+4. **`split_sheet`:**
+   - Bir sayfadaki sprite'ları boş sütunlardan ayırır ve tozları atar.
+   - Her birini ortalar ve hepsini aynı zemin çizgisine oturtur.
+   - Sonuç kare (`frames`) ya da katman (`layers`) olarak alınır; isimler verilebilir.
+5. **`concept_import` düzeltmesi (bu turda bulundu):**
+   - Saydam PNG'ler artık saydam kalıyor. Önceden saydam pikseller siyah ve opak oluyordu; PixelLab gibi saydam çıktı veren modeller bundan etkileniyordu.
+   - Arka plan kenarlardan taşma dolgusuyla siliniyor.
+   - Kapalı ceplerdeki arka plan rengi (kol ile gövde arası) yalnızca doygun anahtar renklerde (macenta, yeşil) siliniyor. Siyah ya da beyaz arka plan artık konturları ve parlak noktaları yemiyor.
+   - Galerideki ranger'ın doğrudan içe aktarımı ile turnaround sayfasından bölünmüş hali artık piksel piksel aynı (fark 0).
+
+### Skill: `pixel-art-character`
+
+`.claude/skills/pixel-art-character/` bütün hattı yöneten bir ajan rehberi; Claude Code bu depoda otomatik bulur.
+
+| Dosya | İçerik |
+| --- | --- |
+| `SKILL.md` | Neden hibrit; yol seçimi (API → prompt → sıfırdan); içe aktarma, turnaround, renk birleştirme, animasyon, kalite çıtası, dışa aktarma |
+| `references/prompts.md` | Konsept, 8 yönlü turnaround, animasyon anahtar pozları, eşya/portre promptları, negatif prompt, model notları, yeniden üretme listesi |
+| `references/pipeline.md` | Her aşamanın tam araç çağrıları ve argümanları; aynalama sonrası düzeltme listesi; yürüme ve saldırı zamanlamaları |
+| `references/quality-bar.md` | Sayısal eşikler (puan ≥ 85, değer aralığı ≥ 55, banding, yetim piksel) ve her seferinde yapılan göz testi |
+| `references/from-scratch.md` | Küçük taslak → EPX → inceleme yöntemi ve denenmiş bir `draw_ascii` örneği |
+| `references/api-setup.md` | Sağlayıcılar, ortam değişkenleri, anahtar güvenliği, hata kodları |
+| `scripts/pipeline.py` | Kabuktan tek komut: `import` (içe aktar → eleştir → PNG/×4/.pxs) ve `turnaround --palette-from` (içe aktar → böl → konsept paletine eşle → yön başına PNG + spritesheet) |
+
+### Testler
+
+- **Rust (`mod artkit_tools`):**
+  - EPX merdiven köşelerini yumuşatıyor.
+  - Sayfa bölme: üç sprite ve bir toz, üç kare, ortak zemin.
+  - Bölgesel snapshot.
+  - Saydam / beyaz / macenta arka planlı içe aktarma: saydamlık korunuyor, beyaz iç parlaklık kalıyor, macenta cep siliniyor.
+- **Gateway (`ImageApiTest`, taklit HTTP sunucusu):**
+  - OpenAI uyumlu üretim: yol, Bearer başlığı, model, prompt; sonuç 8 px hücreli 10×16 sprite; anahtar yanıtta yok.
+  - Gemini: yol, `x-goog-api-key`, `responseModalities`; onay reddedilince hiç istek gitmiyor.
+  - Ortam değişkenleri dosyadaki ayarları eziyor.
+- **Betik:** `pipeline.py import` ve `turnaround` galerideki ranger ve ondan yapılmış üç yönlü bir sayfayla çalıştırıldı.
+
+**Sınırlar:**
+- Yürüme ve koşu döngülerinde bacaklar her karede yeniden çizilmeli. En iyi sonuç görsel modelinden gelen anahtar pozlarla alınıyor; modelsiz yöntem çalışıyor ama daha fazla deneme istiyor.
+- Aynalanan yönlerde asimetrik detaylar (silah eli, saç ayrımı) ve ışık yönü elle düzeltilmeli.
+- Gerçek ücretli API çağrıları bu ortamda yapılmadı; istek ve yanıt biçimleri taklit sunucu ve sağlayıcı belgeleriyle doğrulandı.

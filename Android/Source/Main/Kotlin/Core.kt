@@ -659,6 +659,7 @@ class MainActivity : Activity() {
             "New 32 × 32", "New 64 × 64", "New 128 × 128", "Open .pxs…", "Save .pxs…", "Import image…", "Import reference…",
             "Export PNG…", "Export GIF…", "Outline (primary color)", "Outline (selective)", "Auto shade layer", "Pixel-perfect cleanup",
             "Review art…", "Form light layer", "Fix banding", "Selective anti-alias", "Import AI concept…",
+            "Generate concept (image API)…", "Generate turnaround (image API)", "Image API settings…",
         )
         items.forEachIndexed { i, s -> menu.menu.add(0, i, i, s) }
         menu.setOnMenuItemClickListener { item ->
@@ -681,10 +682,56 @@ class MainActivity : Activity() {
                 15 -> engine.execute("fix_banding")
                 16 -> engine.execute("antialias", mapOf("amount" to 0.5))
                 17 -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"), REQ_CONCEPT)
+                18 -> generateWithApi("concept")
+                19 -> generateWithApi("turnaround")
+                20 -> imageApiSettings()
             }
             true
         }
         menu.show()
+    }
+
+    private fun imageApiSettings() {
+        val cur = com.pixel.studio.gateway.ImageApiConfig.load(app.workspaceDir) { null }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        fun field(label: String, value: String, secret: Boolean = false) = EditText(this).apply {
+            setText(value); hint = label; setTextColor(Ui.TEXT)
+            if (secret) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }.also { box.addView(label(label)); box.addView(it) }
+        val provider = field("Provider (openai or gemini)", cur?.provider ?: "openai")
+        val model = field("Model id", cur?.model ?: "")
+        val url = field("Endpoint (empty = official)", cur?.baseUrl ?: "")
+        val key = field("API key", cur?.apiKey ?: "", secret = true)
+        AlertDialog.Builder(this).setTitle("Image API").setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton("Save") { _, _ ->
+                com.pixel.studio.gateway.ImageApiConfig.save(app.workspaceDir, com.pixel.studio.gateway.ImageApiConfig(
+                    provider.text.toString().trim().ifEmpty { "openai" }, model.text.toString().trim(), key.text.toString().trim(), url.text.toString().trim()))
+                toast("Saved")
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun generateWithApi(kind: String) {
+        val cfg = com.pixel.studio.gateway.ImageApiConfig.load(app.workspaceDir) { null }
+        if (cfg == null || cfg.model.isEmpty()) { imageApiSettings(); return }
+        val input = EditText(this).apply { hint = "hair, outfit, props, weapon" }
+        AlertDialog.Builder(this).setTitle(if (kind == "turnaround") "Describe this character" else "Describe the character").setView(input)
+            .setPositiveButton("Generate") { _, _ ->
+                val who = input.text.toString()
+                val prompt = if (kind == "turnaround") com.pixel.studio.gateway.ConceptPrompts.turnaround(who) else com.pixel.studio.gateway.ConceptPrompts.concept(who)
+                val reference = if (kind == "turnaround") engine.execute("export", mapOf("format" to "png", "scale" to 4)).binary else null
+                toast("Generating…")
+                Thread {
+                    val result = runCatching { com.pixel.studio.gateway.ImageApi.generate(cfg, prompt, reference) }
+                    main.post {
+                        result.onFailure { toast("Image API: ${it.message}") }.onSuccess { bytes ->
+                            val layer = if (kind == "turnaround") "Turnaround" else "Concept"
+                            val r = engine.execute("concept_import", mapOf("layer" to layer), payload = bytes)
+                            if (r.ok && kind == "turnaround") engine.execute("split_sheet", mapOf("layer" to layer, "names" to com.pixel.studio.gateway.ConceptPrompts.TURNAROUND_NAMES))
+                            if (r.ok) canvas.post { canvas.fit() } else toast(r.errorMessage ?: "import failed")
+                        }
+                    }
+                }.start()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     /** The critic: score, issues and the marked value map in one dialog. */

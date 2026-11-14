@@ -974,6 +974,109 @@ mod artkit_tools {
     }
 
     #[test]
+    fn concept_background_respects_alpha_and_inner_highlights() {
+        // 10×10 art: a dark ring, a red fill and one pocket pixel in the background colour, upscaled ×4.
+        let import = |bg: Option<&str>| -> (Json, Engine) {
+            let mut src = Engine::new(10, 10);
+            if let Some(bg) = bg {
+                ok(&mut src, &format!(r#"{{"op":"draw_rectangle","x":0,"y":0,"width":10,"height":10,"color":"{bg}","filled":true}}"#));
+            }
+            ok(&mut src, r##"{"op":"draw_rectangle","x":2,"y":2,"width":6,"height":6,"color":"#202030","filled":true}"##);
+            ok(&mut src, r##"{"op":"draw_rectangle","x":3,"y":3,"width":4,"height":4,"color":"#C04040","filled":true}"##);
+            if let Some(bg) = bg {
+                ok(&mut src, &format!(r#"{{"op":"set_pixel","x":4,"y":4,"color":"{bg}"}}"#));
+            }
+            let png = src.execute(br#"{"op":"export","format":"png","scale":4,"density":1}"#, &[]).binary;
+            let mut e = Engine::new(32, 32);
+            let r = Json::parse(&e.execute(br#"{"op":"concept_import","margin":0}"#, &png).json).unwrap();
+            assert_eq!(r.get("ok").and_then(Json::as_bool), Some(true), "{}", r.to_json_string());
+            (r.get("result").cloned().unwrap(), e)
+        };
+        let px = |e: &mut Engine, x: i32, y: i32| {
+            let c = ok(e, &format!(r#"{{"op":"get_pixel","layer":"Concept","x":{x},"y":{y}}}"#));
+            c.get("color").and_then(Json::as_str).map(|s| s.to_string())
+        };
+        // Transparent source: stays transparent (no black box), the 6×6 sprite is found.
+        let (r, mut e) = import(None);
+        let sprite = r.get("sprite").unwrap();
+        assert_eq!((num(sprite, "width"), num(sprite, "height")), (6.0, 6.0), "{}", r.to_json_string());
+        assert!(px(&mut e, 0, 0).unwrap().starts_with("#202030"));
+        // White background: the outer white goes, the enclosed white highlight stays.
+        let (r, mut e) = import(Some("#FFFFFF"));
+        assert_eq!(num(r.get("sprite").unwrap(), "width"), 6.0);
+        assert!(px(&mut e, 2, 2).unwrap().starts_with("#FFFFFF"), "inner highlight kept");
+        // Magenta chroma key: enclosed pockets are background too.
+        let (_, mut e) = import(Some("#FF00FF"));
+        assert_eq!(px(&mut e, 2, 2), None, "magenta pocket keyed out");
+        assert!(px(&mut e, 1, 1).unwrap().starts_with("#C04040"));
+    }
+
+    #[test]
+    fn thumbnail_upscale_smooths_stair_corners() {
+        // A filled triangle (x <= y), upscaled ×2 by nearest neighbour and by EPX.
+        let edges = |method: &str| -> Vec<i64> {
+            let mut e = Engine::new(8, 8);
+            for y in 0..8 {
+                ok(
+                    &mut e,
+                    &format!(r##"{{"op":"draw_rectangle","x":0,"y":{y},"width":{},"height":1,"color":"#000000","filled":true}}"##, y + 1),
+                );
+            }
+            let r = ok(&mut e, &format!(r#"{{"op":"upscale","factor":2,"method":"{method}"}}"#));
+            assert_eq!((num(&r, "width"), num(&r, "height")), (16.0, 16.0));
+            let img = e.execute(br#"{"op":"render_frame"}"#, &[]).binary;
+            (1..15).map(|y| (0..16).filter(|x| img[(y * 16 + x) * 4 + 3] > 0).count() as i64).collect()
+        };
+        let (near, epx) = (edges("nearest"), edges("epx"));
+        // EPX trims the outer corner and fills the inner corner of every stair step, so the edge
+        // reads as a smoother diagonal: each row differs from nearest neighbour by at most 1 px.
+        assert_ne!(near, epx);
+        for (i, (n, p)) in near.iter().zip(&epx).enumerate() {
+            assert!((p - n).abs() <= 1, "row {}: nearest {n}, epx {p}", i + 1);
+        }
+        let mut e = Engine::new(8, 8);
+        assert_eq!(run(&mut e, r#"{"op":"upscale","factor":5}"#).get("ok"), Some(&Json::Bool(false)));
+    }
+
+    #[test]
+    fn turnaround_sheet_splits_onto_one_baseline() {
+        let mut e = Engine::new(64, 24);
+        // three "views" of different heights standing at different y
+        ok(&mut e, r##"{"op":"draw_rectangle","x":2,"y":4,"width":8,"height":16,"color":"#AA3322","filled":true}"##);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":24,"y":2,"width":10,"height":14,"color":"#22AA33","filled":true}"##);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":48,"y":6,"width":6,"height":12,"color":"#2233AA","filled":true}"##);
+        ok(&mut e, r##"{"op":"set_pixel","x":40,"y":1,"color":"#FFFFFF"}"##); // dust
+        let r = ok(&mut e, r#"{"op":"split_sheet","names":["front","side","back"],"margin":1}"#);
+        assert_eq!(r.get("sprites").unwrap().as_array().unwrap().len(), 3, "{}", r.to_json_string());
+        let insp = ok(&mut e, r#"{"op":"canvas_inspect"}"#);
+        assert_eq!((num(&insp, "width"), num(&insp, "height"), num(&insp, "frameCount")), (12.0, 18.0, 3.0));
+        // every view stands on the same baseline (last row above the margin)
+        for f in 0..3 {
+            let img = e.execute(format!(r#"{{"op":"render_frame","frame":{f}}}"#).as_bytes(), &[]).binary;
+            let row = |y: usize| (0..12).any(|x| img[(y * 12 + x) * 4 + 3] > 0);
+            assert!(row(16) && !row(17), "frame {f} baseline");
+        }
+        // layers mode
+        let mut l = Engine::new(40, 10);
+        ok(&mut l, r##"{"op":"draw_rectangle","x":1,"y":1,"width":5,"height":8,"color":"#AA3322","filled":true}"##);
+        ok(&mut l, r##"{"op":"draw_rectangle","x":20,"y":2,"width":5,"height":7,"color":"#22AA33","filled":true}"##);
+        ok(&mut l, r#"{"op":"split_sheet","into":"layers","names":["A","B"]}"#);
+        let insp = ok(&mut l, r#"{"op":"canvas_inspect"}"#);
+        assert_eq!(insp.get("layers").unwrap().as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn snapshot_can_zoom_into_a_region() {
+        let mut e = Engine::new(64, 64);
+        ok(&mut e, r##"{"op":"draw_rectangle","x":10,"y":10,"width":4,"height":4,"color":"#FF0000","filled":true}"##);
+        let r = e.execute(br#"{"op":"canvas_snapshot","x":8,"y":8,"width":8,"height":8,"scale":10}"#, &[]);
+        assert!(r.json.contains("\"ok\":true"), "{}", r.json);
+        let png = crate::export::png::decode(&r.binary).unwrap();
+        assert_eq!((png.width, png.height), (80, 80));
+        assert_eq!(png.get(40, 40).r, 255);
+    }
+
+    #[test]
     fn mannequin_is_posed_lit_and_reports_joints() {
         let mut e = Engine::new(128, 128);
         let warn = ok(&mut e, r##"{"op":"ramp_set","name":"flat","colors":["#606060","#686868","#707070"]}"##);

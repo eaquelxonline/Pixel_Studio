@@ -149,6 +149,94 @@ class BridgeTest {
 
 // ═══ GatewayTest ═════════════════════════════════════════════════════════════════════════════════
 
+/** generate_image against local stand-ins of the OpenAI-compatible and Gemini image APIs. */
+class ImageApiTest {
+    private fun conceptPng(): ByteArray = PixelEngine(16, 16).use { e ->
+        e.execute("draw_rectangle", mapOf("x" to 0, "y" to 0, "width" to 16, "height" to 16, "color" to "#FF00FF", "filled" to true))
+        e.execute("draw_rectangle", mapOf("x" to 5, "y" to 2, "width" to 6, "height" to 12, "color" to "#2E6B35", "filled" to true))
+        e.execute("draw_rectangle", mapOf("x" to 6, "y" to 3, "width" to 4, "height" to 3, "color" to "#F0C8A0", "filled" to true))
+        e.execute("export", mapOf("format" to "png", "scale" to 8)).binary
+    }
+
+    private class Stub(val respond: (String) -> String) : AutoCloseable {
+        val requests = mutableListOf<Triple<String, Map<String, String>, String>>()
+        val server: com.sun.net.httpserver.HttpServer = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { ex ->
+                val body = String(ex.requestBody.readBytes(), Charsets.UTF_8)
+                requests += Triple(ex.requestURI.path, ex.requestHeaders.mapValues { it.value.first() }.mapKeys { it.key.lowercase() }, body)
+                val out = respond(ex.requestURI.path).toByteArray()
+                ex.sendResponseHeaders(200, out.size.toLong())
+                ex.responseBody.use { it.write(out) }
+            }
+            start()
+        }
+        val url get() = "http://127.0.0.1:${server.address.port}"
+        override fun close() = server.stop(0)
+    }
+
+    private fun run(cfg: (String) -> ImageApiConfig, respond: (String) -> String, approve: Boolean = true, check: (Stub, ToolResult, PixelEngine) -> Unit) {
+        val ws = Files.createTempDirectory("img-api").toFile()
+        Stub(respond).use { stub ->
+            PixelEngine(32, 32).use { engine ->
+                val exec = ToolExecutor(engine, PermissionPolicy(confirmer = Confirmer { _, _, _ -> approve }), DirectoryWorkspace(ws), imageApi = { cfg(stub.url) })
+                check(stub, exec.call("generate_image", mapOf("character" to "a green ranger", "colors" to 8), "agent:test"), engine)
+            }
+        }
+        ws.deleteRecursively()
+    }
+
+    @Test
+    fun openAiCompatibleGenerationImportsPixelArt() {
+        val b64 = Base64.getEncoder().encodeToString(conceptPng())
+        run({ ImageApiConfig("openai", "image-model-x", "sk-test", it) }, { "{\"data\":[{\"b64_json\":\"$b64\"}]}" }) { stub, r, engine ->
+            assertFalse(r.isError, Json.write(r.toJson()))
+            val (path, headers, body) = stub.requests.single()
+            assertEquals("/v1/images/generations", path)
+            assertEquals("Bearer sk-test", headers["authorization"])
+            val req = Json.parseObject(body)
+            assertEquals("image-model-x", req["model"])
+            assertTrue((req["prompt"] as String).contains("a green ranger") && (req["prompt"] as String).contains("#FF00FF"))
+            val import = r.structured!!.obj("result")!!.obj("import")!!
+            assertEquals(8.0, (import["cell"] as Number).toDouble(), 0.2)
+            val insp = engine.execute("canvas_inspect").result
+            assertEquals(Pair(10L, 16L), Pair(insp.long("width"), insp.long("height")), "6x12 sprite + 2 px margin")
+            assertFalse(Json.write(r.toJson()).contains("sk-test"), "the key never appears in a reply")
+        }
+    }
+
+    @Test
+    fun geminiGenerationAndApprovalGate() {
+        val b64 = Base64.getEncoder().encodeToString(conceptPng())
+        val gemini = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"here\"},{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"$b64\"}}]}}]}"
+        run({ ImageApiConfig("gemini", "gemini-image-y", "g-key", it) }, { gemini }) { stub, r, _ ->
+            assertFalse(r.isError, Json.write(r.toJson()))
+            val (path, headers, body) = stub.requests.single()
+            assertEquals("/v1beta/models/gemini-image-y:generateContent", path)
+            assertEquals("g-key", headers["x-goog-api-key"])
+            assertTrue(body.contains("\"responseModalities\":[\"IMAGE\"]"))
+        }
+        // Paid calls need the human's approval: denied → no request at all.
+        run({ ImageApiConfig("gemini", "gemini-image-y", "g-key", it) }, { gemini }, approve = false) { stub, r, _ ->
+            assertTrue(r.isError)
+            assertTrue(stub.requests.isEmpty())
+        }
+    }
+
+    @Test
+    fun configLoadsFromEnvironmentOverFile() {
+        val dir = Files.createTempDirectory("img-cfg").toFile()
+        ImageApiConfig.save(dir, ImageApiConfig("openai", "file-model", "file-key"))
+        val fromFile = ImageApiConfig.load(dir) { null }!!
+        assertEquals("file-model", fromFile.model)
+        val env = mapOf("PIXEL_STUDIO_IMAGE_PROVIDER" to "gemini", "PIXEL_STUDIO_IMAGE_MODEL" to "env-model")
+        val mixed = ImageApiConfig.load(dir) { env[it] }!!
+        assertEquals(Triple("gemini", "env-model", "file-key"), Triple(mixed.provider, mixed.model, mixed.apiKey))
+        assertEquals("set", mixed.describe()["apiKey"])
+        assertNull(ImageApiConfig.load(Files.createTempDirectory("none").toFile()) { null })
+        dir.deleteRecursively()
+    }
+}
+
 class GatewayTest {
     private lateinit var engine: PixelEngine
     private lateinit var gateway: AgentGateway

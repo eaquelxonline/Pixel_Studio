@@ -2210,7 +2210,14 @@ pub mod commands {
             };
             let src = crate::export::decode_image(&bytes).map_err(|e| CmdError::new("invalid_file", e))?;
             let (sw, sh) = (src.width as usize, src.height as usize);
-            let gray: Vec<f64> = src.pixels.as_chunks::<4>().0.iter().map(|p| (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0).collect();
+            // Premultiplied grey: transparent areas read as one flat value whatever RGB they hide.
+            let gray: Vec<f64> = src
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|p| (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0 * p[3] as f64 / 255.0)
+                .collect();
             // Grid: auto (Fourier), a fixed cell size, or none.
             let (cell, ox, oy, confidence) = match a.get("cell") {
                 Some(v) if !v.is_null() && v.as_f64().is_some() => (v.as_f64().unwrap().max(1.0), 0.0, 0.0, 1.0),
@@ -2268,7 +2275,12 @@ pub mod commands {
                         for x in ((cx - r).floor() as i64).max(0)..((cx + r).ceil() as i64).min(sw as i64) {
                             let o = (y as usize * sw + x as usize) * 4;
                             let p = &src.pixels[o..o + 4];
-                            let key = ((p[0] as u32 >> 3) << 10) | ((p[1] as u32 >> 3) << 5) | (p[2] as u32 >> 3);
+                            // Transparent source pixels vote for "empty" (key with bit 15 set).
+                            let key = if p[3] < 128 {
+                                1 << 15
+                            } else {
+                                ((p[0] as u32 >> 3) << 10) | ((p[1] as u32 >> 3) << 5) | (p[2] as u32 >> 3)
+                            };
                             let e = bins.entry(key).or_insert((0, [0; 3]));
                             e.0 += 1;
                             e.1[0] += p[0] as u32;
@@ -2276,37 +2288,64 @@ pub mod commands {
                             e.1[2] += p[2] as u32;
                         }
                     }
-                    if let Some((_, (n, s))) = bins.into_iter().max_by_key(|e| (e.1.0, e.0)) {
+                    if let Some((key, (n, s))) = bins.into_iter().max_by_key(|e| (e.1.0, e.0))
+                        && key != 1 << 15
+                    {
                         let o = (j * cols + i) * 4;
                         img.pixels[o..o + 4].copy_from_slice(&[(s[0] / n) as u8, (s[1] / n) as u8, (s[2] / n) as u8, 255]);
                     }
                 }
             }
-            // Background: the dominant border colour, keyed out within a perceptual tolerance.
+            // Background: the dominant border colour (transparent borders need no key), removed by a
+            // flood fill from the edges within a perceptual tolerance. Enclosed pockets (between an arm
+            // and the body) are keyed too, but only for a saturated chroma key such as #FF00FF or
+            // #00FF00: a black or white background shares its colour with outlines and highlights.
             let tol = opt_f64(a, "background_tolerance")?.unwrap_or(0.1).clamp(0.0, 0.5) as f32;
-            let mut border: HashMap<[u8; 3], usize> = HashMap::new();
-            for i in 0..cols {
-                for j in [0, rows - 1] {
-                    let o = (j * cols + i) * 4;
-                    *border.entry([img.pixels[o] >> 3 << 3, img.pixels[o + 1] >> 3 << 3, img.pixels[o + 2] >> 3 << 3]).or_default() += 1;
-                }
-            }
-            for j in 0..rows {
-                for i in [0, cols - 1] {
-                    let o = (j * cols + i) * 4;
-                    *border.entry([img.pixels[o] >> 3 << 3, img.pixels[o + 1] >> 3 << 3, img.pixels[o + 2] >> 3 << 3]).or_default() += 1;
-                }
+            let mut border: HashMap<Option<[u8; 3]>, usize> = HashMap::new();
+            let edge_cells = (0..cols).flat_map(|i| [(i, 0), (i, rows - 1)]).chain((0..rows).flat_map(|j| [(0, j), (cols - 1, j)]));
+            for (i, j) in edge_cells {
+                let o = (j * cols + i) * 4;
+                let p = &img.pixels[o..o + 4];
+                *border.entry((p[3] > 0).then(|| [p[0] >> 3 << 3, p[1] >> 3 << 3, p[2] >> 3 << 3])).or_default() += 1;
             }
             let mut keyed = 0usize;
             if opt_str(a, "background")?.unwrap_or("auto") != "keep"
-                && let Some((bg, _)) = border.into_iter().max_by_key(|e| e.1)
+                && let Some((Some(bg), _)) = border.into_iter().max_by_key(|e| e.1)
             {
                 let bl = crate::pixelart::oklab(Rgba::new(bg[0] + 4, bg[1] + 4, bg[2] + 4, 255));
-                for p in img.pixels.as_chunks_mut::<4>().0 {
+                let is_bg = |p: &[u8]| {
                     let l = crate::pixelart::oklab(Rgba::new(p[0], p[1], p[2], 255));
-                    if ((l[0] - bl[0]).powi(2) + (l[1] - bl[1]).powi(2) + (l[2] - bl[2]).powi(2)).sqrt() < tol {
-                        *p = [0, 0, 0, 0];
-                        keyed += 1;
+                    p[3] > 0 && ((l[0] - bl[0]).powi(2) + (l[1] - bl[1]).powi(2) + (l[2] - bl[2]).powi(2)).sqrt() < tol
+                };
+                let chroma_key = (bl[1] * bl[1] + bl[2] * bl[2]).sqrt() > 0.15;
+                let mut stack: Vec<(usize, usize)> =
+                    (0..cols).flat_map(|i| [(i, 0), (i, rows - 1)]).chain((0..rows).flat_map(|j| [(0, j), (cols - 1, j)])).collect();
+                while let Some((i, j)) = stack.pop() {
+                    let o = (j * cols + i) * 4;
+                    if !is_bg(&img.pixels[o..o + 4]) {
+                        continue;
+                    }
+                    img.pixels[o..o + 4].copy_from_slice(&[0, 0, 0, 0]);
+                    keyed += 1;
+                    if i > 0 {
+                        stack.push((i - 1, j));
+                    }
+                    if i + 1 < cols {
+                        stack.push((i + 1, j));
+                    }
+                    if j > 0 {
+                        stack.push((i, j - 1));
+                    }
+                    if j + 1 < rows {
+                        stack.push((i, j + 1));
+                    }
+                }
+                if chroma_key {
+                    for p in img.pixels.as_chunks_mut::<4>().0 {
+                        if is_bg(p) {
+                            *p = [0, 0, 0, 0];
+                            keyed += 1;
+                        }
                     }
                 }
             }
@@ -2390,6 +2429,171 @@ pub mod commands {
             result.set("backgroundPixels", keyed);
             result.set("cleanedPixels", cleaned);
             Ok(Outcome::new(result, placed.changed))
+        }
+
+        // ---- thumbnail-first and turnaround helpers ---------------------------------------------
+
+        /// Pixel-art-aware upscale of the whole document: EPX/Scale2x (×2, ×4), Scale3x-style (×3 via
+        /// nearest after Scale2x where needed) or plain nearest. Used for the thumbnail-first method:
+        /// design small (decisions an artist makes at 32-48 px), upscale, then refine detail.
+        pub fn upscale(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let factor = opt_i64(a, "factor")?.unwrap_or(2);
+            if !matches!(factor, 2..=4) {
+                return Err(CmdError::invalid("'factor' must be 2, 3 or 4"));
+            }
+            let method = opt_str(a, "method")?.unwrap_or("epx");
+            if !matches!(method, "epx" | "nearest") {
+                return Err(CmdError::invalid("'method' is epx or nearest"));
+            }
+            let (ow, oh) = (doc.width, doc.height);
+            let (nw, nh) = (ow * factor as u32, oh * factor as u32);
+            if nw > 4096 || nh > 4096 {
+                return Err(CmdError::new("limit", "the upscaled canvas would exceed 4096 px"));
+            }
+            let keys: Vec<(u32, u32)> = doc.cels.keys().copied().collect();
+            let mut grids = Vec::new();
+            for key in &keys {
+                let g = doc.cels[key].clone();
+                let (w, h) = (g.width() as usize, g.height() as usize);
+                let mut src = vec![0u32; w * h];
+                g.for_each_opaque(|x, y, v| src[y as usize * w + x as usize] = v);
+                let (out, ow2, f2) = match (method, factor) {
+                    ("epx", 2) => (crate::gamedev::rotsprite::scale2x(&src, w, h), w * 2, 2),
+                    ("epx", 4) => {
+                        let s2 = crate::gamedev::rotsprite::scale2x(&src, w, h);
+                        (crate::gamedev::rotsprite::scale2x(&s2, w * 2, h * 2), w * 4, 4)
+                    }
+                    _ => {
+                        let f = factor as usize;
+                        let mut o = vec![0u32; w * h * f * f];
+                        for y in 0..h * f {
+                            for x in 0..w * f {
+                                o[y * w * f + x] = src[(y / f) * w + x / f];
+                            }
+                        }
+                        (o, w * f, f)
+                    }
+                };
+                grids.push((*key, out, ow2, f2));
+            }
+            doc.resize(nw, nh, 0, 0);
+            let mut changed = 0u64;
+            for (key, out, w2, _) in grids {
+                let grid = doc.cel_mut(key.0, key.1);
+                for (i, v) in out.iter().enumerate() {
+                    if *v != TRANSPARENT {
+                        changed += grid.set((i % w2) as i64, (i / w2) as i64, *v) as u64;
+                    }
+                }
+            }
+            Ok(Outcome::new(Json::obj().with("width", nw).with("height", nh).with("method", method).with("changed", changed), changed))
+        }
+
+        /// Splits a sheet of several sprites on one layer (a turnaround from an image model) into
+        /// separate frames or layers: sprites are found by empty columns between them, cropped,
+        /// centred horizontally and stood on one common baseline.
+        pub fn split_sheet(doc: &mut Document, a: &Json) -> CmdResult<Outcome> {
+            let (l, f) = target(doc, a)?;
+            let px = Px::from_grid(doc.cel_mut(l, f));
+            let min_gap = opt_i64(a, "gap")?.unwrap_or(2).clamp(1, 64);
+            let col_has = |x: i64| (0..px.h).any(|y| px.get(x, y) != TRANSPARENT);
+            let mut spans: Vec<(i64, i64)> = Vec::new();
+            let mut x = 0;
+            while x < px.w {
+                if !col_has(x) {
+                    x += 1;
+                    continue;
+                }
+                let s = x;
+                let mut empty = 0;
+                let mut e = x;
+                while x < px.w {
+                    if col_has(x) {
+                        e = x;
+                        empty = 0;
+                    } else {
+                        empty += 1;
+                        if empty >= min_gap {
+                            break;
+                        }
+                    }
+                    x += 1;
+                }
+                spans.push((s, e));
+            }
+            // Drop specks (dust left from the background): sprites must be at least a quarter as
+            // wide as the widest one.
+            let widest = spans.iter().map(|s| s.1 - s.0 + 1).max().unwrap_or(0);
+            spans.retain(|s| (s.1 - s.0 + 1) * 4 >= widest);
+            if spans.len() < 2 {
+                return Err(CmdError::invalid("found fewer than two sprites separated by empty columns"));
+            }
+            struct Sprite {
+                x0: i64,
+                y0: i64,
+                w: i64,
+                h: i64,
+            }
+            let sprites: Vec<Sprite> = spans
+                .iter()
+                .map(|&(s, e)| {
+                    let rows: Vec<i64> = (0..px.h).filter(|&y| (s..=e).any(|x| px.get(x, y) != TRANSPARENT)).collect();
+                    Sprite { x0: s, y0: rows[0], w: e - s + 1, h: rows[rows.len() - 1] - rows[0] + 1 }
+                })
+                .collect();
+            let margin = opt_i64(a, "margin")?.unwrap_or(2).clamp(0, 64);
+            let cw = sprites.iter().map(|s| s.w).max().unwrap() + 2 * margin;
+            let ch = sprites.iter().map(|s| s.h).max().unwrap() + 2 * margin;
+            let names: Vec<String> = match a.get("names") {
+                Some(Json::Arr(list)) => list.iter().filter_map(|n| n.as_str().map(String::from)).collect(),
+                _ => Vec::new(),
+            };
+            let into_layers = opt_str(a, "into")?.unwrap_or("frames") == "layers";
+            let source_layer = l;
+            doc.resize(cw as u32, ch as u32, 0, 0);
+            // Clear the sheet, then place each sprite.
+            *doc.cel_mut(source_layer, f) = PixelGrid::new(doc.layer_dims(source_layer).0, doc.layer_dims(source_layer).1);
+            let fi0 = doc.frame_index(f).unwrap_or(0);
+            let mut placed = Vec::new();
+            for (k, sp) in sprites.iter().enumerate() {
+                let (lid, fid) = if into_layers {
+                    let name = names.get(k).cloned().unwrap_or_else(|| format!("View {}", k + 1));
+                    let id = match doc.layers.iter().find(|x| x.name == name) {
+                        Some(x) => x.id,
+                        None => doc.insert_layer(&name, doc.layers.len()),
+                    };
+                    (id, f)
+                } else {
+                    if k > 0 && doc.frames.len() <= fi0 + k {
+                        let _ = doc.duplicate_frame(fi0 + k - 1, fi0 + k);
+                        let new_f = doc.frames[fi0 + k].id;
+                        *doc.cel_mut(source_layer, new_f) = PixelGrid::new(cw as u32, ch as u32);
+                    }
+                    (source_layer, doc.frames[fi0 + k].id)
+                };
+                // centre horizontally, feet on the common baseline
+                let (dx, dy) = ((cw - sp.w) / 2 - sp.x0, ch - margin - sp.h - sp.y0);
+                let grid = doc.cel_mut(lid, fid);
+                for y in sp.y0..sp.y0 + sp.h {
+                    for x in sp.x0..sp.x0 + sp.w {
+                        let v = px.get(x, y);
+                        if v != TRANSPARENT {
+                            grid.set(x + dx, y + dy, v);
+                        }
+                    }
+                }
+                placed.push(
+                    Json::obj()
+                        .with("index", k)
+                        .with("width", sp.w)
+                        .with("height", sp.h)
+                        .with("name", names.get(k).map(|n| n.as_str()).unwrap_or("")),
+                );
+            }
+            Ok(Outcome::new(
+                Json::obj().with("sprites", Json::Arr(placed)).with("canvas", Json::obj().with("width", cw).with("height", ch)),
+                1,
+            ))
         }
 
         // ---- critic -------------------------------------------------------------------------------
@@ -7111,7 +7315,26 @@ pub mod commands {
             used.sort_by_key(|u| std::cmp::Reverse(u.1));
             let colors = used.iter().take(64).map(|(c, n)| Json::obj().with("color", c.to_hex()).with("pixels", *n)).collect();
             let bounds = any.then(|| Json::obj().with("x", x0).with("y", y0).with("width", x1 - x0 + 1).with("height", y1 - y0 + 1));
-            let png = export::png::encode(&img.scaled(s));
+            // Optional zoomed crop (x, y, width, height in canvas pixels): look closely at a face, a hand.
+            let view = match (opt_i64(a, "x")?, opt_i64(a, "y")?, opt_i64(a, "width")?, opt_i64(a, "height")?) {
+                (Some(x), Some(y), Some(w), Some(h)) if w > 0 && h > 0 => {
+                    let d = (img.width / doc.width.max(1)).max(1) as i64;
+                    let (x, y, w, h) = (x.clamp(0, doc.width as i64 - 1) * d, y.clamp(0, doc.height as i64 - 1) * d, w * d, h * d);
+                    let (w, h) = (w.min(img.width as i64 - x), h.min(img.height as i64 - y));
+                    let mut crop = crate::renderer::Image::new(w as u32, h as u32);
+                    for yy in 0..h {
+                        for xx in 0..w {
+                            let c = img.get((x + xx) as u32, (y + yy) as u32);
+                            let o = ((yy * w + xx) * 4) as usize;
+                            crop.pixels[o..o + 4].copy_from_slice(&[c.r, c.g, c.b, c.a]);
+                        }
+                    }
+                    let zoom = opt_i64(a, "scale")?.map(|v| v as u32).unwrap_or_else(|| (512 / w.max(h).max(1) as u32).clamp(1, 32));
+                    crop.scaled(zoom)
+                }
+                _ => img.scaled(s),
+            };
+            let png = export::png::encode(&view);
             let result = Json::obj()
                 .with(
                     "canvas",
@@ -8905,6 +9128,8 @@ pub mod commands {
         ("antialias", Kind::Mutate),
         ("draw_figure", Kind::Mutate),
         ("concept_import", Kind::Mutate),
+        ("upscale", Kind::Mutate),
+        ("split_sheet", Kind::Mutate),
         // game production
         ("slice_set", Kind::Mutate),
         ("slice_delete", Kind::Mutate),
@@ -8972,6 +9197,8 @@ pub mod commands {
             "antialias" => artkit::antialias(doc, a),
             "draw_figure" => artkit::draw_figure(doc, a),
             "concept_import" => artkit::concept_import(doc, a, payload),
+            "upscale" => artkit::upscale(doc, a),
+            "split_sheet" => artkit::split_sheet(doc, a),
             "image_import" => artist::reference_import(doc, a, payload),
             "slice_set" => gamedev::slice_set(doc, a),
             "slice_delete" => gamedev::slice_delete(doc, a),
@@ -11114,7 +11341,7 @@ pub mod gamedev {
         //! down — no blur, no new colors, far fewer broken lines than a plain nearest rotation.
 
         /// Scale2x (EPX) on a true-color grid (0 = transparent).
-        fn scale2x(src: &[u32], w: usize, h: usize) -> Vec<u32> {
+        pub(crate) fn scale2x(src: &[u32], w: usize, h: usize) -> Vec<u32> {
             let at = |x: isize, y: isize| -> u32 {
                 let (x, y) = (x.clamp(0, w as isize - 1) as usize, y.clamp(0, h as isize - 1) as usize);
                 src[y * w + x]

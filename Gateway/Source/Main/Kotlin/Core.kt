@@ -1200,22 +1200,17 @@ object Guidance {
             "concept_prompt", "Prompt for an image model", "Writes a prompt for an AI image model whose output concept_import can turn into clean pixel art.",
             listOf(Triple("character", "Who: age, hair, outfit, props, weapon", true), Triple("view", "e.g. '3/4 view facing left' (default)", false)),
         ) { a ->
-            "Write this prompt for the user's image model, then import the result with concept_import:\n" +
-                "Pixel art game character sprite, full body, standing idle pose, ${a["view"] ?: "3/4 view facing left"}, ${a["character"]}, crisp hard-edged pixels on a clear " +
-                "consistent pixel grid, 128x128 sprite scale, limited palette of about 32 colors, hue-shifted shading, single light source from the top left, clean dark " +
-                "selective outline, readable silhouette, no anti-aliasing blur, no gradients, centered, feet fully visible, plain flat solid background in one color " +
-                "(#FF00FF magenta), no text, no frame.\nNegative: blurry, painterly, 3d render, smooth gradients, jpeg artifacts, text, watermark, cropped feet, " +
-                "multiple characters, busy background, inconsistent pixel size."
+            "Check image_api_status. If an API is configured, call generate_image with this character. Otherwise give the user this prompt for their image model " +
+                "and import the image they send with concept_import:\n" + ConceptPrompts.concept(a["character"].orEmpty(), a["view"] ?: "3/4 view facing left") +
+                "\nNegative: " + ConceptPrompts.NEGATIVE
         },
         PromptDef(
             "turnaround_prompt", "Prompt for the other directions", "Writes a turnaround prompt (all 8 directions on one sheet) to use with the imported concept as reference.",
             listOf(Triple("character", "Short description of the same character", true)),
         ) { a ->
-            "Write this prompt and tell the user to attach the concept image as the reference:\n" +
-                "Character turnaround sheet of the SAME pixel art character as the reference image (${a["character"]}): exactly 8 full-body views in one row, evenly " +
-                "spaced, same size, same scale, same pixel grid, feet on one baseline: front, front-right 3/4, right side, back-right 3/4, back, back-left 3/4, left side, " +
-                "front-left 3/4. Identical outfit, colors, proportions and props in every view; idle standing pose; single light from the top left; plain flat solid " +
-                "#FF00FF magenta background; no text, no labels, no frames."
+            "Check image_api_status. If an API is configured, call generate_image kind=turnaround. Otherwise give the user this prompt, tell them to attach the " +
+                "concept image as reference, import the sheet with concept_import and split it with split_sheet (names S, SE, E, NE, N, NW, W, SW):\n" +
+                ConceptPrompts.turnaround(a["character"].orEmpty())
         },
         PromptDef("review_canvas", "Critique the canvas", "Reviews the current artwork and suggests concrete pixel-level fixes.", emptyList()) {
             "Run art_review first and read its value map and issues, then look with canvas_snapshot and read_region. Critique value structure, silhouette, palette, " +
@@ -1428,7 +1423,7 @@ class RestApi(
 enum class Access { READ, WRITE, DESTRUCTIVE }
 
 /** What the tool returns besides JSON. */
-enum class Output { JSON, PNG_IMAGE, GIF_IMAGE, PROJECT_SAVE, PROJECT_EXPORT }
+enum class Output { JSON, PNG_IMAGE, GIF_IMAGE, PROJECT_SAVE, PROJECT_EXPORT, GENERATE_IMAGE, IMAGE_API_STATUS }
 
 class ToolDef(
     val name: String,
@@ -1527,7 +1522,9 @@ object ToolCatalog {
                 "onion" to linkedMapOf("type" to "object", "description" to "Onion skin: {before, after, opacity 0-255, tint}. Shows neighbouring frames faintly underneath.",
                     "properties" to linkedMapOf("before" to integer("Previous frames to show.", 0, 8), "after" to integer("Next frames to show.", 0, 8),
                         "opacity" to integer("Opacity of the nearest onion frame.", 0, 255), "tint" to boolean("Tint previous red and next blue."))),
-                "background" to color("Optional background color for the image."))), output = Output.PNG_IMAGE)
+                "background" to color("Optional background color for the image."),
+                "x" to integer("Zoom: region left (with y, width, height) — look closely at a face, hands, a weapon."), "y" to integer("Zoom: region top."),
+                "width" to integer("Zoom: region width.", 1), "height" to integer("Zoom: region height.", 1))), output = Output.PNG_IMAGE)
         tool("get_pixel", "Read pixel", "canvas", Access.READ, "Reads one pixel's color from a layer (or the composited frame with composite=true).",
             props(linkedMapOf("x" to X, "y" to Y), target(), linkedMapOf("composite" to boolean("Read the final image of all visible layers instead of one layer."))), listOf("x", "y"))
         tool("read_region", "Read pixels", "canvas", Access.READ,
@@ -1942,6 +1939,30 @@ internal fun MutableList<ToolDef>.addCharTools() {
     tool("fix_banding", "Fix banding", Access.WRITE,
         "Automatic banding correction (Pixel Fixer): shortens one end of each same-length parallel run pair with the in-between ramp tone (or the neighbour's colour) while the banding error falls.",
         linkedMapOf<String, Schema>("mode" to string("average (default) or copy.", listOf("average", "copy")), "passes" to integer("1-32 (default 6).", 1, 32), "layer" to layerArg, "frame" to frameArg))
+    add(ToolDef("generate_image", "Generate concept with image API",
+        "Calls the user's configured image model (OpenAI-compatible or Gemini) and imports the result as pixel art (concept_import). kind concept: a single " +
+            "character from 'character' (+ 'view'), using the built-in pixel-art prompt; kind turnaround: all 8 directions of the CURRENT canvas character " +
+            "(sent as reference), split onto one baseline as frames S, SE, E, NE, N, NW, W, SW. Or give a full 'prompt'. Costs money: every call asks the user first.",
+        "generate_image", linkedMapOf<String, Schema>("kind" to string("concept (default) or turnaround.", listOf("concept", "turnaround")),
+            "character" to string("Who: age, hair, outfit, props, weapon."), "view" to string("e.g. '3/4 view facing left'."),
+            "prompt" to string("A complete prompt instead of the built-in one."), "reference" to string("canvas (send the current frame) or none.", listOf("canvas", "none")),
+            "import" to boolean("Import the result (default true)."), "split" to boolean("Turnaround: split into frames (default true)."),
+            "colors" to integer("Palette size for the import.", 2, 256), "layer" to string("Target layer name.")),
+        emptyList(), Access.DESTRUCTIVE, Output.GENERATE_IMAGE, "pixelart"))
+    add(ToolDef("image_api_status", "Image API status", "Tells whether an image model API is configured (provider, model, endpoint; never the key) — check before generate_image; " +
+        "if not configured, write a prompt (concept_prompt) for the user to run in their own image tool and import the image they send with concept_import.",
+        "image_api_status", emptyMap(), emptyList(), Access.READ, Output.IMAGE_API_STATUS, "pixelart"))
+    tool("upscale", "Pixel-art upscale", Access.WRITE,
+        "Upscales the whole document ×2/×3/×4 with EPX/Scale2x (smooths stair corners, no new colours) or nearest. Thumbnail-first method: design the sprite small " +
+            "(32-48 px, where every pixel decision is manageable), upscale, then refine detail with shade_form, draw_path and art_review.",
+        linkedMapOf<String, Schema>("factor" to integer("2, 3 or 4.", 2, 4), "method" to string("epx (default) or nearest.", listOf("epx", "nearest"))))
+    tool("split_sheet", "Split a sprite sheet", Access.WRITE,
+        "Splits several sprites on one layer (e.g. an imported 8-direction turnaround) by the empty columns between them: crops each, centres it and stands all on " +
+            "one baseline, as frames (default) or layers named after 'names' (e.g. S, SE, E, NE, N, NW, W, SW).",
+        linkedMapOf<String, Schema>("into" to string("frames (default) or layers.", listOf("frames", "layers")),
+            "names" to linkedMapOf<String, Any?>("type" to "array", "items" to linkedMapOf("type" to "string"), "description" to "Names in left-to-right order."),
+            "gap" to integer("Empty columns that separate sprites (default 2).", 1, 64), "margin" to integer("Margin around each (default 2).", 0, 64),
+            "layer" to layerArg, "frame" to frameArg))
     tool("concept_import", "Import AI concept art", Access.WRITE,
         "Turns an image from an AI image model (PNG or baseline JPEG, any size) into true, editable pixel art: finds the pseudo-pixel grid by Fourier analysis " +
             "(also noisy, blurred, JPEG-compressed upscales), takes each cell's dominant colour, keys out the flat background, removes compression speckle, " +
@@ -2195,7 +2216,7 @@ interface Workspace {
     fun writeExport(name: String, extension: String, bytes: ByteArray): String
 }
 
-class DirectoryWorkspace(private val root: File) : Workspace {
+class DirectoryWorkspace(val root: File) : Workspace {
     override fun saveProject(name: String, bytes: ByteArray): String =
         write(File(root, sanitize(name) + ".pxs"), bytes)
 
@@ -2238,11 +2259,158 @@ class ToolResult(
 
 class UnknownToolException(name: String) : IllegalArgumentException("unknown tool '$name'")
 
+// ═══ ImageApi ════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Settings of the user's image model API. Read from environment variables (PIXEL_STUDIO_IMAGE_*)
+ * or `image_api.json` in the workspace (written by the editors, owner-readable only). Model ids
+ * change often, so nothing is hard-coded: the user picks the model.
+ */
+data class ImageApiConfig(
+    /** "openai" (OpenAI or any OpenAI-compatible images endpoint) or "gemini". */
+    val provider: String,
+    val model: String,
+    val apiKey: String,
+    val baseUrl: String = "",
+    val size: String = "1024x1024",
+) {
+    val endpointBase: String get() = baseUrl.trimEnd('/').ifEmpty { if (provider == "gemini") "https://generativelanguage.googleapis.com" else "https://api.openai.com" }
+
+    /** For display: never includes the key. */
+    fun describe(): Map<String, Any?> = linkedMapOf("provider" to provider, "model" to model, "baseUrl" to endpointBase, "size" to size, "apiKey" to if (apiKey.isEmpty()) "missing" else "set")
+
+    fun toJson(): String = Json.write(linkedMapOf("provider" to provider, "model" to model, "apiKey" to apiKey, "baseUrl" to baseUrl, "size" to size))
+
+    companion object {
+        const val FILE = "image_api.json"
+
+        fun load(dir: File?, env: (String) -> String? = System::getenv): ImageApiConfig? {
+            val file = dir?.let { File(it, FILE) }?.takeIf { it.isFile }
+            val saved = file?.let { runCatching { Json.parseObject(it.readText()) }.getOrNull() } ?: emptyMap()
+            fun pick(envName: String, key: String) = env(envName)?.takeIf { it.isNotBlank() } ?: (saved[key] as? String).orEmpty()
+            val cfg = ImageApiConfig(
+                provider = pick("PIXEL_STUDIO_IMAGE_PROVIDER", "provider").ifEmpty { "openai" },
+                model = pick("PIXEL_STUDIO_IMAGE_MODEL", "model"),
+                apiKey = pick("PIXEL_STUDIO_IMAGE_KEY", "apiKey"),
+                baseUrl = pick("PIXEL_STUDIO_IMAGE_URL", "baseUrl"),
+                size = pick("PIXEL_STUDIO_IMAGE_SIZE", "size").ifEmpty { "1024x1024" },
+            )
+            return cfg.takeIf { it.model.isNotEmpty() || it.apiKey.isNotEmpty() }
+        }
+
+        /** Writes the settings so only the current user can read them. */
+        fun save(dir: File, cfg: ImageApiConfig) {
+            dir.mkdirs()
+            val f = File(dir, FILE)
+            f.writeText("")
+            f.setReadable(false, false); f.setWritable(false, false)
+            f.setReadable(true, true); f.setWritable(true, true)
+            f.writeText(cfg.toJson())
+        }
+    }
+}
+
+/** Raw HTTP clients (HttpURLConnection: works on the JVM and on Android) for image models. */
+object ImageApi {
+    class ImageApiException(message: String) : Exception(message)
+
+    fun generate(cfg: ImageApiConfig, prompt: String, reference: ByteArray? = null): ByteArray {
+        if (cfg.model.isEmpty()) throw ImageApiException("no image model configured: set the model id (e.g. from your provider's model list)")
+        if (cfg.apiKey.isEmpty() && cfg.baseUrl.isEmpty()) throw ImageApiException("no API key configured")
+        return when (cfg.provider) {
+            "gemini" -> gemini(cfg, prompt, reference)
+            else -> openai(cfg, prompt, reference)
+        }
+    }
+
+    private fun openai(cfg: ImageApiConfig, prompt: String, reference: ByteArray?): ByteArray {
+        val response = if (reference == null) {
+            val body = Json.write(linkedMapOf("model" to cfg.model, "prompt" to prompt, "size" to cfg.size, "n" to 1))
+            post("${cfg.endpointBase}/v1/images/generations", mapOf("Authorization" to "Bearer ${cfg.apiKey}", "Content-Type" to "application/json"), body.toByteArray())
+        } else {
+            // Edits take the reference image as multipart form data.
+            val boundary = "pixelstudio" + System.nanoTime()
+            val out = java.io.ByteArrayOutputStream()
+            fun field(name: String, value: String) = out.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray())
+            field("model", cfg.model); field("prompt", prompt); field("size", cfg.size)
+            out.write("--$boundary\r\nContent-Disposition: form-data; name=\"image[]\"; filename=\"reference.png\"\r\nContent-Type: image/png\r\n\r\n".toByteArray())
+            out.write(reference); out.write("\r\n--$boundary--\r\n".toByteArray())
+            post("${cfg.endpointBase}/v1/images/edits", mapOf("Authorization" to "Bearer ${cfg.apiKey}", "Content-Type" to "multipart/form-data; boundary=$boundary"), out.toByteArray())
+        }
+        val first = (response.list("data")?.firstOrNull() as? Map<*, *>) ?: throw ImageApiException("no image in the response: ${Json.write(response).take(300)}")
+        (first["b64_json"] as? String)?.let { return Base64.getDecoder().decode(it) }
+        (first["url"] as? String)?.let { return download(it) }
+        throw ImageApiException("the response has neither b64_json nor url")
+    }
+
+    private fun gemini(cfg: ImageApiConfig, prompt: String, reference: ByteArray?): ByteArray {
+        val parts = mutableListOf<Any?>(linkedMapOf("text" to prompt))
+        if (reference != null) parts += linkedMapOf("inlineData" to linkedMapOf("mimeType" to "image/png", "data" to Base64.getEncoder().encodeToString(reference)))
+        val body = Json.write(linkedMapOf(
+            "contents" to listOf(linkedMapOf("parts" to parts)),
+            "generationConfig" to linkedMapOf("responseModalities" to listOf("IMAGE")),
+        ))
+        val url = "${cfg.endpointBase}/v1beta/models/${cfg.model}:generateContent"
+        val response = post(url, mapOf("x-goog-api-key" to cfg.apiKey, "Content-Type" to "application/json"), body.toByteArray())
+        for (c in response.list("candidates").orEmpty()) {
+            val content = (c as? Map<*, *>)?.get("content") as? Map<*, *> ?: continue
+            for (p in content["parts"] as? List<*> ?: emptyList<Any?>()) {
+                val part = p as? Map<*, *> ?: continue
+                val inline = (part["inlineData"] ?: part["inline_data"]) as? Map<*, *> ?: continue
+                (inline["data"] as? String)?.let { return Base64.getDecoder().decode(it) }
+            }
+        }
+        throw ImageApiException("no image part in the response: ${Json.write(response).take(300)}")
+    }
+
+    private fun post(url: String, headers: Map<String, String>, body: ByteArray): Map<String, Any?> {
+        val conn = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.connectTimeout = 20_000
+        conn.readTimeout = 240_000
+        headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
+        conn.outputStream.use { it.write(body) }
+        val code = conn.responseCode
+        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.use { String(it.readBytes(), Charsets.UTF_8) }.orEmpty()
+        if (code !in 200..299) throw ImageApiException("image API returned HTTP $code: ${text.take(400)}")
+        return Json.parseObject(text)
+    }
+
+    private fun download(url: String): ByteArray {
+        val conn = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 20_000
+        conn.readTimeout = 120_000
+        return conn.inputStream.use { it.readBytes() }
+    }
+}
+
+/** Prompts for image models whose output concept_import turns into clean pixel art. */
+object ConceptPrompts {
+    fun concept(character: String, view: String = "3/4 view facing left", size: Int = 128): String =
+        "Pixel art game character sprite, full body, standing idle pose, $view, $character, crisp hard-edged pixels on a clear " +
+            "consistent pixel grid, ${size}x$size sprite scale, limited palette of about 32 colors, hue-shifted shading (warm highlights, cool shadows), " +
+            "single light source from the top left, clean dark selective outline, readable silhouette, no anti-aliasing blur, no gradients, no dithering noise, " +
+            "centered, feet fully visible, plain flat solid background in one color (#FF00FF magenta), no text, no frame, no shadow on the background"
+
+    const val NEGATIVE = "blurry, painterly, 3d render, smooth gradients, soft shading, jpeg artifacts, text, watermark, cropped feet, multiple characters, busy background, inconsistent pixel size, mixels"
+
+    fun turnaround(character: String): String =
+        "Character turnaround sheet of the SAME pixel art character as the reference image ($character): exactly 8 full-body views in ONE row, evenly " +
+            "spaced, same size, same scale, same pixel grid, feet on one baseline: front, front-right 3/4, right side, back-right 3/4, back, back-left 3/4, " +
+            "left side, front-left 3/4. Identical outfit, colors, proportions and props in every view, idle standing pose, single light from the top left, " +
+            "crisp hard-edged pixels, no anti-aliasing, plain flat solid #FF00FF magenta background, no text, no labels, no frames"
+
+    val TURNAROUND_NAMES = listOf("S", "SE", "E", "NE", "N", "NW", "W", "SW")
+}
+
 /** Executes catalogue tools against the engine. Shared by MCP and the REST tool endpoint. */
 class ToolExecutor(
     private val engine: PixelEngine,
     val policy: PermissionPolicy,
     private val workspace: Workspace?,
+    private val imageApi: () -> ImageApiConfig? = { ImageApiConfig.load((workspace as? DirectoryWorkspace)?.root) },
+    private val imageClient: (ImageApiConfig, String, ByteArray?) -> ByteArray = ImageApi::generate,
 ) {
     fun call(name: String, rawArgs: Map<String, Any?>?, actor: String): ToolResult {
         val tool = ToolCatalog[name] ?: throw UnknownToolException(name)
@@ -2265,7 +2433,53 @@ class ToolExecutor(
             Output.GIF_IMAGE -> imageResult(engine.execute(tool.op, args, actor), "image/gif")
             Output.PROJECT_SAVE -> saveProject(args, actor)
             Output.PROJECT_EXPORT -> export(args, actor)
+            Output.GENERATE_IMAGE -> generateImage(args, actor)
+            Output.IMAGE_API_STATUS -> {
+                val cfg = imageApi()
+                val st = linkedMapOf<String, Any?>("ok" to true, "result" to (cfg?.describe() ?: linkedMapOf("configured" to false,
+                    "howTo" to "set PIXEL_STUDIO_IMAGE_PROVIDER (openai|gemini), PIXEL_STUDIO_IMAGE_MODEL, PIXEL_STUDIO_IMAGE_KEY (and optionally _URL) or use the editor's Image API settings")))
+                ToolResult(listOf(text(Json.write(st))), st, isError = false)
+            }
         }
+    }
+
+    /** Calls the user's image model, keeps the raw image in the workspace and imports it as pixel art. */
+    private fun generateImage(args: Map<String, Any?>, actor: String): ToolResult {
+        val cfg = imageApi() ?: return refusal("no image API configured: set PIXEL_STUDIO_IMAGE_PROVIDER / _MODEL / _KEY or use the editor's Image API settings")
+        val mode = args.str("kind") ?: "concept"
+        val character = args.str("character")
+        val prompt = args.str("prompt") ?: when {
+            character == null -> return refusal("give 'prompt' or 'character'")
+            mode == "turnaround" -> ConceptPrompts.turnaround(character)
+            else -> ConceptPrompts.concept(character, args.str("view") ?: "3/4 view facing left")
+        }
+        val reference: ByteArray? = when (args.str("reference") ?: if (mode == "turnaround") "canvas" else "none") {
+            "canvas" -> engine.execute("export", mapOf("format" to "png", "scale" to 4), actor).binary.takeIf { it.isNotEmpty() }
+            else -> null
+        }
+        val bytes = try {
+            imageClient(cfg, prompt, reference)
+        } catch (e: Exception) {
+            return refusal("image generation failed: ${e.message}")
+        }
+        val saved = workspace?.let { ws -> runCatching { File(ws.writeExport("concept_" + System.currentTimeMillis(), if (bytes.size > 2 && bytes[0] == 0xFF.toByte()) "jpg" else "png", bytes)).name }.getOrNull() }
+        val summary = linkedMapOf<String, Any?>("prompt" to prompt, "api" to cfg.describe(), "bytes" to bytes.size, "savedAs" to saved)
+        if (args["import"] != false) {
+            val importArgs = linkedMapOf<String, Any?>("layer" to (args.str("layer") ?: if (mode == "turnaround") "Turnaround" else "Concept"))
+            (args["colors"] as? Number)?.let { importArgs["colors"] = it }
+            val r = engine.execute("concept_import", importArgs, actor, payload = bytes)
+            if (!r.ok) return jsonResult(r)
+            summary["import"] = r.result
+            if (mode == "turnaround" && args["split"] != false) {
+                val split = engine.execute("split_sheet", mapOf("layer" to importArgs["layer"], "names" to ConceptPrompts.TURNAROUND_NAMES), actor)
+                summary["split"] = if (split.ok) split.result else split.json["error"]
+            }
+        }
+        val s = linkedMapOf<String, Any?>("ok" to true, "result" to summary)
+        val content = ArrayList<Map<String, Any?>>()
+        if (bytes.size <= 4 * 1024 * 1024) content.add(image(bytes, if (bytes[0] == 0xFF.toByte()) "image/jpeg" else "image/png"))
+        content.add(text(Json.write(s)))
+        return ToolResult(content, s, isError = false)
     }
 
     private fun summarize(tool: ToolDef, args: Map<String, Any?>): String {
@@ -2377,7 +2591,7 @@ class ToolExecutor(
         private val EXPORT_FORMATS = listOf("png", "gif", "spritesheet", "atlas", "godot", "tiled", "tileset", "normal_map")
 
         /** Engine operations every catalogue tool relies on (checked against the engine in tests). */
-        fun engineOps(): Set<String> = ToolCatalog.tools.map { it.op }.toSet()
+        fun engineOps(): Set<String> = ToolCatalog.tools.filter { it.output != Output.GENERATE_IMAGE && it.output != Output.IMAGE_API_STATUS }.map { it.op }.toSet()
     }
 }
 

@@ -86,6 +86,24 @@
           "background": {
             "type": "string",
             "description": "Optional background color for the image."
+          },
+          "x": {
+            "type": "integer",
+            "description": "Zoom: region left (with y, width, height) — look closely at a face, hands, a weapon."
+          },
+          "y": {
+            "type": "integer",
+            "description": "Zoom: region top."
+          },
+          "width": {
+            "type": "integer",
+            "description": "Zoom: region width.",
+            "minimum": 1
+          },
+          "height": {
+            "type": "integer",
+            "description": "Zoom: region height.",
+            "minimum": 1
           }
         }
       }
@@ -2722,6 +2740,152 @@
             "description": "1-32 (default 6).",
             "minimum": 1,
             "maximum": 32
+          },
+          "layer": {
+            "type": "string",
+            "description": "Layer (default active). (number or name as text)"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "Frame (default active).",
+            "minimum": 0
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "generate_image",
+      "description": "Calls the user's configured image model (OpenAI-compatible or Gemini) and imports the result as pixel art (concept_import). kind concept: a single character from 'character' (+ 'view'), using the built-in pixel-art prompt; kind turnaround: all 8 directions of the CURRENT canvas character (sent as reference), split onto one baseline as frames S, SE, E, NE, N, NW, W, SW. Or give a full 'prompt'. Costs money: every call asks the user first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "concept (default) or turnaround.",
+            "enum": ["concept","turnaround"]
+          },
+          "character": {
+            "type": "string",
+            "description": "Who: age, hair, outfit, props, weapon."
+          },
+          "view": {
+            "type": "string",
+            "description": "e.g. '3/4 view facing left'."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "A complete prompt instead of the built-in one."
+          },
+          "reference": {
+            "type": "string",
+            "description": "canvas (send the current frame) or none.",
+            "enum": ["canvas","none"]
+          },
+          "import": {
+            "type": "boolean",
+            "description": "Import the result (default true)."
+          },
+          "split": {
+            "type": "boolean",
+            "description": "Turnaround: split into frames (default true)."
+          },
+          "colors": {
+            "type": "integer",
+            "description": "Palette size for the import.",
+            "minimum": 2,
+            "maximum": 256
+          },
+          "layer": {
+            "type": "string",
+            "description": "Target layer name."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "image_api_status",
+      "description": "Tells whether an image model API is configured (provider, model, endpoint; never the key) — check before generate_image; if not configured, write a prompt (concept_prompt) for the user to run in their own image tool and import the image they send with concept_import.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "upscale",
+      "description": "Upscales the whole document ×2/×3/×4 with EPX/Scale2x (smooths stair corners, no new colours) or nearest. Thumbnail-first method: design the sprite small (32-48 px, where every pixel decision is manageable), upscale, then refine detail with shade_form, draw_path and art_review.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "factor": {
+            "type": "integer",
+            "description": "2, 3 or 4.",
+            "minimum": 2,
+            "maximum": 4
+          },
+          "method": {
+            "type": "string",
+            "description": "epx (default) or nearest.",
+            "enum": ["epx","nearest"]
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "description": "Optimistic concurrency: fail with 'conflict' if the canvas revision differs (get it from canvas_inspect or any previous result).",
+            "minimum": 0
+          },
+          "operationId": {
+            "type": "string",
+            "description": "Idempotency key: retrying with the same id never applies the change twice."
+          }
+        }
+      }
+    },
+    {
+      "name": "split_sheet",
+      "description": "Splits several sprites on one layer (e.g. an imported 8-direction turnaround) by the empty columns between them: crops each, centres it and stands all on one baseline, as frames (default) or layers named after 'names' (e.g. S, SE, E, NE, N, NW, W, SW).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "into": {
+            "type": "string",
+            "description": "frames (default) or layers.",
+            "enum": ["frames","layers"]
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names in left-to-right order."
+          },
+          "gap": {
+            "type": "integer",
+            "description": "Empty columns that separate sprites (default 2).",
+            "minimum": 1,
+            "maximum": 64
+          },
+          "margin": {
+            "type": "integer",
+            "description": "Margin around each (default 2).",
+            "minimum": 0,
+            "maximum": 64
           },
           "layer": {
             "type": "string",

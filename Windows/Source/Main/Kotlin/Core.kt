@@ -201,6 +201,13 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             add(item("Import image…", ctrl(KeyEvent.VK_I, true)) { importImage(false) })
             add(item("Import reference…") { importImage(true) })
             add(item("Import AI concept…", ctrl(KeyEvent.VK_J, true)) { importConcept() })
+            add(JMenu("AI image model").apply {
+                add(item("Generate concept…", ctrl(KeyEvent.VK_G, true)) { generateWithApi("concept") })
+                add(item("Generate 8-direction turnaround of this character") { generateWithApi("turnaround") })
+                add(item("Copy concept prompt…") { copyConceptPrompt() })
+                addSeparator()
+                add(item("Image API settings…") { imageApiSettings() })
+            })
             addSeparator()
             add(item("Save", ctrl(KeyEvent.VK_S)) { save(false) })
             add(item("Save As…", ctrl(KeyEvent.VK_S, true)) { save(true) })
@@ -361,6 +368,58 @@ class PixelStudioWindow(private val c: EditorController, private val gateway: Ag
             val n = r.result.obj("native")
             status.flash("Imported ${n?.long("width")}×${n?.long("height")} (scale ${r.result["scale"]}), ${r.result["colors"]} colors, ${r.result.list("ramps")?.size ?: 0} ramps")
         }
+    }
+
+    /** Provider, model, endpoint and key of the user's image model (saved owner-readable in the workspace). */
+    private fun imageApiSettings() {
+        val cur = com.pixel.studio.gateway.ImageApiConfig.load(workspaceDir()) { null }
+        val provider = Theme.combo(arrayOf("openai", "gemini")).apply { selectedItem = cur?.provider ?: "openai" }
+        val model = JTextField(cur?.model ?: "", 24)
+        val url = JTextField(cur?.baseUrl ?: "", 24)
+        val size = JTextField(cur?.size ?: "1024x1024", 10)
+        val key = javax.swing.JPasswordField(cur?.apiKey ?: "", 24)
+        val p = JPanel(GridLayout(0, 2, 8, 6)).apply {
+            add(JLabel("Provider")); add(provider)
+            add(JLabel("Model id")); add(model)
+            add(JLabel("Endpoint (empty = official)")); add(url)
+            add(JLabel("Size (OpenAI)")); add(size)
+            add(JLabel("API key")); add(key)
+        }
+        val ok = JOptionPane.showConfirmDialog(this, p, "Image API settings", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION
+        if (!ok) return
+        com.pixel.studio.gateway.ImageApiConfig.save(workspaceDir(), com.pixel.studio.gateway.ImageApiConfig(
+            provider.selectedItem as String, model.text.trim(), String(key.password).trim(), url.text.trim(), size.text.trim().ifEmpty { "1024x1024" }))
+        status.flash("Image API saved (${provider.selectedItem}, ${model.text.trim()})")
+    }
+
+    private fun copyConceptPrompt() {
+        val who = JOptionPane.showInputDialog(this, "Describe the character (hair, outfit, props, weapon)", "") ?: return
+        val text = com.pixel.studio.gateway.ConceptPrompts.concept(who) + "\n\nNegative: " + com.pixel.studio.gateway.ConceptPrompts.NEGATIVE
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+        JOptionPane.showMessageDialog(this, JScrollPane(JTextArea(text, 10, 60).apply { lineWrap = true; wrapStyleWord = true; isEditable = false }), "Prompt copied", JOptionPane.PLAIN_MESSAGE)
+    }
+
+    /** Calls the image model in the background, then imports (and for a turnaround, splits) the result. */
+    private fun generateWithApi(kind: String) {
+        val cfg = com.pixel.studio.gateway.ImageApiConfig.load(workspaceDir())
+        if (cfg == null || cfg.model.isEmpty()) { imageApiSettings(); return }
+        val who = JOptionPane.showInputDialog(this, if (kind == "turnaround") "Short description of this character" else "Describe the character", "") ?: return
+        val prompt = if (kind == "turnaround") com.pixel.studio.gateway.ConceptPrompts.turnaround(who) else com.pixel.studio.gateway.ConceptPrompts.concept(who)
+        val reference = if (kind == "turnaround") c.run("export", mapOf("format" to "png", "scale" to 4)).binary else null
+        status.flash("Generating with ${cfg.model}…")
+        Thread {
+            val result = runCatching { com.pixel.studio.gateway.ImageApi.generate(cfg, prompt, reference) }
+            SwingUtilities.invokeLater {
+                result.onFailure { JOptionPane.showMessageDialog(this, "Image API: ${it.message}") }.onSuccess { bytes ->
+                    runCatching { com.pixel.studio.gateway.DirectoryWorkspace(workspaceDir()).writeExport("concept_" + System.currentTimeMillis(), "png", bytes) }
+                    val layer = if (kind == "turnaround") "Turnaround" else "Concept"
+                    val r = c.run("concept_import", mapOf("layer" to layer), bytes)
+                    if (r.ok && kind == "turnaround") c.run("split_sheet", mapOf("layer" to layer, "names" to com.pixel.studio.gateway.ConceptPrompts.TURNAROUND_NAMES))
+                    if (r.ok) { canvas.fit(); status.flash("Generated and imported (${r.result.obj("sprite")?.get("width")}×${r.result.obj("sprite")?.get("height")})") }
+                    else JOptionPane.showMessageDialog(this, "Import failed: ${r.errorMessage}")
+                }
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     /** An AI image model's output (PNG, JPEG, …) → true pixel art on a "Concept" layer. */
